@@ -28,6 +28,7 @@ apps/
            breakdown, priority/severity donuts, volume trend, agent leaderboards,
            resolution-vs-rating scatter (modeled on an IT Helpdesk Power BI dashboard*)
          - service catalog (workflow-backed request fulfillment) + ConMon panel
+         - on-call console (rotation, current responder, pages, ack/escalate)
          - animated 404 page
          - shadcn/21st.dev-style component library (vendored, not CDN)
 ```
@@ -86,10 +87,25 @@ For local development the API issues signed session JWTs from a seeded user dire
 ## Useful scripts
 
 ```bash
-npm run typecheck     # tsc across workspaces
-npm run build         # build api + web
-npm run bootstrap     # install + db up + migrate + seed (one shot)
+npm run typecheck                  # tsc across workspaces
+npm --workspace apps/api run test  # vitest unit tests (PDP, SLA, priority, posture, on-call)
+npm run build                      # build api + web
+npm run bootstrap                  # install + db up + migrate + seed (one shot)
 ```
+
+## Enterprise hardening
+
+- **Security headers** (`@fastify/helmet`), **rate limiting** (`@fastify/rate-limit`), 1 MiB
+  body cap, `trustProxy`, RFC 7807 errors, correlation ids.
+- **Health/readiness probes**: `GET /healthz` (liveness), `GET /readyz` (DB-checked readiness).
+- **Tenant isolation**: Postgres RLS + app org-guard; global config (tier groups, catalog) is
+  resolved via the system context so NULL-org rows aren't blocked by tenant policies.
+- **On-call/paging engine**: deterministic weekly rotation, current-responder resolution,
+  page → acknowledge → escalate (single-owner reassignment).
+- **Tests**: 22 unit tests (authorization PDP, SLA business-hours math, priority matrix,
+  posture scoring, on-call rotation) run without a database.
+- **CI** ([.github/workflows/ci.yml](.github/workflows/ci.yml)): typecheck → test → build, plus
+  `npm audit` (high+) and a secret scan.
 
 ## Mapping to the spec
 

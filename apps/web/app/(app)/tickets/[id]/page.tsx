@@ -1,7 +1,7 @@
 'use client';
 import * as React from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { api, ApiError, type Ticket, TIER_GROUPS } from '@/lib/api';
+import { api, oncall, ApiError, type Ticket, TIER_GROUPS } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
 import { Card, CardHeader, CardTitle, CardBody, Button, Textarea, Badge, Select } from '@/components/ui/primitives';
 import { Skeleton } from '@/components/ui/data';
@@ -90,6 +90,20 @@ export default function TicketDetailPage() {
     }
   }
 
+  const [paged, setPaged] = React.useState(false);
+  async function pageOnCall() {
+    if (!ticket) return;
+    setBusy(true);
+    try {
+      await oncall.createPage({ ticketId: id, organizationId: ticket.organization_id, severity: ticket.priority === 'P1' ? 'Sev1' : 'Sev2' });
+      setPaged(true);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.detail : 'Paging failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (error) return <Card><CardBody><p className="text-sm text-danger">{error}</p></CardBody></Card>;
   if (!ticket) return <div className="space-y-3"><Skeleton className="h-8 w-1/3" /><Skeleton className="h-64" /></div>;
 
@@ -120,6 +134,11 @@ export default function TicketDetailPage() {
         {isAgent && can('ticket.update') && (
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" onClick={claim} disabled={busy}>Claim</Button>
+            {can('oncall.page') && (
+              <Button size="sm" variant="danger" onClick={pageOnCall} disabled={busy || paged}>
+                {paged ? 'Paged ✓' : 'Page on-call'}
+              </Button>
+            )}
             {(nextStates[ticket.status] ?? []).map((s) => (
               <Button key={s} size="sm" variant={s === 'resolved' ? 'default' : 'subtle'} onClick={() => transition(s)} disabled={busy}>
                 {s.replace(/_/g, ' ')}

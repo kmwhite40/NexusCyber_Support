@@ -11,6 +11,7 @@ import * as posture from '../modules/posture.js';
 import * as analytics from '../modules/analytics.js';
 import * as catalog from '../modules/catalog.js';
 import * as conmon from '../modules/conmon.js';
+import * as oncall from '../modules/oncall.js';
 import { computeScore, grade } from '../modules/posture.js';
 import { authorize } from '../authz/pdp.js';
 
@@ -321,6 +322,39 @@ export async function registerRoutes(app: FastifyInstance) {
     const q = z.object({ organizationId: z.string().uuid().optional() }).parse(req.query);
     const orgId = p.plane === 'customer' ? p.organizationId ?? undefined : q.organizationId;
     return analytics.overview(p, orgId);
+  });
+
+  // ---------------- On-call / paging ----------------
+  app.get('/api/v1/oncall/schedules', async (req) => {
+    const p = await requirePrincipal(req);
+    return { data: await oncall.listSchedules(p) };
+  });
+
+  app.get('/api/v1/oncall/pages', async (req) => {
+    const p = await requirePrincipal(req);
+    return { data: await oncall.listPages(p) };
+  });
+
+  app.post('/api/v1/oncall/pages', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const body = z
+      .object({ scheduleId: z.string().uuid().optional(), ticketId: z.string().uuid().optional(), organizationId: z.string().uuid().optional(), severity: z.string().optional() })
+      .parse(req.body ?? {});
+    const page = await oncall.createPage(p, body);
+    reply.status(201);
+    return page;
+  });
+
+  app.post('/api/v1/oncall/pages/:id/ack', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return oncall.acknowledge(p, id);
+  });
+
+  app.post('/api/v1/oncall/pages/:id/escalate', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return oncall.escalatePage(p, id);
   });
 
   // ---------------- Audit ----------------

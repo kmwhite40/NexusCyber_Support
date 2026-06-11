@@ -33,14 +33,17 @@ export async function createRequest(actor: Principal, key: string, input: Create
   if (!orgId) throw Errors.badRequest('organizationId required for agent-created requests');
   authorize(actor, 'ticket.create', { organizationId: orgId });
 
+  // Catalog item + owning tier group are global config (the tier group is org-NULL).
+  // Resolve them via the system context so the lookup is not blocked by tenant RLS,
+  // and works identically for customer- and agent-initiated requests.
+  const { item, grpId } = await withSystemContext(async (sql) => {
+    const it = (await sql.query('SELECT * FROM service_catalog_items WHERE key=$1 AND active', [key])).rows[0];
+    if (!it) throw Errors.notFound('catalog item not found');
+    const g = (await sql.query("SELECT id FROM assignment_groups WHERE name=$1 AND scope='nexus'", [it.owning_tier])).rows[0];
+    return { item: it, grpId: (g?.id as string | undefined) ?? null };
+  });
+
   return withOrgContext(orgContextFor(actor), async (sql) => {
-    const item = (await sql.query('SELECT * FROM service_catalog_items WHERE key=$1 AND active', [key])).rows[0];
-    if (!item) throw Errors.notFound('catalog item not found');
-
-    const grp = (
-      await sql.query("SELECT id FROM assignment_groups WHERE name=$1 AND scope='nexus'", [item.owning_tier])
-    ).rows[0];
-
     const prefix = (await sql.query('SELECT left(upper(name),4) AS p FROM organizations WHERE id=$1', [orgId])).rows[0].p;
     const n = (
       await sql.query(
@@ -68,7 +71,7 @@ export async function createRequest(actor: Principal, key: string, input: Create
           item.key,
           item.default_priority,
           status,
-          grp?.id ?? null,
+          grpId,
           ['service_request', item.security_class],
         ],
       )

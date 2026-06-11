@@ -20,6 +20,10 @@ const PERMISSIONS: Array<[string, string]> = [
   ['posture.approve_exception', 'posture'],
   ['posture.request_exception', 'posture'],
   ['customer.admin.manage_users', 'customer_admin'],
+  ['oncall.acknowledge', 'oncall'],
+  ['oncall.page', 'oncall'],
+  ['oncall.manage', 'oncall'],
+  ['ticket.escalate', 'ticket'],
   ['audit.read', 'audit'],
   ['report.read.operational', 'reporting'],
   ['report.read.customer', 'reporting'],
@@ -35,15 +39,16 @@ const ROLES: Record<string, { plane: 'nexus' | 'customer'; perms: string[] }> = 
     perms: [
       'ticket.create', 'ticket.read.all_assigned_customers', 'ticket.update', 'ticket.comment',
       'ticket.assign', 'ticket.escalate', 'posture.read', 'report.read.operational',
+      'oncall.acknowledge', 'oncall.page',
     ],
   },
   SecurityAnalyst: {
     plane: 'nexus',
-    perms: ['ticket.create', 'ticket.read.all_assigned_customers', 'posture.read', 'posture.write', 'posture.finding.manage', 'audit.read'],
+    perms: ['ticket.create', 'ticket.read.all_assigned_customers', 'ticket.escalate', 'posture.read', 'posture.write', 'posture.finding.manage', 'oncall.acknowledge', 'oncall.page', 'audit.read'],
   },
   ServiceDeskManager: {
     plane: 'nexus',
-    perms: ['ticket.read.all_assigned_customers', 'ticket.assign', 'ticket.update', 'ticket.comment', 'report.read.operational', 'customer.admin.manage_users', 'audit.read'],
+    perms: ['ticket.read.all_assigned_customers', 'ticket.assign', 'ticket.update', 'ticket.comment', 'ticket.escalate', 'report.read.operational', 'customer.admin.manage_users', 'oncall.manage', 'oncall.acknowledge', 'oncall.page', 'audit.read'],
   },
   // Customer plane
   OrgAdmin: { plane: 'customer', perms: ['ticket.create', 'ticket.read.organization', 'ticket.comment', 'posture.read', 'posture.request_exception', 'customer.admin.manage_users', 'report.read.customer', 'audit.read'] },
@@ -273,6 +278,28 @@ async function run() {
       const found = await sql.query("SELECT 1 FROM assignment_groups WHERE name=$1 AND scope='nexus'", [name]);
       if (!found.rows[0]) {
         await sql.query("INSERT INTO assignment_groups (scope, name) VALUES ('nexus',$1)", [name]);
+      }
+    }
+
+    // ---- On-call schedule (weekly primary rotation over desk agents) ----
+    const schedExists = await sql.query("SELECT id FROM oncall_schedules WHERE team=$1", ['Service Desk On-Call']);
+    let scheduleId = schedExists.rows[0]?.id;
+    if (!scheduleId) {
+      scheduleId = (
+        await sql.query(
+          "INSERT INTO oncall_schedules (team, tz, coverage) VALUES ('Service Desk On-Call','America/New_York','24x7') RETURNING id",
+        )
+      ).rows[0].id;
+      const rot = (
+        await sql.query(
+          // Anchor handoff at a fixed past Monday for deterministic rotation math.
+          "INSERT INTO oncall_rotations (schedule_id, role, length_days, handoff_epoch) VALUES ($1,'primary',7, '2026-01-05T09:00:00Z') RETURNING id",
+          [scheduleId],
+        )
+      ).rows[0].id;
+      const responders = agentIds.slice(0, 5);
+      for (let i = 0; i < responders.length; i++) {
+        await sql.query('INSERT INTO oncall_participants (rotation_id, user_id, position) VALUES ($1,$2,$3)', [rot, responders[i], i]);
       }
     }
 

@@ -118,6 +118,35 @@ export const conmon = {
   run: () => api.post<{ orgs: number; checks: number; findings: number }>('/conmon/run'),
 };
 
+export interface OnCallSchedule {
+  id: string;
+  team: string;
+  tz: string;
+  coverage: string;
+  rotationLengthDays: number | null;
+  current: { name: string; via: string } | null;
+  participants: Array<{ position: number; name: string }>;
+}
+export interface OnCallPage {
+  id: string;
+  severity: string;
+  state: string;
+  created_at: string;
+  ack_deadline_at: string | null;
+  ticket_id: string | null;
+  responder: string | null;
+  org: string | null;
+  acked_at: string | null;
+}
+
+export const oncall = {
+  schedules: () => api.get<{ data: OnCallSchedule[] }>('/oncall/schedules'),
+  pages: () => api.get<{ data: OnCallPage[] }>('/oncall/pages'),
+  createPage: (body: { severity?: string; ticketId?: string; organizationId?: string }) => api.post<OnCallPage>('/oncall/pages', body),
+  ack: (id: string) => api.post<{ state: string }>(`/oncall/pages/${id}/ack`),
+  escalatePage: (id: string) => api.post<{ state: string; responder?: string }>(`/oncall/pages/${id}/escalate`),
+};
+
 // Tier groups available as escalation targets (mirrors seeded assignment_groups).
 export const TIER_GROUPS = [
   'Tier 1 — Helpdesk Analyst',

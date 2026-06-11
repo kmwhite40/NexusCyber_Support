@@ -2,7 +2,7 @@
 // with priority derivation, SLA start, events, and audit. All queries run inside the
 // principal's RLS org-context, so isolation holds even if app logic has a gap.
 import type { Sql } from '../db/pool.js';
-import { withOrgContext } from '../db/pool.js';
+import { withOrgContext, withSystemContext } from '../db/pool.js';
 import { orgContextFor } from '../auth/principal.js';
 import { authorize, can } from '../authz/pdp.js';
 import { audit } from './audit.js';
@@ -188,11 +188,14 @@ export async function getTicket(actor: Principal, id: string) {
  */
 export async function escalate(actor: Principal, id: string, targetGroupName: string, reason?: string) {
   authorize(actor, 'ticket.escalate');
+  // Tier groups are global (org-NULL) config — resolve outside tenant RLS.
+  const grp = await withSystemContext(async (sql) =>
+    (await sql.query("SELECT id, name FROM assignment_groups WHERE name=$1 AND scope='nexus'", [targetGroupName])).rows[0],
+  );
+  if (!grp) throw Errors.badRequest(`unknown escalation target: ${targetGroupName}`);
   return withOrgContext(orgContextFor(actor), async (sql) => {
     const t = (await sql.query('SELECT organization_id, assignment_group_id, assigned_agent_id, status FROM tickets WHERE id=$1', [id])).rows[0];
     if (!t) throw Errors.notFound('ticket not found');
-    const grp = (await sql.query("SELECT id, name FROM assignment_groups WHERE name=$1 AND scope='nexus'", [targetGroupName])).rows[0];
-    if (!grp) throw Errors.badRequest(`unknown escalation target: ${targetGroupName}`);
 
     await sql.query(
       `UPDATE tickets
