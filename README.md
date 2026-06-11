@@ -27,6 +27,7 @@ apps/
          - helpdesk analytics (Overview + Agent Analysis) — KPIs, issue
            breakdown, priority/severity donuts, volume trend, agent leaderboards,
            resolution-vs-rating scatter (modeled on an IT Helpdesk Power BI dashboard*)
+         - service catalog (workflow-backed request fulfillment) + ConMon panel
          - animated 404 page
          - shadcn/21st.dev-style component library (vendored, not CDN)
 ```
@@ -103,7 +104,19 @@ npm run bootstrap     # install + db up + migrate + seed (one shot)
 | Q Audit logging | `apps/api/src/modules/audit` |
 | U Event bus | `apps/api/src/events` |
 | O Reporting/analytics | `apps/api/src/modules/analytics`, `apps/web/app/(app)/analytics` |
+| Request fulfillment + ConMon | `apps/api/src/modules/catalog`, `conmon`; [workflows doc](docs/nexus/workflows/service-desk-workflows.md); `apps/web/app/(app)/catalog` |
 | W UX screens | `apps/web/app/*` |
+
+### Lite Helpdesk operating model
+
+Tiered support with a **single accountable owner** per ticket — escalation
+**reassigns** ownership (never CC). Tiers: Tier 1 Helpdesk Analyst → Tier 2 M365
+Administrator → Security Operations → Engagement Manager → Customer ISSM/AO. The
+in-scope activities (user provisioning, deprovisioning/offboarding, password
+resets/unlocks, group changes, license assignment, remote support) and **Continuous
+Monitoring (ConMon)** are implemented as a **service catalog** with per-request
+fulfillment task-checklists, approval gates, tier routing, and SLAs — see the
+[workflows runbook](docs/nexus/workflows/service-desk-workflows.md).
 
 \* The helpdesk analytics view's metrics and layout are modeled on the
 [IT-Helpdesk-Dashboard](https://github.com/brenden-DS/IT-Helpdesk-Dashboard) Power BI

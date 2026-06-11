@@ -9,6 +9,7 @@ import { Avatar, AvatarFallback } from './ui/avatar';
 
 const NAV: Array<{ href: string; label: string; icon: React.ReactNode; anyPerm?: string[] }> = [
   { href: '/dashboard', label: 'Dashboard', icon: <IconGrid /> },
+  { href: '/catalog', label: 'Service catalog', icon: <IconCatalog /> },
   { href: '/tickets', label: 'Tickets', icon: <IconTicket /> },
   { href: '/analytics', label: 'Analytics', icon: <IconChart />, anyPerm: ['report.read.operational', 'report.read.customer'] },
   { href: '/posture', label: 'Posture', icon: <IconShield />, anyPerm: ['posture.read'] },
@@ -102,6 +103,7 @@ function titleFor(path: string): string {
   if (path.startsWith('/tickets/new')) return 'Submit a ticket';
   if (path.startsWith('/tickets/')) return 'Ticket';
   if (path.startsWith('/tickets')) return 'Tickets';
+  if (path.startsWith('/catalog')) return 'Service catalog';
   if (path.startsWith('/posture')) return 'Security posture';
   if (path.startsWith('/analytics')) return 'Helpdesk analytics';
   if (path.startsWith('/audit')) return 'Audit log';
@@ -115,3 +117,4 @@ function IconShield() { return <svg width="18" height="18" viewBox="0 0 24 24" f
 function IconScroll() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M8 3h9a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H8M8 3a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2M8 3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2M12 8h4M12 12h4"/></svg>; }
 function IconBolt() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L4.5 13.5H11l-1 8.5L19.5 10H13l0-8z"/></svg>; }
 function IconChart() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 3v18h18"/><rect x="7" y="11" width="3" height="6" rx="1"/><rect x="12" y="7" width="3" height="10" rx="1"/><rect x="17" y="13" width="3" height="4" rx="1"/></svg>; }
+function IconCatalog() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 17.5h7M17.5 14v7"/></svg>; }

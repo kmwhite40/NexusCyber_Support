@@ -1,7 +1,7 @@
 'use client';
 import * as React from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { api, ApiError, type Ticket } from '@/lib/api';
+import { api, ApiError, type Ticket, TIER_GROUPS } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
 import { Card, CardHeader, CardTitle, CardBody, Button, Textarea, Badge, Select } from '@/components/ui/primitives';
 import { Skeleton } from '@/components/ui/data';
@@ -56,10 +56,47 @@ export default function TicketDetailPage() {
     }
   }
 
+  const [escTarget, setEscTarget] = React.useState(TIER_GROUPS[1]);
+  async function escalate() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post(`/tickets/${id}/escalate`, { targetGroup: escTarget });
+      load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.detail : 'Escalation failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function completeTask(taskId: string) {
+    setBusy(true);
+    try {
+      await api.post(`/tickets/${id}/tasks/${taskId}/complete`, {});
+      load();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function decide(approve: boolean) {
+    setBusy(true);
+    try {
+      await api.post(`/tickets/${id}/approve`, { approve });
+      load();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (error) return <Card><CardBody><p className="text-sm text-danger">{error}</p></CardBody></Card>;
   if (!ticket) return <div className="space-y-3"><Skeleton className="h-8 w-1/3" /><Skeleton className="h-64" /></div>;
 
   const isAgent = me?.plane === 'nexus';
+  const tasks = ticket.tasks ?? [];
+  const pendingApproval = ticket.approvals?.find((a) => a.status === 'requested');
+  const canApprove = can('customer.admin.manage_users') || can('ticket.assign');
   const nextStates: Record<string, string[]> = {
     new: ['assigned'], triage: ['assigned', 'in_progress'], assigned: ['in_progress'],
     in_progress: ['waiting_customer', 'resolved'], waiting_customer: ['in_progress', 'resolved'],
@@ -92,9 +129,68 @@ export default function TicketDetailPage() {
         )}
       </div>
 
+      {/* Approval gate (service requests) */}
+      {pendingApproval && (
+        <Card className="border-warning/40">
+          <CardBody className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-sm">
+              <Badge tone="warning">approval required</Badge>
+              <span className="text-muted">This service request is pending approval before fulfillment.</span>
+            </div>
+            {canApprove && (
+              <div className="flex gap-2">
+                <Button size="sm" onClick={() => decide(true)} disabled={busy}>Approve</Button>
+                <Button size="sm" variant="danger" onClick={() => decide(false)} disabled={busy}>Reject</Button>
+              </div>
+            )}
+          </CardBody>
+        </Card>
+      )}
+
+      {/* Escalate = reassign ownership to a tier (single accountable owner) */}
+      {isAgent && can('ticket.escalate') && (
+        <Card>
+          <CardBody className="flex flex-wrap items-center gap-3">
+            <span className="text-xs text-muted">Escalate (reassigns ownership to a tier):</span>
+            <Select className="h-9 w-64" value={escTarget} onChange={(e) => setEscTarget(e.target.value)}>
+              {TIER_GROUPS.map((g) => <option key={g} value={g}>{g}</option>)}
+            </Select>
+            <Button size="sm" variant="subtle" onClick={escalate} disabled={busy}>Escalate</Button>
+          </CardBody>
+        </Card>
+      )}
+
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Conversation */}
         <div className="space-y-5 lg:col-span-2">
+          {tasks.length > 0 && (
+            <Card>
+              <CardHeader><CardTitle>Fulfillment workflow</CardTitle></CardHeader>
+              <CardBody className="space-y-2">
+                {tasks.map((t) => (
+                  <div key={t.id} className="flex items-center gap-3 rounded-md border border-border bg-surface-2/40 px-3 py-2">
+                    <span
+                      className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border text-[10px] ${
+                        t.status === 'done' ? 'border-success text-success' : t.status === 'skipped' ? 'border-muted text-muted' : 'border-border text-muted'
+                      }`}
+                    >
+                      {t.status === 'done' ? '✓' : t.status === 'skipped' ? '–' : t.position + 1}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-medium text-fg">{t.label}</div>
+                      <div className="text-[10px] text-muted">{t.assignee_role}{t.automatable ? ' · automatable' : ''}</div>
+                    </div>
+                    {t.status === 'pending' && isAgent && can('ticket.update') ? (
+                      <Button size="sm" variant="outline" onClick={() => completeTask(t.id)} disabled={busy}>Complete</Button>
+                    ) : t.status !== 'pending' ? (
+                      <Badge tone={t.status === 'done' ? 'success' : 'neutral'}>{t.status}</Badge>
+                    ) : null}
+                  </div>
+                ))}
+              </CardBody>
+            </Card>
+          )}
+
           <Card>
             <CardHeader><CardTitle>Description</CardTitle></CardHeader>
             <CardBody><p className="whitespace-pre-wrap text-sm text-fg/90">{ticket.description || 'No description provided.'}</p></CardBody>

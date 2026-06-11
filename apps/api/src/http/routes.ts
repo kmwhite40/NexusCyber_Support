@@ -9,6 +9,8 @@ import * as accounts from '../modules/accounts.js';
 import * as tickets from '../modules/tickets.js';
 import * as posture from '../modules/posture.js';
 import * as analytics from '../modules/analytics.js';
+import * as catalog from '../modules/catalog.js';
+import * as conmon from '../modules/conmon.js';
 import { computeScore, grade } from '../modules/posture.js';
 import { authorize } from '../authz/pdp.js';
 
@@ -215,6 +217,57 @@ export async function registerRoutes(app: FastifyInstance) {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const body = z.object({ to: z.string(), resolutionCode: z.string().optional(), closureNotes: z.string().optional() }).parse(req.body);
     return tickets.transition(p, id, body.to, body);
+  });
+
+  // Escalate = reassign ownership to a tier group (single accountable owner).
+  app.post('/api/v1/tickets/:id/escalate', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ targetGroup: z.string(), reason: z.string().optional() }).parse(req.body);
+    return tickets.escalate(p, id, body.targetGroup, body.reason);
+  });
+
+  // ---------------- Service catalog & request fulfillment ----------------
+  app.get('/api/v1/catalog', async (req) => {
+    await requirePrincipal(req);
+    return { data: await catalog.listCatalog() };
+  });
+
+  app.post('/api/v1/catalog/:key/request', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const { key } = z.object({ key: z.string() }).parse(req.params);
+    const body = z.object({ subject: z.string().optional(), description: z.string().optional(), organizationId: z.string().uuid().optional() }).parse(req.body);
+    const ticket = await catalog.createRequest(p, key, body);
+    reply.status(201);
+    return ticket;
+  });
+
+  app.post('/api/v1/tickets/:id/tasks/:taskId/complete', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id, taskId } = z.object({ id: z.string().uuid(), taskId: z.string().uuid() }).parse(req.params);
+    const body = z.object({ skip: z.boolean().optional() }).parse(req.body ?? {});
+    return catalog.completeTask(p, id, taskId, body.skip ?? false);
+  });
+
+  app.post('/api/v1/tickets/:id/approve', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ approve: z.boolean() }).parse(req.body);
+    return catalog.decideApproval(p, id, body.approve);
+  });
+
+  // ---------------- ConMon (continuous monitoring) ----------------
+  app.get('/api/v1/conmon/runs', async (req) => {
+    const p = await requirePrincipal(req);
+    const q = z.object({ organizationId: z.string().uuid().optional() }).parse(req.query);
+    const orgId = p.plane === 'customer' ? p.organizationId ?? undefined : q.organizationId;
+    return { data: await conmon.listRuns(p, orgId) };
+  });
+
+  app.post('/api/v1/conmon/run', async (req) => {
+    const p = await requirePrincipal(req);
+    const q = z.object({ organizationId: z.string().uuid().optional() }).parse(req.query);
+    return conmon.run(p, p.plane === 'customer' ? p.organizationId ?? undefined : q.organizationId);
   });
 
   // ---------------- Posture ----------------

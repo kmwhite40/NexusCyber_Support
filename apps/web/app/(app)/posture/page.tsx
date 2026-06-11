@@ -1,6 +1,6 @@
 'use client';
 import * as React from 'react';
-import { api, ApiError, type Finding } from '@/lib/api';
+import { api, ApiError, conmon, type Finding, type ConMonRun } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
 import { Card, CardHeader, CardTitle, CardBody, Button, Badge, Select } from '@/components/ui/primitives';
 import { DataTable, EmptyState, Skeleton, StatCard } from '@/components/ui/data';
@@ -15,13 +15,27 @@ export default function PosturePage() {
   const [busyId, setBusyId] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
 
+  const [runs, setRuns] = React.useState<ConMonRun[] | null>(null);
+
   const load = React.useCallback(() => {
     api.get<{ overall_score: number; grade: string }>('/posture/score').then(setScore).catch(() => {});
     const qs = new URLSearchParams();
     if (severity) qs.set('severity', severity);
     api.get<{ data: Finding[] }>(`/posture/findings?${qs}`).then((r) => setFindings(r.data)).catch(() => setFindings([]));
+    conmon.runs().then((r) => setRuns(r.data)).catch(() => setRuns([]));
   }, [severity]);
   React.useEffect(load, [load]);
+
+  const [runningConmon, setRunningConmon] = React.useState(false);
+  async function runConMon() {
+    setRunningConmon(true);
+    try {
+      await conmon.run();
+      load();
+    } finally {
+      setRunningConmon(false);
+    }
+  }
 
   async function toTicket(f: Finding) {
     setBusyId(f.id);
@@ -84,6 +98,40 @@ export default function PosturePage() {
           </Card>
         </div>
       </div>
+
+      {/* Continuous Monitoring */}
+      <Card>
+        <div className="flex items-center justify-between border-b border-border p-4">
+          <div>
+            <CardTitle>Continuous Monitoring (ConMon)</CardTitle>
+            <p className="mt-0.5 text-[11px] text-muted">NIST 800-137 / FedRAMP — scheduled checks raise findings &amp; remediation tickets.</p>
+          </div>
+          {canManage && (
+            <Button size="sm" variant="outline" onClick={runConMon} disabled={runningConmon}>
+              {runningConmon ? 'Running…' : 'Run checks now'}
+            </Button>
+          )}
+        </div>
+        <CardBody>
+          {!runs ? (
+            <Skeleton className="h-20" />
+          ) : runs.length === 0 ? (
+            <EmptyState title="No ConMon runs yet" description={canManage ? 'Run checks to populate continuous-monitoring history.' : 'Continuous monitoring history will appear here.'} />
+          ) : (
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {runs.slice(0, 12).map((r, i) => (
+                <div key={i} className="flex items-center justify-between rounded-md border border-border bg-surface-2/40 px-3 py-2">
+                  <div className="min-w-0">
+                    <div className="truncate text-xs font-medium text-fg">{r.name ?? r.check_key}</div>
+                    <div className="text-[10px] text-muted">{r.domain} · {new Date(r.ran_at).toLocaleString()}</div>
+                  </div>
+                  <Badge tone={r.result === 'finding' ? 'danger' : r.result === 'pass' ? 'success' : 'warning'}>{r.result}</Badge>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardBody>
+      </Card>
 
       <Card>
         <div className="flex items-center justify-between border-b border-border p-4">

@@ -32,6 +32,7 @@ It is written to be credible and actionable for engineering execution, product p
 | [12-risk-adr-diagrams.md](./12-risk-adr-diagrams.md) | AB, AC, AD | Risk register, ADRs, diagrams |
 | [13-competitors.md](./13-competitors.md) | 6 | Competitor & market analysis, differentiation |
 | [14-final-deliverables.md](./14-final-deliverables.md) | AE | Deliverables index, open questions, assumptions, validation checklist |
+| [workflows/service-desk-workflows.md](./workflows/service-desk-workflows.md) | — | Lite Helpdesk tier model + in-scope request workflows (provisioning, offboarding, password/unlock, group, license, remote support) + ConMon |
 
 ## 2. Conventions
 

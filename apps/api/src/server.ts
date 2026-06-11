@@ -5,6 +5,7 @@ import { logger } from './logger.js';
 import { registerRoutes } from './http/routes.js';
 import { registerNotificationHandlers } from './modules/notifications.js';
 import { startSlaSweeper } from './jobs/sla-sweeper.js';
+import { startConMonScheduler } from './modules/conmon.js';
 
 async function main() {
   // Fastify gets a logger config (not a pino instance) to keep its FastifyBaseLogger
@@ -28,6 +29,9 @@ async function main() {
 
   // Background SLA evaluation sweep (warning/breach), idempotent.
   startSlaSweeper();
+
+  // Continuous Monitoring scheduler (NIST 800-137 / FedRAMP ConMon), idempotent findings.
+  startConMonScheduler();
 
   await app.listen({ port: config.port, host: '0.0.0.0' });
   logger.info(`Nexus API listening on :${config.port} (enclave=${config.enclave})`);

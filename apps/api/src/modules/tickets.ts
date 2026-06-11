@@ -175,7 +175,40 @@ export async function getTicket(actor: Principal, id: string) {
       await sql.query('SELECT * FROM ticket_events WHERE ticket_id=$1 ORDER BY created_at', [id])
     ).rows;
     const slas = (await sql.query('SELECT * FROM sla_instances WHERE ticket_id=$1', [id])).rows;
-    return { ...ticket, comments, events, slas };
+    const tasks = (await sql.query('SELECT * FROM service_request_tasks WHERE ticket_id=$1 ORDER BY position', [id])).rows;
+    const approvals = (await sql.query('SELECT * FROM approvals WHERE subject_id=$1', [id])).rows;
+    return { ...ticket, comments, events, slas, tasks, approvals };
+  });
+}
+
+/**
+ * Escalate = REASSIGN ownership to the target tier group and notify (never CC).
+ * Enforces the single-accountable-owner rule (docs/nexus/workflows §1.1): the ticket
+ * is transferred to the escalation target's queue; the prior owner is released.
+ */
+export async function escalate(actor: Principal, id: string, targetGroupName: string, reason?: string) {
+  authorize(actor, 'ticket.escalate');
+  return withOrgContext(orgContextFor(actor), async (sql) => {
+    const t = (await sql.query('SELECT organization_id, assignment_group_id, assigned_agent_id, status FROM tickets WHERE id=$1', [id])).rows[0];
+    if (!t) throw Errors.notFound('ticket not found');
+    const grp = (await sql.query("SELECT id, name FROM assignment_groups WHERE name=$1 AND scope='nexus'", [targetGroupName])).rows[0];
+    if (!grp) throw Errors.badRequest(`unknown escalation target: ${targetGroupName}`);
+
+    await sql.query(
+      `UPDATE tickets
+          SET assignment_group_id=$1, assigned_agent_id=NULL,
+              status = CASE WHEN status IN ('new','triage') THEN 'assigned' ELSE status END
+        WHERE id=$2`,
+      [grp.id, id],
+    );
+    await sql.query(
+      `INSERT INTO ticket_events (organization_id, ticket_id, actor_id, event_type, detail)
+       VALUES ($1,$2,$3,'escalated',$4)`,
+      [t.organization_id, id, actor.id, { to: grp.name, reason: reason ?? null, reassigned: true, from_agent: t.assigned_agent_id }],
+    );
+    await audit(actor, { action: 'ticket.escalate', organizationId: t.organization_id, resourceType: 'ticket', resourceId: id, detail: { to: grp.name, reason } });
+    publish('ticket.escalated', t.organization_id, { ticket_id: id, org_id: t.organization_id, reason: reason ?? '', to_target: grp.name });
+    return (await sql.query('SELECT * FROM tickets WHERE id=$1', [id])).rows[0];
   });
 }
 

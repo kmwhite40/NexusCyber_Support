@@ -262,6 +262,156 @@ async function run() {
       await flush();
     }
 
+    // ---- Tier assignment groups (the Lite Helpdesk operating model) ----
+    const tierGroups = [
+      'Tier 1 — Helpdesk Analyst',
+      'Tier 2 — M365 Administrator',
+      'Security Operations',
+      'Engagement Management',
+    ];
+    for (const name of tierGroups) {
+      const found = await sql.query("SELECT 1 FROM assignment_groups WHERE name=$1 AND scope='nexus'", [name]);
+      if (!found.rows[0]) {
+        await sql.query("INSERT INTO assignment_groups (scope, name) VALUES ('nexus',$1)", [name]);
+      }
+    }
+
+    // ---- Service catalog (request fulfillment workflows) ----
+    const T1 = 'Tier 1 — Helpdesk Analyst';
+    const T2 = 'Tier 2 — M365 Administrator';
+    const SEC = 'Security Operations';
+    const step = (key: string, label: string, role: string, automatable = false) => ({ key, label, role, automatable });
+
+    const catalog = [
+      {
+        key: 'user.provisioning', name: 'New user creation & provisioning', category: 'Identity',
+        ticket_type: 'access_request', owning_tier: T2, escalates_to: 'Engagement Management',
+        requires_approval: true, approver_hint: 'Manager / Org Admin', default_priority: 'P3',
+        security_class: 'privileged', sla_response_min: 60, sla_resolution_min: 480,
+        steps: [
+          step('triage', 'Tier 1: validate request & role/baseline', 'Tier1'),
+          step('approval', 'Manager / Org Admin approval', 'OrgAdmin'),
+          step('create_identity', 'Create identity in Entra ID', 'Tier2', true),
+          step('baseline', 'Assign baseline groups + licenses', 'Tier2', true),
+          step('enforce_ca', 'Enforce MFA + Conditional Access baseline', 'Tier2', true),
+          step('verify', 'Verify access vs baseline', 'Tier2'),
+          step('notify', 'Notify requester + new user', 'Tier2', true),
+        ],
+      },
+      {
+        key: 'user.offboarding', name: 'Deprovisioning & offboarding', category: 'Identity',
+        ticket_type: 'access_request', owning_tier: T2, escalates_to: 'Security Operations',
+        requires_approval: true, approver_hint: 'HR / Manager (+ SecOps if risky)', default_priority: 'P2',
+        security_class: 'security', sla_response_min: 30, sla_resolution_min: 240,
+        steps: [
+          step('triage', 'Tier 1: verify authorization', 'Tier1'),
+          step('approval', 'HR/Manager approval', 'OrgAdmin'),
+          step('disable', 'Disable account + revoke sessions/tokens', 'Tier2', true),
+          step('remove_groups', 'Remove group memberships + admin roles', 'Tier2', true),
+          step('reclaim', 'Reclaim licenses', 'Tier2', true),
+          step('legal_hold', 'Legal-hold check; preserve or convert mailbox', 'SecurityAnalyst'),
+          step('evidence', 'Record revocation + reclamation evidence', 'Tier2'),
+        ],
+      },
+      {
+        key: 'account.password_reset', name: 'Password reset', category: 'Accounts',
+        ticket_type: 'service_request', owning_tier: T1, escalates_to: 'Security Operations',
+        requires_approval: false, approver_hint: null, default_priority: 'P3',
+        security_class: 'standard', sla_response_min: 15, sla_resolution_min: 60,
+        steps: [
+          step('verify_id', 'Verify requester identity (anti social-engineering)', 'Tier1'),
+          step('reset', 'Reset password + force change at next sign-in', 'Tier1', true),
+          step('notify', 'Notify via verified channel', 'Tier1', true),
+        ],
+      },
+      {
+        key: 'account.unlock', name: 'Account unlock', category: 'Accounts',
+        ticket_type: 'service_request', owning_tier: T1, escalates_to: 'Security Operations',
+        requires_approval: false, approver_hint: null, default_priority: 'P3',
+        security_class: 'standard', sla_response_min: 15, sla_resolution_min: 60,
+        steps: [
+          step('verify_id', 'Verify requester identity', 'Tier1'),
+          step('unlock', 'Unlock account; check lockout cause', 'Tier1', true),
+          step('notify', 'Notify requester', 'Tier1', true),
+        ],
+      },
+      {
+        key: 'group.membership_change', name: 'Group membership change', category: 'Identity',
+        ticket_type: 'access_request', owning_tier: T1, escalates_to: 'Tier 2 — M365 Administrator',
+        requires_approval: true, approver_hint: 'Group owner (privileged groups only)', default_priority: 'P3',
+        security_class: 'privileged', sla_response_min: 30, sla_resolution_min: 240,
+        steps: [
+          step('triage', 'Tier 1: classify group (standard vs privileged)', 'Tier1'),
+          step('approval', 'Owner/Org Admin approval (privileged only, SoD)', 'OrgAdmin'),
+          step('modify', 'Modify membership in Entra ID', 'Tier1', true),
+          step('verify', 'Verify least-privilege effective access', 'Tier1'),
+        ],
+      },
+      {
+        key: 'license.assignment', name: 'License assignment / reassignment', category: 'Licensing',
+        ticket_type: 'service_request', owning_tier: T1, escalates_to: 'Engagement Management',
+        requires_approval: true, approver_hint: 'Cost owner (paid SKUs only)', default_priority: 'P4',
+        security_class: 'standard', sla_response_min: 60, sla_resolution_min: 240,
+        steps: [
+          step('check', 'Check SKU availability', 'Tier1', true),
+          step('approval', 'Cost-owner approval (paid SKUs)', 'OrgAdmin'),
+          step('reclaim', 'Reclaim from prior user (reassignment)', 'Tier1', true),
+          step('assign', 'Assign / verify license active', 'Tier1', true),
+        ],
+      },
+      {
+        key: 'support.remote_session', name: 'Remote support (business hours)', category: 'Support',
+        ticket_type: 'incident', owning_tier: T1, escalates_to: 'Tier 2 — M365 Administrator',
+        requires_approval: false, approver_hint: 'End-user consent required', default_priority: 'P3',
+        security_class: 'standard', sla_response_min: 30, sla_resolution_min: 240,
+        steps: [
+          step('consent', 'Obtain end-user consent for remote session', 'Tier1'),
+          step('session', 'Establish session via approved tool', 'Tier1'),
+          step('resolve', 'Troubleshoot / resolve (reassign to Tier 2 if M365)', 'Tier1'),
+          step('evidence', 'Session log/recording -> evidence', 'Tier1'),
+        ],
+      },
+    ];
+
+    for (const item of catalog) {
+      await sql.query(
+        `INSERT INTO service_catalog_items
+           (key,name,category,description,ticket_type,owning_tier,escalates_to,requires_approval,
+            approver_hint,default_priority,security_class,sla_response_min,sla_resolution_min,fulfillment_steps)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+         ON CONFLICT (key) DO UPDATE SET
+           name=EXCLUDED.name, owning_tier=EXCLUDED.owning_tier, escalates_to=EXCLUDED.escalates_to,
+           requires_approval=EXCLUDED.requires_approval, fulfillment_steps=EXCLUDED.fulfillment_steps,
+           sla_response_min=EXCLUDED.sla_response_min, sla_resolution_min=EXCLUDED.sla_resolution_min`,
+        [
+          item.key, item.name, item.category, item.name, item.ticket_type, item.owning_tier,
+          item.escalates_to, item.requires_approval, item.approver_hint, item.default_priority,
+          item.security_class, item.sla_response_min, item.sla_resolution_min, JSON.stringify(item.steps),
+        ],
+      );
+    }
+
+    // ---- ConMon checks ----
+    const conmonChecks = [
+      ['mfa_coverage', 'MFA coverage ≥ threshold', 'identity', 1, ['IA-2'], 'high'],
+      ['ca_baseline', 'Conditional Access baseline present', 'identity', 1, ['AC-2', 'AC-3'], 'high'],
+      ['priv_review', 'Privileged / standing-admin review', 'privileged', 7, ['AC-6', 'AC-2'], 'high'],
+      ['vuln_scan', 'Vulnerability scan (criticals)', 'vuln', 7, ['RA-5', 'SI-2'], 'critical'],
+      ['patch_compliance', 'Patch compliance ≥ threshold', 'patch', 7, ['SI-2'], 'high'],
+      ['device_compliance', 'Device compliance (Intune)', 'device', 7, ['CM-6'], 'moderate'],
+      ['email_security', 'Email security (SPF/DKIM/DMARC)', 'email', 7, ['SC-8', 'SI-8'], 'high'],
+      ['backup_success', 'Backup success', 'backup', 1, ['CP-9'], 'high'],
+      ['audit_review', 'Audit-log review / SIEM health', 'audit', 1, ['AU-6', 'AU-12'], 'moderate'],
+      ['poam_aging', 'POA&M aging / expiring exceptions', 'compliance', 7, ['CA-5'], 'moderate'],
+    ] as const;
+    for (const [key, name, domain, cadence, refs, severity] of conmonChecks) {
+      await sql.query(
+        `INSERT INTO conmon_checks (key,name,domain,cadence_days,control_refs,severity)
+         VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (key) DO NOTHING`,
+        [key, name, domain, cadence, refs as unknown as string[], severity],
+      );
+    }
+
     // Demo posture findings for Acme
     const fcount = await sql.query("SELECT count(*)::int AS n FROM posture_findings WHERE organization_id=$1", [orgs.Acme]);
     if (fcount.rows[0].n === 0) {

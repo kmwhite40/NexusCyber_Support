@@ -71,10 +71,60 @@ export interface Ticket {
   resolution_due_at?: string | null;
   tags: string[];
   created_at: string;
+  category?: string;
+  assignment_group_id?: string | null;
   comments?: Array<{ id: string; body: string; visibility: string; created_at: string; author_id: string }>;
   events?: Array<{ id: string; event_type: string; detail: any; created_at: string }>;
   slas?: Array<{ id: string; metric: string; state: string; due_at: string }>;
+  tasks?: Array<{ id: string; step_key: string; label: string; assignee_role: string | null; status: string; automatable: boolean; position: number }>;
+  approvals?: Array<{ id: string; status: string }>;
 }
+
+export interface CatalogItem {
+  key: string;
+  name: string;
+  category: string;
+  description?: string;
+  ticket_type: string;
+  owning_tier: string;
+  escalates_to: string | null;
+  requires_approval: boolean;
+  approver_hint: string | null;
+  default_priority: string;
+  security_class: string;
+  sla_response_min: number;
+  sla_resolution_min: number;
+  fulfillment_steps: Array<{ key: string; label: string; role: string; automatable?: boolean }>;
+}
+
+export interface ConMonRun {
+  check_key: string;
+  result: string;
+  ran_at: string;
+  name: string | null;
+  domain: string | null;
+  severity: string | null;
+  control_refs: string[] | null;
+}
+
+export const catalog = {
+  list: () => api.get<{ data: CatalogItem[] }>('/catalog'),
+  request: (key: string, body: { subject?: string; description?: string; organizationId?: string }) =>
+    api.post<Ticket>(`/catalog/${key}/request`, body),
+};
+
+export const conmon = {
+  runs: () => api.get<{ data: ConMonRun[] }>('/conmon/runs'),
+  run: () => api.post<{ orgs: number; checks: number; findings: number }>('/conmon/run'),
+};
+
+// Tier groups available as escalation targets (mirrors seeded assignment_groups).
+export const TIER_GROUPS = [
+  'Tier 1 — Helpdesk Analyst',
+  'Tier 2 — M365 Administrator',
+  'Security Operations',
+  'Engagement Management',
+];
 export interface Finding {
   id: string;
   title: string;
