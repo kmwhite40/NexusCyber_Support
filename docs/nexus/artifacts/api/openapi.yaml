@@ -1,0 +1,605 @@
+openapi: 3.1.0
+info:
+  title: Nexus Platform API
+  version: 1.0.0-draft
+  description: >
+    REST API for the Nexus enterprise ITSM / MSP / posture platform.
+    Reference implementation of docs/nexus/09-data-api-events.md (Section T).
+    All endpoints are tenant-scoped server-side from the validated principal;
+    a client-supplied organization is NEVER trusted for authorization.
+  contact: { name: Nexus Platform Engineering }
+servers:
+  - url: https://api.nexus.example.com/api/v1
+    description: Commercial enclave
+  - url: https://api.nexus.example.us/api/v1
+    description: Government enclave (Azure Government / GCC High)
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Auth
+  - name: Organizations
+  - name: Users
+  - name: Tickets
+  - name: SLA
+  - name: OnCall
+  - name: Posture
+  - name: CMDB
+  - name: Knowledge
+  - name: Automation
+  - name: Integrations
+  - name: Audit
+
+paths:
+  # ---------------- Auth ----------------
+  /auth/token:
+    post:
+      tags: [Auth]
+      summary: Exchange an OIDC authorization code for a Nexus session
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, code_verifier, idp_id]
+              properties:
+                code: { type: string }
+                code_verifier: { type: string }
+                idp_id: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Session established
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        '401': { $ref: '#/components/responses/Problem' }
+  /auth/stepup:
+    post:
+      tags: [Auth]
+      summary: Complete a step-up (re-MFA) challenge for a privileged action
+      responses:
+        '200': { description: Step-up satisfied }
+        '401': { $ref: '#/components/responses/Problem' }
+  /me:
+    get:
+      tags: [Auth]
+      summary: Current principal, roles, and effective capabilities
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Principal' }
+
+  # ---------------- Organizations ----------------
+  /organizations:
+    get:
+      tags: [Organizations]
+      summary: List organizations in scope
+      description: Requires admin.* (Nexus) — customers cannot list other orgs.
+      parameters:
+        - { $ref: '#/components/parameters/cursor' }
+        - { $ref: '#/components/parameters/limit' }
+        - in: query, name: status, schema: { type: string }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/Organization' } }
+        '403': { $ref: '#/components/responses/Problem' }
+    post:
+      tags: [Organizations]
+      summary: Create a customer organization
+      description: 'Permission: admin.superuser or platform admin. Audited.'
+      parameters: [ { $ref: '#/components/parameters/idempotencyKey' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrganizationCreate' }
+      responses:
+        '201':
+          headers: { Location: { schema: { type: string } } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/Organization' } } }
+        '403': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /organizations/{orgId}:
+    parameters: [ { $ref: '#/components/parameters/orgId' } ]
+    get:
+      tags: [Organizations]
+      summary: Get an organization
+      responses:
+        '200': { content: { application/json: { schema: { $ref: '#/components/schemas/Organization' } } } }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    patch:
+      tags: [Organizations]
+      summary: Update org settings/branding/notification rules
+      responses:
+        '200': { content: { application/json: { schema: { $ref: '#/components/schemas/Organization' } } } }
+
+  # ---------------- Users ----------------
+  /organizations/{orgId}/users:
+    parameters: [ { $ref: '#/components/parameters/orgId' } ]
+    get:
+      tags: [Users]
+      summary: List users in an organization
+      description: 'Permission: customer.admin.manage_users (own org) or Nexus scope.'
+      parameters: [ { $ref: '#/components/parameters/cursor' }, { $ref: '#/components/parameters/limit' } ]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties: { data: { type: array, items: { $ref: '#/components/schemas/User' } } }
+    post:
+      tags: [Users]
+      summary: Invite / provision a user (or JIT on first SSO)
+      parameters: [ { $ref: '#/components/parameters/idempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/UserCreate' } } }
+      responses:
+        '201': { content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+
+  # ---------------- Tickets ----------------
+  /tickets:
+    get:
+      tags: [Tickets]
+      summary: List tickets (scoped to principal)
+      description: >
+        Server scopes to the principal's org (customer) or assigned_orgs (Nexus).
+        Customer end users see only ticket.read.own; org admins see ticket.read.organization.
+      parameters:
+        - { $ref: '#/components/parameters/cursor' }
+        - { $ref: '#/components/parameters/limit' }
+        - in: query, name: status, schema: { type: string }
+        - in: query, name: assignee, schema: { type: string, description: "'me' or user id" }
+        - in: query, name: priority, schema: { type: string, enum: [P1,P2,P3,P4] }
+        - in: query, name: sort, schema: { type: string, example: '-resolution_due_at' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties: { data: { type: array, items: { $ref: '#/components/schemas/Ticket' } } }
+    post:
+      tags: [Tickets]
+      summary: Create a ticket
+      description: 'Permission: ticket.create. Attachments are malware-scanned before becoming available. Emits ticket.created.'
+      parameters: [ { $ref: '#/components/parameters/idempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/TicketCreate' } } }
+      responses:
+        '201':
+          headers: { Location: { schema: { type: string } } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/Ticket' } } }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { description: 'Idempotency-Key replay — returns the original resource' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /tickets/{ticketId}:
+    parameters: [ { $ref: '#/components/parameters/ticketId' } ]
+    get:
+      tags: [Tickets]
+      summary: Get a ticket
+      description: Object-level authorization enforced (IDOR-safe).
+      responses:
+        '200': { content: { application/json: { schema: { $ref: '#/components/schemas/Ticket' } } } }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    patch:
+      tags: [Tickets]
+      summary: Update ticket fields
+      responses:
+        '200': { content: { application/json: { schema: { $ref: '#/components/schemas/Ticket' } } } }
+  /tickets/{ticketId}/assign:
+    parameters: [ { $ref: '#/components/parameters/ticketId' } ]
+    post:
+      tags: [Tickets]
+      summary: Assign a ticket to a group/agent
+      description: 'Permission: ticket.assign. Emits ticket.assigned.'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                assignment_group_id: { type: string, format: uuid }
+                assigned_agent_id: { type: string, format: uuid }
+      responses:
+        '200': { content: { application/json: { schema: { $ref: '#/components/schemas/Ticket' } } } }
+  /tickets/{ticketId}/escalate:
+    parameters: [ { $ref: '#/components/parameters/ticketId' } ]
+    post:
+      tags: [Tickets]
+      summary: Escalate a ticket (may page on-call)
+      description: 'Permission: ticket.escalate. Emits ticket.escalated and possibly oncall.page_created.'
+      responses:
+        '202': { description: Escalation accepted }
+  /tickets/{ticketId}/comments:
+    parameters: [ { $ref: '#/components/parameters/ticketId' } ]
+    post:
+      tags: [Tickets]
+      summary: Add a customer-visible comment
+      description: 'Permission: ticket.comment. Internal notes use a separate endpoint and are never exposed to the customer plane.'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [body], properties: { body: { type: string } } } } }
+      responses:
+        '201': { description: Comment added }
+  /tickets/{ticketId}/attachments:
+    parameters: [ { $ref: '#/components/parameters/ticketId' } ]
+    post:
+      tags: [Tickets]
+      summary: Request a pre-signed upload URL for an attachment
+      description: File becomes available only after malware scan returns clean.
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  attachment_id: { type: string, format: uuid }
+                  upload_url: { type: string }
+                  expires_at: { type: string, format: date-time }
+
+  # ---------------- SLA ----------------
+  /tickets/{ticketId}/sla:
+    parameters: [ { $ref: '#/components/parameters/ticketId' } ]
+    get:
+      tags: [SLA]
+      summary: Get SLA instances/timers for a ticket
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/SlaInstance' } }
+
+  # ---------------- On-call ----------------
+  /oncall/pages/{pageId}/ack:
+    parameters: [ { in: path, name: pageId, required: true, schema: { type: string, format: uuid } } ]
+    post:
+      tags: [OnCall]
+      summary: Acknowledge an on-call page
+      description: 'Permission: oncall.acknowledge. Stops escalation for this page. Emits oncall.acknowledged.'
+      responses:
+        '200': { description: Acknowledged }
+        '409': { description: Already acknowledged or resolved }
+  /oncall/overrides:
+    post:
+      tags: [OnCall]
+      summary: Create an on-call override (PTO/swap)
+      description: 'Permission: oncall.override (or oncall.manage). Swaps require approval.'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/OncallOverride' } } }
+      responses:
+        '201': { description: Override created }
+
+  # ---------------- Posture ----------------
+  /posture/findings:
+    get:
+      tags: [Posture]
+      summary: List posture findings (scoped)
+      parameters:
+        - in: query, name: severity, schema: { type: string, enum: [critical,high,moderate,low,info] }
+        - in: query, name: status, schema: { type: string }
+        - { $ref: '#/components/parameters/cursor' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties: { data: { type: array, items: { $ref: '#/components/schemas/PostureFinding' } } }
+    post:
+      tags: [Posture]
+      summary: Create a posture finding
+      description: 'Permission: posture.finding.manage. May auto-spawn a remediation ticket with a remediation SLA.'
+      responses:
+        '201': { content: { application/json: { schema: { $ref: '#/components/schemas/PostureFinding' } } } }
+  /posture/findings/{findingId}/exception:
+    parameters: [ { in: path, name: findingId, required: true, schema: { type: string, format: uuid } } ]
+    post:
+      tags: [Posture]
+      summary: Request a risk exception
+      description: 'Permission: posture.request_exception. Approver (posture.approve_exception) MUST differ from requester. Requires expiry.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [justification, expires_at]
+              properties:
+                justification: { type: string }
+                compensating_controls: { type: string }
+                expires_at: { type: string, format: date-time }
+      responses:
+        '201': { description: Exception requested }
+  /posture/score:
+    get:
+      tags: [Posture]
+      summary: Get current posture score and trend for the org
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  overall_score: { type: number }
+                  grade: { type: string, enum: [A,B,C,D,F] }
+                  domains: { type: object, additionalProperties: { type: number } }
+                  trend: { type: array, items: { type: object, properties: { at: { type: string, format: date-time }, score: { type: number } } } }
+
+  # ---------------- CMDB ----------------
+  /cis:
+    get:
+      tags: [CMDB]
+      summary: List configuration items (scoped)
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties: { data: { type: array, items: { $ref: '#/components/schemas/ConfigurationItem' } } }
+    post:
+      tags: [CMDB]
+      summary: Create a configuration item
+      description: 'Permission: ci.write.'
+      responses:
+        '201': { content: { application/json: { schema: { $ref: '#/components/schemas/ConfigurationItem' } } } }
+
+  # ---------------- Knowledge ----------------
+  /kb/articles:
+    get:
+      tags: [Knowledge]
+      summary: Search knowledge articles (scoped to allowed KBs)
+      parameters:
+        - in: query, name: q, schema: { type: string }
+        - in: query, name: tag, schema: { type: string }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/KnowledgeArticle' } }
+
+  # ---------------- Automation ----------------
+  /automations/{ruleId}/simulate:
+    parameters: [ { in: path, name: ruleId, required: true, schema: { type: string, format: uuid } } ]
+    post:
+      tags: [Automation]
+      summary: Dry-run an automation rule (no side effects)
+      description: Returns the diff of intended actions without performing them.
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  intended_actions: { type: array, items: { type: object } }
+
+  # ---------------- Integrations ----------------
+  /integrations/{integrationId}/test:
+    parameters: [ { in: path, name: integrationId, required: true, schema: { type: string, format: uuid } } ]
+    post:
+      tags: [Integrations]
+      summary: Run a live, side-effect-safe integration probe
+      description: 'Permission: integration.test. Reports per-capability pass/fail with cloud context.'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cloud: { type: string }
+                  results: { type: object, additionalProperties: { type: string, enum: [pass, fail, not_supported, requires_validation] } }
+
+  # ---------------- Audit ----------------
+  /audit-logs:
+    get:
+      tags: [Audit]
+      summary: Read audit logs (scoped, read-only)
+      description: 'Permission: audit.read. Read access is itself audited. Source is immutable/hash-chained.'
+      parameters:
+        - in: query, name: actor, schema: { type: string }
+        - in: query, name: action, schema: { type: string }
+        - in: query, name: from, schema: { type: string, format: date-time }
+        - in: query, name: to, schema: { type: string, format: date-time }
+        - { $ref: '#/components/parameters/cursor' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties: { data: { type: array, items: { $ref: '#/components/schemas/AuditLog' } } }
+
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    cursor: { in: query, name: cursor, schema: { type: string }, description: Opaque pagination cursor }
+    limit: { in: query, name: limit, schema: { type: integer, default: 50, maximum: 200 } }
+    orgId: { in: path, name: orgId, required: true, schema: { type: string, format: uuid } }
+    ticketId: { in: path, name: ticketId, required: true, schema: { type: string, format: uuid } }
+    idempotencyKey:
+      in: header, name: Idempotency-Key, required: true
+      schema: { type: string }
+      description: Required on create/mutate; replays return the original result.
+  responses:
+    Problem:
+      description: RFC 7807 problem document
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+  schemas:
+    Problem:
+      type: object
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        correlation_id: { type: string }
+    Page:
+      type: object
+      properties:
+        page:
+          type: object
+          properties:
+            next_cursor: { type: string, nullable: true }
+            has_more: { type: boolean }
+    Session:
+      type: object
+      properties:
+        expires_at: { type: string, format: date-time }
+        principal: { $ref: '#/components/schemas/Principal' }
+    Principal:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        plane: { type: string, enum: [nexus, customer] }
+        organization_id: { type: string, format: uuid, nullable: true }
+        roles: { type: array, items: { type: string } }
+        capabilities: { type: array, items: { type: string } }
+        elevated: { type: boolean }
+    Organization:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        cloud: { type: string, enum: [commercial, gcc, gcchigh, azgov] }
+        status: { type: string }
+        data_boundary: { type: string }
+        cmk_enabled: { type: boolean }
+    OrganizationCreate:
+      type: object
+      required: [name, cloud, data_boundary]
+      properties:
+        name: { type: string }
+        cloud: { type: string, enum: [commercial, gcc, gcchigh, azgov] }
+        data_boundary: { type: string }
+        dedicated_db: { type: boolean, default: false }
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        plane: { type: string }
+        organization_id: { type: string, format: uuid, nullable: true }
+        email: { type: string, format: email }
+        display_name: { type: string }
+        status: { type: string }
+    UserCreate:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string, format: email }
+        display_name: { type: string }
+        role_keys: { type: array, items: { type: string } }
+    Ticket:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        ticket_number: { type: string }
+        organization_id: { type: string, format: uuid }
+        type: { type: string }
+        subject: { type: string }
+        status: { type: string }
+        priority: { type: string, enum: [P1,P2,P3,P4] }
+        severity: { type: string }
+        assigned_agent_id: { type: string, format: uuid, nullable: true }
+        response_due_at: { type: string, format: date-time, nullable: true }
+        resolution_due_at: { type: string, format: date-time, nullable: true }
+        tags: { type: array, items: { type: string } }
+        created_at: { type: string, format: date-time }
+    TicketCreate:
+      type: object
+      required: [type, subject, description]
+      properties:
+        type: { type: string, enum: [incident, service_request, access_request, customer_question, billing_support, security_event] }
+        subject: { type: string, maxLength: 300 }
+        description: { type: string }
+        affected_user_id: { type: string, format: uuid }
+        service_id: { type: string, format: uuid }
+        impact: { type: integer, minimum: 1, maximum: 4 }
+        urgency: { type: integer, minimum: 1, maximum: 4 }
+        custom_fields: { type: object }
+    SlaInstance:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        metric: { type: string, enum: [response, resolution, update, remediation] }
+        state: { type: string, enum: [running, paused, warning, met, breached] }
+        due_at: { type: string, format: date-time }
+        breached_at: { type: string, format: date-time, nullable: true }
+    OncallOverride:
+      type: object
+      required: [schedule_id, user_id, starts_at, ends_at]
+      properties:
+        schedule_id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        replaces_user_id: { type: string, format: uuid }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        reason: { type: string }
+    PostureFinding:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        domain: { type: string }
+        severity: { type: string, enum: [critical, high, moderate, low, info] }
+        risk_score: { type: number }
+        status: { type: string }
+        remediation_due_at: { type: string, format: date-time, nullable: true }
+        linked_ticket_id: { type: string, format: uuid, nullable: true }
+    ConfigurationItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        ci_class: { type: string }
+        name: { type: string }
+        criticality: { type: integer }
+        status: { type: string }
+    KnowledgeArticle:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        scope: { type: string }
+        tags: { type: array, items: { type: string } }
+    AuditLog:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        actor_id: { type: string, format: uuid, nullable: true }
+        action: { type: string }
+        resource_type: { type: string }
+        resource_id: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }

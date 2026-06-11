@@ -1,0 +1,218 @@
+// Account creation, login, and user provisioning.
+//   - registerCustomer: self-service signup -> creates an org + Org Admin user (+ local password)
+//   - loginLocal: email + password for local accounts
+//   - devLogin: email-only quick switch for seeded demo identities (non-production)
+//   - provisionUser: an Org Admin creates a user inside their org
+// See docs/nexus/02 §E (identity), §D.7 (tenant lifecycle), 01 §C.3.
+import { withSystemContext } from '../db/pool.js';
+import { hashPassword, verifyPassword } from '../auth/password.js';
+import { issueSession } from '../auth/session.js';
+import { loadPrincipal } from '../auth/principal.js';
+import { audit } from './audit.js';
+import { publish } from '../events/bus.js';
+import { config } from '../config.js';
+import { Errors } from '../errors.js';
+import type { Principal, SessionClaims } from '../types.js';
+
+function emailDomain(email: string): string {
+  return email.split('@')[1]?.toLowerCase() ?? '';
+}
+
+async function roleId(sql: import('../db/pool.js').Sql, key: string): Promise<string> {
+  const { rows } = await sql.query('SELECT id FROM roles WHERE key = $1', [key]);
+  if (!rows[0]) throw Errors.validation(`role ${key} not seeded`);
+  return rows[0].id;
+}
+
+export interface RegisterInput {
+  organizationName: string;
+  email: string;
+  displayName?: string;
+  password: string;
+  cloud?: 'commercial' | 'gcc' | 'gcchigh' | 'azgov';
+}
+
+export interface AuthResult {
+  token: string;
+  principal: Principal;
+}
+
+/** Self-service signup: create a customer organization and its first Org Admin. */
+export async function registerCustomer(input: RegisterInput): Promise<AuthResult> {
+  const email = input.email.trim().toLowerCase();
+  const domain = emailDomain(email);
+  if (!domain) throw Errors.validation('valid email required');
+  if (input.password.length < 10) throw Errors.validation('password must be at least 10 characters');
+
+  const result = await withSystemContext(async (sql) => {
+    // Reject duplicate customer email.
+    const dup = await sql.query("SELECT 1 FROM users WHERE plane='customer' AND email=$1", [email]);
+    if (dup.rows.length) throw Errors.conflict('an account with this email already exists');
+
+    await sql.query('BEGIN');
+    try {
+      const org = await sql.query(
+        `INSERT INTO organizations (name, cloud, enclave_id, status)
+         VALUES ($1,$2,$3,'active') RETURNING id`,
+        [input.organizationName, input.cloud ?? 'commercial', config.enclave],
+      );
+      const orgId = org.rows[0].id as string;
+
+      // Register + auto-verify the signup domain (in production this is a DNS/email challenge).
+      await sql.query(
+        `INSERT INTO organization_domains (organization_id, domain, verified_at, verification_method)
+         VALUES ($1,$2, now(), 'self_service_signup') ON CONFLICT (domain) DO NOTHING`,
+        [orgId, domain],
+      );
+
+      // Seed a posture profile and an SLA policy/calendar for the new org.
+      await sql.query(
+        `INSERT INTO posture_profiles (organization_id, scope_type, overall_score) VALUES ($1,'org', NULL)`,
+        [orgId],
+      );
+
+      const pw = await hashPassword(input.password);
+      const user = await sql.query(
+        `INSERT INTO users (plane, organization_id, email, display_name, password_hash)
+         VALUES ('customer',$1,$2,$3,$4) RETURNING id`,
+        [orgId, email, input.displayName ?? email, pw],
+      );
+      const userId = user.rows[0].id as string;
+
+      const adminRole = await roleId(sql, 'OrgAdmin');
+      await sql.query(
+        `INSERT INTO role_assignments (user_id, role_id, organization_id) VALUES ($1,$2,$3)`,
+        [userId, adminRole, orgId],
+      );
+
+      await sql.query('COMMIT');
+      return { orgId, userId };
+    } catch (err) {
+      await sql.query('ROLLBACK');
+      throw err;
+    }
+  });
+
+  const claims: Omit<SessionClaims, 'iat' | 'exp'> = {
+    sub: result.userId,
+    plane: 'customer',
+    email,
+    org: result.orgId,
+    roles: ['OrgAdmin'],
+  };
+  const token = issueSession(claims);
+  const principal = await loadPrincipal(claims as SessionClaims);
+
+  await audit(principal, {
+    action: 'account.registered',
+    organizationId: result.orgId,
+    resourceType: 'organization',
+    resourceId: result.orgId,
+    detail: { email },
+  });
+  publish('organization.created', result.orgId, { org_id: result.orgId, cloud: input.cloud ?? 'commercial' });
+  publish('user.created', result.orgId, { user_id: result.userId, org_id: result.orgId, plane: 'customer' });
+
+  return { token, principal };
+}
+
+/** Local-account login (email + password). */
+export async function loginLocal(email: string, password: string): Promise<AuthResult> {
+  const e = email.trim().toLowerCase();
+  const row = await withSystemContext(async (sql) => {
+    const { rows } = await sql.query(
+      `SELECT u.id, u.plane, u.organization_id, u.email, u.display_name, u.password_hash,
+              COALESCE(array_agg(r.key) FILTER (WHERE r.key IS NOT NULL), '{}') AS roles
+         FROM users u
+         LEFT JOIN role_assignments ra ON ra.user_id = u.id
+         LEFT JOIN roles r ON r.id = ra.role_id
+        WHERE u.email = $1
+        GROUP BY u.id`,
+      [e],
+    );
+    return rows[0];
+  });
+  if (!row || !row.password_hash) throw Errors.unauthorized('invalid credentials');
+  const ok = await verifyPassword(password, row.password_hash);
+  if (!ok) throw Errors.unauthorized('invalid credentials');
+
+  const claims: Omit<SessionClaims, 'iat' | 'exp'> = {
+    sub: row.id,
+    plane: row.plane,
+    email: row.email,
+    org: row.organization_id,
+    roles: row.roles,
+  };
+  const token = issueSession(claims);
+  const principal = await loadPrincipal(claims as SessionClaims);
+  await audit(principal, { action: 'auth.login', resourceType: 'user', resourceId: row.id });
+  return { token, principal };
+}
+
+/** Dev-only email login for seeded demo identities (no password). Gated to non-production. */
+export async function devLogin(email: string): Promise<AuthResult> {
+  if (config.isProduction) throw Errors.forbidden('dev login disabled in production');
+  const e = email.trim().toLowerCase();
+  const row = await withSystemContext(async (sql) => {
+    const { rows } = await sql.query(
+      `SELECT u.id, u.plane, u.organization_id, u.email,
+              COALESCE(array_agg(r.key) FILTER (WHERE r.key IS NOT NULL), '{}') AS roles
+         FROM users u
+         LEFT JOIN role_assignments ra ON ra.user_id = u.id
+         LEFT JOIN roles r ON r.id = ra.role_id
+        WHERE u.email = $1
+        GROUP BY u.id`,
+      [e],
+    );
+    return rows[0];
+  });
+  if (!row) throw Errors.notFound('no such demo user');
+  const claims: Omit<SessionClaims, 'iat' | 'exp'> = {
+    sub: row.id,
+    plane: row.plane,
+    email: row.email,
+    org: row.organization_id,
+    roles: row.roles,
+  };
+  const token = issueSession(claims);
+  const principal = await loadPrincipal(claims as SessionClaims);
+  return { token, principal };
+}
+
+/** Org Admin provisions a user inside their own organization. */
+export async function provisionUser(
+  actor: Principal,
+  orgId: string,
+  input: { email: string; displayName?: string; roleKey?: string; password?: string },
+): Promise<{ id: string }> {
+  const email = input.email.trim().toLowerCase();
+  return withSystemContext(async (sql) => {
+    const dup = await sql.query(
+      "SELECT 1 FROM users WHERE plane='customer' AND email=$1",
+      [email],
+    );
+    if (dup.rows.length) throw Errors.conflict('user already exists');
+
+    const pw = input.password ? await hashPassword(input.password) : null;
+    const user = await sql.query(
+      `INSERT INTO users (plane, organization_id, email, display_name, password_hash)
+       VALUES ('customer',$1,$2,$3,$4) RETURNING id`,
+      [orgId, email, input.displayName ?? email, pw],
+    );
+    const userId = user.rows[0].id as string;
+    const role = await roleId(sql, input.roleKey ?? 'EndUser');
+    await sql.query(
+      `INSERT INTO role_assignments (user_id, role_id, organization_id) VALUES ($1,$2,$3)`,
+      [userId, role, orgId],
+    );
+    await audit(actor, {
+      action: 'customer.admin.manage_users',
+      organizationId: orgId,
+      resourceType: 'user',
+      resourceId: userId,
+      detail: { email, role: input.roleKey ?? 'EndUser' },
+    });
+    publish('user.created', orgId, { user_id: userId, org_id: orgId, plane: 'customer' });
+    return { id: userId };
+  });
+}

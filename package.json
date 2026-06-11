@@ -1,0 +1,27 @@
+{
+  "name": "nexus-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Nexus enterprise ITSM / MSP / posture platform — reference implementation",
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "dev": "npm-run-all --parallel dev:api dev:web",
+    "dev:api": "npm --workspace apps/api run dev",
+    "dev:web": "npm --workspace apps/web run dev",
+    "build": "npm --workspace apps/api run build && npm --workspace apps/web run build",
+    "typecheck": "npm --workspace apps/api run typecheck && npm --workspace apps/web run typecheck",
+    "db:up": "docker compose up -d db",
+    "db:migrate": "npm --workspace apps/api run migrate",
+    "db:seed": "npm --workspace apps/api run seed",
+    "bootstrap": "npm install && npm run db:up && sleep 3 && npm run db:migrate && npm run db:seed"
+  },
+  "devDependencies": {
+    "npm-run-all": "^4.1.5"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

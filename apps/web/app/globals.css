@@ -1,0 +1,62 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Dark, modern control-plane palette (state-of-the-art design tokens). */
+  --bg: 222 47% 6%;
+  --surface: 222 40% 9%;
+  --surface-2: 222 36% 12%;
+  --border: 222 25% 18%;
+  --muted: 220 14% 60%;
+  --fg: 210 40% 98%;
+  --brand: 199 89% 52%;       /* cyan/azure */
+  --brand-fg: 222 47% 8%;
+  --accent: 262 83% 66%;      /* violet */
+  --success: 152 60% 45%;
+  --warning: 38 92% 55%;
+  --danger: 0 72% 58%;
+  --font-sans: 'Inter';
+}
+
+/* Optional per-tenant light brand override could redefine these on a wrapper. */
+
+* {
+  border-color: hsl(var(--border));
+}
+
+html, body {
+  background: hsl(var(--bg));
+  color: hsl(var(--fg));
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  background-image:
+    radial-gradient(60rem 60rem at 110% -10%, hsl(var(--brand) / 0.08), transparent 60%),
+    radial-gradient(50rem 50rem at -10% 10%, hsl(var(--accent) / 0.07), transparent 55%);
+  background-attachment: fixed;
+}
+
+/* Subtle scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+.glass {
+  background: linear-gradient(180deg, hsl(var(--surface) / 0.9), hsl(var(--surface) / 0.7));
+  backdrop-filter: blur(12px);
+}
+
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: hsl(var(--surface-2));
+}
+.skeleton::after {
+  content: '';
+  position: absolute; inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, hsl(var(--fg) / 0.05), transparent);
+  animation: shimmer 1.4s infinite;
+}
