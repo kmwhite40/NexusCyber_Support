@@ -9,8 +9,45 @@ import * as automation from '../modules/automation.js';
 import * as canned from '../modules/canned.js';
 import * as bulk from '../modules/bulk.js';
 import * as participants from '../modules/participants.js';
+import * as workflows from '../modules/workflows.js';
 
 export async function registerExtraRoutes(app: FastifyInstance): Promise<void> {
+  // ---------------- Configurable ticket workflows ----------------
+  app.get('/api/v1/workflows', async (req) => {
+    const p = await requirePrincipal(req);
+    return { data: await workflows.listWorkflows(p) };
+  });
+
+  app.get('/api/v1/workflows/:id', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return workflows.getWorkflow(p, id);
+  });
+
+  app.post('/api/v1/workflows', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const body = z.object({ ticketType: z.string().min(1), name: z.string().min(1), organizationId: z.string().uuid().nullable().optional() }).parse(req.body);
+    const wf = await workflows.createWorkflow(p, body);
+    reply.status(201);
+    return wf;
+  });
+
+  app.post('/api/v1/workflows/:id/transitions', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ fromStatus: z.string().min(1), toStatus: z.string().min(1) }).parse(req.body);
+    const row = await workflows.addTransition(p, id, body.fromStatus, body.toStatus);
+    reply.status(201);
+    return row;
+  });
+
+  app.delete('/api/v1/workflows/:id/transitions', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ fromStatus: z.string().min(1), toStatus: z.string().min(1) }).parse(req.body);
+    return workflows.removeTransition(p, id, body.fromStatus, body.toStatus);
+  });
+
   // ---------------- Ticket participants / watchers / @mentions ----------------
   app.get('/api/v1/tickets/:id/participants', async (req) => {
     const p = await requirePrincipal(req);

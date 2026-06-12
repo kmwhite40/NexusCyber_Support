@@ -9,6 +9,7 @@ import { audit } from './audit.js';
 import { publish } from '../events/bus.js';
 import { startTicketSla, pauseTicketSlas, resumeTicketSlas } from './sla.js';
 import { linksForTicket } from './links.js';
+import { resolveTransitions, isTransitionAllowed } from './workflows.js';
 import { Errors } from '../errors.js';
 import type { Principal } from '../types.js';
 
@@ -277,26 +278,19 @@ export async function assignTicket(
   });
 }
 
-const ALLOWED_TRANSITIONS: Record<string, string[]> = {
-  new: ['triage', 'assigned'],
-  triage: ['assigned', 'in_progress'],
-  assigned: ['in_progress', 'waiting_customer', 'on_hold'],
-  in_progress: ['waiting_customer', 'waiting_vendor', 'on_hold', 'resolved'],
-  waiting_customer: ['in_progress', 'resolved'],
-  waiting_vendor: ['in_progress'],
-  on_hold: ['in_progress'],
-  resolved: ['closed', 'reopened'],
-  reopened: ['in_progress'],
-  closed: [],
-};
+// Status-transition rules now live in the configurable workflow engine (workflows.ts);
+// DEFAULT_TRANSITIONS there is the built-in fallback. transition() resolves the effective
+// map per org + ticket type.
 
 export async function transition(actor: Principal, id: string, to: string, opts: { resolutionCode?: string; closureNotes?: string } = {}) {
   authorize(actor, 'ticket.update');
   return withOrgContext(orgContextFor(actor), async (sql) => {
-    const t = (await sql.query('SELECT organization_id, status FROM tickets WHERE id=$1', [id])).rows[0];
+    const t = (await sql.query('SELECT organization_id, status, type FROM tickets WHERE id=$1', [id])).rows[0];
     if (!t) throw Errors.notFound('ticket not found');
-    const allowed = ALLOWED_TRANSITIONS[t.status] ?? [];
-    if (!allowed.includes(to)) throw Errors.conflict(`illegal transition ${t.status} -> ${to}`);
+    // Allowed transitions come from the configured workflow for this org+type, falling back
+    // to the built-in default map when none is configured.
+    const map = await resolveTransitions(sql, t.organization_id, t.type);
+    if (!isTransitionAllowed(map, t.status, to)) throw Errors.conflict(`illegal transition ${t.status} -> ${to}`);
 
     const sets: string[] = ['status=$2'];
     const params: unknown[] = [id, to];
