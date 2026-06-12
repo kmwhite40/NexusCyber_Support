@@ -14,6 +14,16 @@ export interface GraphAdapterOptions {
   teamsTarget?: { teamId: string; channelId: string };
 }
 
+// Escape user-controlled values before interpolating into HTML Teams bodies.
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export function createGraphAdapter(opts: GraphAdapterOptions): NotificationAdapter {
   return {
     name: 'graph',
@@ -47,7 +57,7 @@ export function createGraphAdapter(opts: GraphAdapterOptions): NotificationAdapt
       try {
         const { teamId, channelId } = opts.teamsTarget;
         await opts.graphClient.post(`/teams/${teamId}/channels/${channelId}/messages`, {
-          body: { contentType: 'html', content: `<b>${env.summary}</b><br/>${env.text}` },
+          body: { contentType: 'html', content: `<b>${escapeHtml(env.summary)}</b><br/>${escapeHtml(env.text)}` },
         });
         return { status: 'sent', providerMessageId: `graph:${ulid()}` };
       } catch (err) {

@@ -17,10 +17,20 @@ export interface RenderedTemplate {
   text: string;
 }
 
+// Escape user-controlled values before interpolating into HTML email bodies.
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function wrap(title: string, lines: string[]): RenderedTemplate {
   const text = [title, '', ...lines].join('\n');
   const html =
-    `<h2>${title}</h2>` + lines.map((l) => `<p>${l}</p>`).join('');
+    `<h2>${escapeHtml(title)}</h2>` + lines.map((l) => `<p>${escapeHtml(l)}</p>`).join('');
   return { subject: title, html, text };
 }
 

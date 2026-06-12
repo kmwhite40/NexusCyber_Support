@@ -20,4 +20,16 @@ describe('renderTemplate', () => {
     expect(out.subject).toContain('Acme');
     expect(out.text.length).toBeGreaterThan(0);
   });
+
+  it('escapes HTML in user-controlled fields in the html body (injection guard)', () => {
+    const out = renderTemplate('ticket.created', {
+      orgName: 'Acme',
+      ticketNumber: 'ACME-1',
+      subject: '<img src=x onerror=alert(1)>',
+    });
+    expect(out.html).not.toContain('<img src=x');
+    expect(out.html).toContain('&lt;img src=x');
+    // the plaintext alternative keeps the raw value
+    expect(out.text).toContain('<img src=x onerror=alert(1)>');
+  });
 });
