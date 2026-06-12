@@ -73,19 +73,49 @@ Seed once from SSH (App Service → SSH): `node apps/api/dist/db/seed.js`.
 
 ---
 
-## C) GitHub Actions (mirrors your Deployment Center)
+## C) GitHub Actions deploy with Entra OIDC (no basic auth)
 
-A ready workflow is in [`.github/workflows/azure-webapp-code.yml`](../../../../.github/workflows/azure-webapp-code.yml):
-builds `apps/web` and deploys it to your App Service using a **publish profile** secret.
-Wire it up:
+Gov tenants commonly **disable basic authentication** (so "Get publish profile" is blocked).
+The workflow [`.github/workflows/azure-webapp-code.yml`](../../../../.github/workflows/azure-webapp-code.yml)
+therefore authenticates with **Entra ID OIDC** (federated credentials — no stored secret,
+no basic auth) and zip-deploys via the AAD-authenticated Kudu endpoint.
 
-1. App Service → **Get publish profile** (downloads an `.publishsettings`).
-2. Repo → Settings → Secrets → add `AZURE_WEBAPP_PUBLISH_PROFILE` (paste the file contents)
-   and variable `AZURE_WEBAPP_NAME` (e.g. `M365GCC` or `anchor-web`).
-3. Set `NEXT_PUBLIC_API_BASE` as an App Setting on the web app (baked at build).
+**One-time setup (run in the Azure Government cloud):**
+```bash
+az cloud set --name AzureUSGovernment && az login
+SUB=$(az account show --query id -o tsv)
+TENANT=$(az account show --query tenantId -o tsv)
 
-> The publish-profile auth works against Azure Government (the deploy targets the app's
-> `*.scm.azurewebsites.us` Kudu endpoint).
+# 1) App registration + service principal
+APP_ID=$(az ad app create --display-name anchor-gha --query appId -o tsv)
+az ad sp create --id "$APP_ID"
+
+# 2) Federated credential for GitHub (adjust branch/subject as needed)
+az ad app federated-credential create --id "$APP_ID" --parameters '{
+  "name": "github-feat",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:kmwhite40/NexusCyber_Support:ref:refs/heads/feat/nexus-platform",
+  "audiences": ["api://AzureADTokenExchange"]
+}'
+
+# 3) Grant deploy rights on the web app (Website Contributor; or Contributor on the RG)
+SP_OID=$(az ad sp show --id "$APP_ID" --query id -o tsv)
+APP_RID=$(az webapp show -g M365_Compliance -n Anchor --query id -o tsv)
+az role assignment create --assignee-object-id "$SP_OID" --assignee-principal-type ServicePrincipal \
+  --role "Website Contributor" --scope "$APP_RID"
+
+echo "AZURE_CLIENT_ID=$APP_ID  AZURE_TENANT_ID=$TENANT  AZURE_SUBSCRIPTION_ID=$SUB"
+```
+
+**Repo → Settings → Secrets and variables → Actions:**
+- secrets: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
+- variables: `AZURE_WEBAPP_NAME` = `Anchor`, `NEXT_PUBLIC_API_BASE` = `https://anchor-api.azurewebsites.us/api/v1`
+
+Then **Actions → "Deploy Web (Code)…" → Run workflow** on your branch.
+
+> **Alternative (only if policy allows):** re-enable basic auth on the app
+> (Settings → Configuration → General settings → **SCM Basic Auth Publishing Credentials = On**),
+> then a publish-profile deploy also works. OIDC is preferred for gov — no stored credential.
 
 ---
 

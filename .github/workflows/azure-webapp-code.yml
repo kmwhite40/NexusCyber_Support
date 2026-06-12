@@ -1,19 +1,21 @@
 name: Deploy Web (Code) to Azure Gov App Service
 
-# Builds apps/web in CI (reliable even on an F1 app) and deploys it as "Code" to an
-# Azure (Government) App Service — the M365GCC pattern (Node 22-LTS, Linux).
+# Builds apps/web in CI and deploys it to an Azure GOVERNMENT App Service using
+# Entra ID OIDC (no basic auth / no publish profile — works when basic publishing
+# credentials are disabled by policy). The M365GCC pattern: Node 22-LTS, Linux.
 #
-# Configure the WEB app first (Settings -> Configuration):
+# Configure the WEB app first (Settings -> Configuration -> General settings):
 #   - Startup Command: npm run start
-#   - App setting  SCM_DO_BUILD_DURING_DEPLOYMENT = false   (we build here, not on the box)
+#   - App setting  SCM_DO_BUILD_DURING_DEPLOYMENT = false   (we build here)
+#
+# One-time Azure setup (see docs/nexus/artifacts/deploy/azure-gov-code-deploy.md §C):
+#   - An Entra app (service principal) with a GitHub **federated credential**, granted
+#     "Website Contributor" on the Anchor app (or Contributor on the resource group).
 #
 # Repo Settings -> Secrets and variables -> Actions:
-#   - secret  AZURE_WEBAPP_PUBLISH_PROFILE  (App Service -> Get publish profile, paste file)
-#   - var     AZURE_WEBAPP_NAME             = Anchor
-#   - var     NEXT_PUBLIC_API_BASE          = https://anchor-api.azurewebsites.us/api/v1
-#
-# Publish-profile auth targets the app's *.scm.azurewebsites.us (Kudu) endpoint — works
-# against Azure Government. Run manually (Run workflow) on whichever branch you deploy from.
+#   secrets: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
+#   vars:    AZURE_WEBAPP_NAME = Anchor
+#            NEXT_PUBLIC_API_BASE = https://anchor-api.azurewebsites.us/api/v1
 
 on:
   workflow_dispatch:
@@ -21,9 +23,13 @@ on:
     branches: [main]
     paths: ['apps/web/**', '.github/workflows/azure-webapp-code.yml']
 
+permissions:
+  id-token: write   # required for OIDC federated login
+  contents: read
+
 jobs:
   deploy-web:
-    name: Build & deploy apps/web
+    name: Build & deploy apps/web (OIDC)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,15 +41,23 @@ jobs:
       - name: Build apps/web
         working-directory: apps/web
         env:
-          # Baked into the client bundle at build time -> the API's gov URL.
           NEXT_PUBLIC_API_BASE: ${{ vars.NEXT_PUBLIC_API_BASE }}
         run: |
           npm install --no-audit --no-fund
           npm run build
 
+      # Federated (OIDC) login to AZURE GOVERNMENT — no secrets/passwords stored.
+      - name: Azure login (US Government)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          environment: AzureUSGovernment
+
+      # Uses the AAD session (not basic auth) to zip-deploy to Kudu.
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ vars.AZURE_WEBAPP_NAME }}
-          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
           package: apps/web
