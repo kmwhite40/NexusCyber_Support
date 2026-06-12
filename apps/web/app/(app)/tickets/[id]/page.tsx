@@ -148,6 +148,8 @@ export default function TicketDetailPage() {
         )}
       </div>
 
+      <CsatPrompt ticketId={id} />
+
       {/* Approval gate (service requests) */}
       {pendingApproval && (
         <Card className="border-warning/40">
@@ -370,6 +372,53 @@ function LinkedTickets({ ticket, isAgent, canUpdate, onChange }: { ticket: Ticke
               {isAgent && canUpdate && <button onClick={() => removeLink(l.id)} className="text-xs text-muted hover:text-danger">remove</button>}
             </div>
           ))
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
+function CsatPrompt({ ticketId }: { ticketId: string }) {
+  const [surveyId, setSurveyId] = React.useState<string | null>(null);
+  const [done, setDone] = React.useState(false);
+  const [hover, setHover] = React.useState(0);
+
+  React.useEffect(() => {
+    api.get<{ data: Array<{ id: string; ticket_id: string }> }>('/csat/pending')
+      .then((r) => { const s = r.data.find((x) => x.ticket_id === ticketId); if (s) setSurveyId(s.id); })
+      .catch(() => {});
+  }, [ticketId]);
+
+  async function rate(score: number) {
+    if (!surveyId) return;
+    await api.post(`/csat/${surveyId}/respond`, { score }).catch(() => {});
+    setDone(true);
+  }
+
+  if (!surveyId) return null;
+  return (
+    <Card className="border-brand/40">
+      <CardBody className="flex flex-wrap items-center justify-between gap-3">
+        {done ? (
+          <span className="text-sm text-success">Thanks for your feedback!</span>
+        ) : (
+          <>
+            <span className="text-sm text-fg">How satisfied were you with the resolution?</span>
+            <div className="flex items-center gap-1" onMouseLeave={() => setHover(0)}>
+              {[1, 2, 3, 4, 5].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onMouseEnter={() => setHover(n)}
+                  onClick={() => rate(n)}
+                  className={`text-xl ${n <= hover ? 'text-warning' : 'text-muted'}`}
+                  aria-label={`${n} star${n > 1 ? 's' : ''}`}
+                >
+                  ★
+                </button>
+              ))}
+            </div>
+          </>
         )}
       </CardBody>
     </Card>

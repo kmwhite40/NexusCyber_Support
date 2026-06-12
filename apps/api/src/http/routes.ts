@@ -20,6 +20,7 @@ import * as kb from '../modules/kb.js';
 import * as links from '../modules/links.js';
 import * as changes from '../modules/changes.js';
 import * as problems from '../modules/problems.js';
+import * as csat from '../modules/csat.js';
 import { computeScore, grade } from '../modules/posture.js';
 import { audit, verifyChain, formatExport, type ExportableRow } from '../modules/audit.js';
 import { authorize } from '../authz/pdp.js';
@@ -540,6 +541,24 @@ export async function registerRoutes(app: FastifyInstance) {
     const p = await requirePrincipal(req);
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     return { data: await automation.listExecutions(p, id) };
+  });
+
+  // ---------------- CSAT satisfaction surveys ----------------
+  app.get('/api/v1/csat/pending', async (req) => {
+    const p = await requirePrincipal(req);
+    return { data: await csat.pending(p) };
+  });
+
+  app.get('/api/v1/csat/metrics', async (req) => {
+    const p = await requirePrincipal(req);
+    return csat.metrics(p);
+  });
+
+  app.post('/api/v1/csat/:id/respond', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ score: z.number().int().min(1).max(5), comment: z.string().optional() }).parse(req.body);
+    return csat.respond(p, id, body.score, body.comment);
   });
 
   // ---------------- Problem management ----------------

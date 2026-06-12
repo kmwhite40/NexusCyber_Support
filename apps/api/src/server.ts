@@ -10,6 +10,7 @@ import { registerRoutes } from './http/routes.js';
 import { registerIdempotency, IdempotencyStore } from './http/idempotency.js';
 import { registerNotificationHandlers } from './modules/notifications.js';
 import { registerAutomationHandlers } from './modules/automation.js';
+import { registerCsatHandlers } from './modules/csat.js';
 import { startSlaSweeper } from './jobs/sla-sweeper.js';
 import { startConMonScheduler } from './modules/conmon.js';
 
@@ -69,6 +70,7 @@ async function main() {
   // Wire event consumers (notification dispatcher + automation engine).
   registerNotificationHandlers();
   registerAutomationHandlers();
+  registerCsatHandlers();
 
   // Background SLA evaluation sweep (warning/breach), idempotent.
   startSlaSweeper();
