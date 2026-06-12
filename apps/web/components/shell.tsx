@@ -17,14 +17,18 @@ const NEXUS_NAV: NavItem[] = [
   { href: '/kb', label: 'Knowledge base', icon: <IconBook />, anyPerm: ['kb.read'] },
   { href: '/tickets', label: 'Tickets', icon: <IconTicket /> },
   { href: '/queues', label: 'Queues', icon: <IconLayers />, anyPerm: ['ticket.read.all_assigned_customers'] },
+  { href: '/incidents', label: 'Incidents', icon: <IconAlert /> },
   { href: '/changes', label: 'Changes', icon: <IconCalendar />, anyPerm: ['change.create', 'change.approve'] },
   { href: '/problems', label: 'Problems', icon: <IconBug />, anyPerm: ['problem.manage'] },
   { href: '/analytics', label: 'Analytics', icon: <IconChart />, anyPerm: ['report.read.operational', 'report.read.customer'] },
   { href: '/oncall', label: 'On-call', icon: <IconPager />, anyPerm: ['oncall.acknowledge', 'oncall.manage', 'oncall.page'] },
+  { href: '/services', label: 'Services', icon: <IconServer />, anyPerm: ['service.read', 'service.manage'] },
+  { href: '/customers', label: 'Customers', icon: <IconUsers />, anyPerm: ['org.read', 'org.manage'] },
   { href: '/posture', label: 'Posture', icon: <IconShield />, anyPerm: ['posture.read'] },
   { href: '/compliance', label: 'Compliance', icon: <IconClipboard />, anyPerm: ['compliance.read'] },
   { href: '/automations', label: 'Automations', icon: <IconRobot />, anyPerm: ['automation.author'] },
   { href: '/audit', label: 'Audit log', icon: <IconScroll />, anyPerm: ['audit.read'] },
+  { href: '/email-logs', label: 'Email logs', icon: <IconMail />, anyPerm: ['notifications.read'] },
 ];
 
 const CUSTOMER_NAV: NavItem[] = [
@@ -135,6 +139,10 @@ function titleFor(path: string): string {
   if (path.startsWith('/automations')) return 'Automation rules';
   if (path.startsWith('/analytics')) return 'Helpdesk analytics';
   if (path.startsWith('/audit')) return 'Audit log';
+  if (path.startsWith('/incidents')) return 'Incidents';
+  if (path.startsWith('/services')) return 'Services & assets';
+  if (path.startsWith('/customers')) return 'Customers';
+  if (path.startsWith('/email-logs')) return 'Email logs';
   return 'Dashboard';
 }
 
@@ -153,3 +161,7 @@ function IconCalendar() { return <svg width="18" height="18" viewBox="0 0 24 24"
 function IconBug() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="8" y="6" width="8" height="12" rx="4"/><path d="M12 6V4M5 9l2 1M19 9l-2 1M5 15l2-1M19 15l-2-1M4 12h2M18 12h2"/></svg>; }
 function IconLayers() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5M3 17l9 5 9-5"/></svg>; }
 function IconRobot() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="4" y="8" width="16" height="11" rx="2.5"/><path d="M12 8V4M9 13h.01M15 13h.01M9 16h6"/><circle cx="12" cy="3" r="1"/></svg>; }
+function IconAlert() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 3l9 16H3l9-16z"/><path d="M12 10v4"/><circle cx="12" cy="17" r="0.6" fill="currentColor"/></svg>; }
+function IconServer() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>; }
+function IconUsers() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 5.5a3 3 0 0 1 0 5.5M21 20a6 6 0 0 0-5-5.9"/></svg>; }
+function IconMail() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>; }
