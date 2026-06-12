@@ -41,14 +41,14 @@ export default function DashboardsPage() {
             <div className="space-y-3">
               <h2 className="text-lg font-semibold">{active.name}</h2>
               <div className="grid gap-4">
-                {active.layout.map((w, i) => <DashboardWidget key={i} type={w.type} overview={overview} />)}
+                {active.layout.map((w, i) => <DashboardWidget key={`${i}:${w.type}`} type={w.type} overview={overview} />)}
               </div>
             </div>
           )}
         </CardBody></Card>
       </div>
       {creating && (
-        <NewDashboardModal orgs={orgs} isAgent={isAgent} onClose={() => setCreating(false)} onCreated={(d) => { setCreating(false); dashboardsApi.list().then((all) => { setList(all); setActive(all.find((x) => x.id === d.id) ?? d); }); }} />
+        <NewDashboardModal orgs={orgs} isAgent={isAgent} onClose={() => setCreating(false)} onCreated={(d) => { setCreating(false); dashboardsApi.list().then((all) => { setList(all); setActive(all.find((x) => x.id === d.id) ?? d); }).catch(() => {}); }} />
       )}
     </div>
   );
