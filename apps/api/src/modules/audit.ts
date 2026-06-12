@@ -13,6 +13,20 @@ export interface AuditInput {
   detail?: Record<string, unknown>;
 }
 
+/**
+ * Canonical JSON with recursively-sorted object keys. The hash chain serializes `detail`,
+ * which is stored as JSONB — and JSONB does NOT preserve key order. Without a canonical
+ * form, the verifier re-stringifies keys in a different order than the writer and the hash
+ * fails to match even though nothing was tampered with. Sorting keys makes the hash input
+ * order-independent on both sides.
+ */
+export function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  const keys = Object.keys(value as Record<string, unknown>).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify((value as Record<string, unknown>)[k])}`).join(',')}}`;
+}
+
 // Fixed advisory-lock key for the audit chain. A hash chain requires serialized appends:
 // without this, concurrent writers read the same prev_hash and FORK the chain. The
 // transaction-scoped lock guarantees the prev-hash read + insert are atomic per writer.
@@ -29,7 +43,7 @@ export async function audit(actor: Principal | null, input: AuditInput): Promise
       // Capture the timestamp once and persist it into created_at so the stored row is
       // self-consistent with its hash — this is what makes verifyChain() work over real data.
       const at = new Date().toISOString();
-      const payload = JSON.stringify({
+      const payload = stableStringify({
         actor: actor?.id ?? null,
         action: input.action,
         resource: input.resourceId ?? null,
@@ -89,7 +103,7 @@ export function verifyChain(rows: AuditRow[]): ChainResult {
   let prev: string | null = null;
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
-    const payload = JSON.stringify({
+    const payload = stableStringify({
       actor: row.actor_id ?? null,
       action: row.action,
       resource: row.resource_id ?? null,

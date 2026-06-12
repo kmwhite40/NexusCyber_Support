@@ -16,6 +16,7 @@ import * as automation from '../modules/automation.js';
 import * as compliance from '../modules/compliance.js';
 import * as elevation from '../modules/elevation.js';
 import * as attachments from '../modules/attachments.js';
+import * as kb from '../modules/kb.js';
 import { computeScore, grade } from '../modules/posture.js';
 import { audit, verifyChain, formatExport, type ExportableRow } from '../modules/audit.js';
 import { authorize } from '../authz/pdp.js';
@@ -513,6 +514,90 @@ export async function registerRoutes(app: FastifyInstance) {
     const p = await requirePrincipal(req);
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     return { data: await automation.listExecutions(p, id) };
+  });
+
+  // ---------------- Knowledge base (Confluence-style) ----------------
+  app.get('/api/v1/kb/spaces', async (req) => {
+    const p = await requirePrincipal(req);
+    return { data: await kb.listSpaces(p) };
+  });
+
+  app.post('/api/v1/kb/spaces', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const body = z.object({ key: z.string().min(1).max(16), name: z.string().min(2), description: z.string().optional() }).parse(req.body);
+    const space = await kb.createSpace(p, body);
+    reply.status(201);
+    return space;
+  });
+
+  app.get('/api/v1/kb/spaces/:id/tree', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return { data: await kb.spaceTree(p, id) };
+  });
+
+  app.post('/api/v1/kb/pages', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const body = z
+      .object({
+        spaceId: z.string().uuid(),
+        parentId: z.string().uuid().optional(),
+        title: z.string().min(2),
+        body: z.string().optional(),
+        labels: z.array(z.string()).optional(),
+      })
+      .parse(req.body);
+    const page = await kb.createPage(p, body);
+    reply.status(201);
+    return page;
+  });
+
+  app.get('/api/v1/kb/pages/:id', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return kb.getPage(p, id);
+  });
+
+  app.patch('/api/v1/kb/pages/:id', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ title: z.string().min(2).optional(), body: z.string().optional(), labels: z.array(z.string()).optional() }).parse(req.body);
+    return kb.updatePage(p, id, body);
+  });
+
+  app.post('/api/v1/kb/pages/:id/transition', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ to: z.enum(['draft', 'published', 'archived']) }).parse(req.body);
+    return kb.transitionPage(p, id, body.to);
+  });
+
+  app.post('/api/v1/kb/pages/:id/comments', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ body: z.string().min(1) }).parse(req.body);
+    const comment = await kb.addComment(p, id, body.body);
+    reply.status(201);
+    return comment;
+  });
+
+  app.get('/api/v1/kb/search', async (req) => {
+    const p = await requirePrincipal(req);
+    const q = z.object({ q: z.string().optional() }).parse(req.query);
+    return { data: await kb.search(p, q.q ?? '') };
+  });
+
+  app.post('/api/v1/kb/deflect', async (req) => {
+    const p = await requirePrincipal(req);
+    const body = z.object({ query: z.string().min(1), deflected: z.boolean().optional() }).parse(req.body);
+    const suggestions = await kb.suggest(p, body.query);
+    await kb.logDeflection(p, { query: body.query, suggestedPageIds: suggestions.map((s: any) => s.id), deflected: body.deflected ?? false });
+    return { suggestions };
+  });
+
+  app.get('/api/v1/kb/deflection-metrics', async (req) => {
+    const p = await requirePrincipal(req);
+    return kb.deflectionMetrics(p);
   });
 
   // ---------------- JIT elevation & break-glass ----------------

@@ -31,6 +31,9 @@ const PERMISSIONS: Array<[string, string]> = [
   ['report.read.customer', 'reporting'],
   ['compliance.read', 'compliance'],
   ['compliance.manage', 'compliance'],
+  ['kb.read', 'knowledge'],
+  ['kb.author', 'knowledge'],
+  ['kb.publish', 'knowledge'],
   ['elevation.request', 'platform_admin'],
   ['elevation.approve', 'platform_admin'],
   ['elevation.break_glass', 'platform_admin'],
@@ -40,27 +43,27 @@ const PERMISSIONS: Array<[string, string]> = [
 // ---- Roles -> permission keys ----
 const ROLES: Record<string, { plane: 'nexus' | 'customer'; perms: string[] }> = {
   // Nexus plane
-  Tier1: { plane: 'nexus', perms: ['ticket.create', 'ticket.read.all_assigned_customers', 'ticket.update', 'ticket.comment'] },
+  Tier1: { plane: 'nexus', perms: ['ticket.create', 'ticket.read.all_assigned_customers', 'ticket.update', 'ticket.comment', 'kb.read', 'kb.author'] },
   Tier2: {
     plane: 'nexus',
     perms: [
       'ticket.create', 'ticket.read.all_assigned_customers', 'ticket.update', 'ticket.comment',
       'ticket.assign', 'ticket.escalate', 'posture.read', 'report.read.operational',
-      'oncall.acknowledge', 'oncall.page', 'elevation.request',
+      'oncall.acknowledge', 'oncall.page', 'elevation.request', 'kb.read', 'kb.author',
     ],
   },
   SecurityAnalyst: {
     plane: 'nexus',
-    perms: ['ticket.create', 'ticket.read.all_assigned_customers', 'ticket.escalate', 'posture.read', 'posture.write', 'posture.finding.manage', 'posture.request_exception', 'posture.approve_exception', 'oncall.acknowledge', 'oncall.page', 'audit.read', 'compliance.read', 'compliance.manage', 'elevation.request', 'elevation.break_glass'],
+    perms: ['ticket.create', 'ticket.read.all_assigned_customers', 'ticket.escalate', 'posture.read', 'posture.write', 'posture.finding.manage', 'posture.request_exception', 'posture.approve_exception', 'oncall.acknowledge', 'oncall.page', 'audit.read', 'compliance.read', 'compliance.manage', 'elevation.request', 'elevation.break_glass', 'kb.read', 'kb.author', 'kb.publish'],
   },
   ServiceDeskManager: {
     plane: 'nexus',
-    perms: ['ticket.read.all_assigned_customers', 'ticket.assign', 'ticket.update', 'ticket.comment', 'ticket.escalate', 'report.read.operational', 'customer.admin.manage_users', 'oncall.manage', 'oncall.acknowledge', 'oncall.page', 'automation.author', 'automation.publish', 'audit.read', 'posture.request_exception', 'posture.approve_exception', 'compliance.read', 'compliance.manage', 'elevation.request', 'elevation.approve'],
+    perms: ['ticket.read.all_assigned_customers', 'ticket.assign', 'ticket.update', 'ticket.comment', 'ticket.escalate', 'report.read.operational', 'customer.admin.manage_users', 'oncall.manage', 'oncall.acknowledge', 'oncall.page', 'automation.author', 'automation.publish', 'audit.read', 'posture.request_exception', 'posture.approve_exception', 'compliance.read', 'compliance.manage', 'elevation.request', 'elevation.approve', 'kb.read', 'kb.author', 'kb.publish'],
   },
   // Customer plane
-  OrgAdmin: { plane: 'customer', perms: ['ticket.create', 'ticket.read.organization', 'ticket.comment', 'posture.read', 'posture.request_exception', 'customer.admin.manage_users', 'report.read.customer', 'audit.read', 'compliance.read'] },
-  EndUser: { plane: 'customer', perms: ['ticket.create', 'ticket.read.own', 'ticket.comment.own', 'ticket.comment'] },
-  SecurityContact: { plane: 'customer', perms: ['ticket.read.organization', 'ticket.comment', 'posture.read', 'posture.request_exception', 'report.read.customer', 'compliance.read'] },
+  OrgAdmin: { plane: 'customer', perms: ['ticket.create', 'ticket.read.organization', 'ticket.comment', 'posture.read', 'posture.request_exception', 'customer.admin.manage_users', 'report.read.customer', 'audit.read', 'compliance.read', 'kb.read', 'kb.author', 'kb.publish'] },
+  EndUser: { plane: 'customer', perms: ['ticket.create', 'ticket.read.own', 'ticket.comment.own', 'ticket.comment', 'kb.read'] },
+  SecurityContact: { plane: 'customer', perms: ['ticket.read.organization', 'ticket.comment', 'posture.read', 'posture.request_exception', 'report.read.customer', 'compliance.read', 'kb.read'] },
 };
 
 async function run() {
@@ -538,6 +541,55 @@ async function run() {
           `INSERT INTO posture_findings (organization_id, profile_id, title, domain, severity, risk_score, status, remediation_due_at)
            VALUES ($1,$2,$3,$4,$5,$6,'confirmed', now()+interval '30 days')`,
           [orgs.Acme, profile, title, domain, severity, severity === 'critical' ? 40 : severity === 'high' ? 25 : 12],
+        );
+      }
+    }
+
+    // ---- Knowledge base: a global space with a few published pages (Confluence-style) ----
+    const kbAuthor = (await sql.query("SELECT id FROM users WHERE email='analyst@nexus.example.com'")).rows[0]?.id ?? null;
+    const spaceExists = await sql.query("SELECT id FROM kb_spaces WHERE organization_id IS NULL AND key='SD'");
+    let kbSpaceId: string = spaceExists.rows[0]?.id;
+    if (!kbSpaceId) {
+      kbSpaceId = (
+        await sql.query(
+          `INSERT INTO kb_spaces (organization_id, key, name, description, created_by)
+           VALUES (NULL,'SD','Service Desk','Self-service knowledge for common requests and incidents',$1) RETURNING id`,
+          [kbAuthor],
+        )
+      ).rows[0].id;
+      const pages: Array<[string, string, string[]]> = [
+        [
+          'Reset your password',
+          '# Reset your password\n\nIf you are locked out, use the self-service reset:\n\n1. Go to the sign-in page and choose **Forgot password**.\n2. Verify your identity with MFA.\n3. Set a new password meeting the complexity policy.\n\nStill stuck? Submit a **Password reset** request from the Service catalog.',
+          ['password', 'accounts', 'self-service'],
+        ],
+        [
+          'Set up multi-factor authentication (MFA)',
+          '# Set up MFA\n\nMFA protects your account even if your password is stolen.\n\n1. Open the **My Sign-ins** page.\n2. Add the **Authenticator app** method.\n3. Approve the test prompt.\n\nMFA is required for all accounts under the Conditional Access baseline.',
+          ['mfa', 'identity', 'security'],
+        ],
+        [
+          'Request a new laptop or hardware',
+          '# Request hardware\n\nUse the Service catalog **New user creation & provisioning** or open a request describing the hardware needed, your manager, and the cost center. Standard laptops ship within 5 business days after approval.',
+          ['hardware', 'requests'],
+        ],
+        [
+          'VPN troubleshooting',
+          '# VPN keeps disconnecting\n\nTry these steps before opening a ticket:\n\n1. Update the VPN client to the latest version.\n2. Switch networks (wired vs Wi-Fi) to isolate the issue.\n3. Confirm your device is compliant in the device portal.\n\nIf drops persist, open an incident and attach the client logs.',
+          ['vpn', 'network', 'troubleshooting'],
+        ],
+      ];
+      for (const [title, body, labels] of pages) {
+        const pg = (
+          await sql.query(
+            `INSERT INTO kb_pages (organization_id, space_id, title, body, labels, author_id, updated_by, version, status, published_at)
+             VALUES (NULL,$1,$2,$3,$4,$5,$5,1,'published', now()) RETURNING id`,
+            [kbSpaceId, title, body, labels, kbAuthor],
+          )
+        ).rows[0].id;
+        await sql.query(
+          `INSERT INTO kb_page_versions (page_id, version, title, body, edited_by) VALUES ($1,1,$2,$3,$4)`,
+          [pg, title, body, kbAuthor],
         );
       }
     }
