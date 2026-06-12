@@ -256,3 +256,13 @@ export const servicesApi = {
   cis: (q = '') => api.get<{ data: ConfigurationItem[] }>(`/configuration-items${q}`).then((r) => r.data),
   createCi: (b: { name: string; ciClass: string; criticality?: string | number; status?: string; organizationId?: string }) => api.post<ConfigurationItem>('/configuration-items', b),
 };
+
+export interface OrgDetail { id: string; name: string; cloud: string; data_boundary?: string; user_count: number; open_tickets: number; }
+export interface OrgUser { id: string; email: string; display_name: string | null; status: string; }
+export interface OrgSummary { id: string; name: string; cloud?: string; }
+export const customersApi = {
+  list: () => api.get<{ data: OrgSummary[] }>('/organizations').then((r) => r.data),
+  get: (id: string) => api.get<OrgDetail>(`/organizations/${id}`),
+  users: (id: string) => api.get<{ data: OrgUser[] }>(`/organizations/${id}/users`).then((r) => r.data),
+  update: (id: string, b: { name?: string; cloud?: string; dataBoundary?: string }) => api.patch<OrgDetail>(`/organizations/${id}`, b),
+};

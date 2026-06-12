@@ -165,6 +165,25 @@ export async function registerRoutes(app: FastifyInstance) {
     return result;
   });
 
+  app.get('/api/v1/organizations/:id', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return accounts.getOrganization(p, id);
+  });
+
+  app.patch('/api/v1/organizations/:id', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ name: z.string().optional(), cloud: z.string().optional(), dataBoundary: z.string().optional() }).parse(req.body);
+    return accounts.updateOrganization(p, id, body);
+  });
+
+  app.get('/api/v1/organizations/:id/users', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return { data: await accounts.listOrganizationUsers(p, id) };
+  });
+
   // ---------------- Tickets ----------------
   app.post('/api/v1/tickets', async (req, reply) => {
     const p = await requirePrincipal(req);

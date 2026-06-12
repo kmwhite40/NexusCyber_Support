@@ -4,14 +4,15 @@
 //   - devLogin: email-only quick switch for seeded demo identities (non-production)
 //   - provisionUser: an Org Admin creates a user inside their org
 // See docs/nexus/02 §E (identity), §D.7 (tenant lifecycle), 01 §C.3.
-import { withSystemContext } from '../db/pool.js';
+import { withSystemContext, withOrgContext } from '../db/pool.js';
 import { hashPassword, verifyPassword } from '../auth/password.js';
 import { issueSession } from '../auth/session.js';
-import { loadPrincipal } from '../auth/principal.js';
+import { loadPrincipal, orgContextFor } from '../auth/principal.js';
 import { audit } from './audit.js';
 import { publish } from '../events/bus.js';
 import { config } from '../config.js';
 import { Errors } from '../errors.js';
+import { authorize } from '../authz/pdp.js';
 import type { Principal, SessionClaims } from '../types.js';
 
 function emailDomain(email: string): string {
@@ -214,5 +215,40 @@ export async function provisionUser(
     });
     publish('user.created', orgId, { user_id: userId, org_id: orgId, plane: 'customer' });
     return { id: userId };
+  });
+}
+
+export async function getOrganization(actor: Principal, id: string) {
+  authorize(actor, 'org.read', { organizationId: id });
+  return withOrgContext(orgContextFor(actor), async (sql) => {
+    const org = (await sql.query('SELECT * FROM organizations WHERE id=$1', [id])).rows[0];
+    if (!org) throw Errors.notFound('organization not found');
+    const userCount = (await sql.query('SELECT count(*)::int AS n FROM users WHERE organization_id=$1', [id])).rows[0].n;
+    const openTickets = (await sql.query(`SELECT count(*)::int AS n FROM tickets WHERE organization_id=$1 AND status NOT IN ('closed','resolved')`, [id])).rows[0].n;
+    return { ...org, user_count: userCount, open_tickets: openTickets };
+  });
+}
+
+export async function listOrganizationUsers(actor: Principal, id: string) {
+  authorize(actor, 'org.read', { organizationId: id });
+  return withOrgContext(orgContextFor(actor), async (sql) => {
+    const { rows } = await sql.query('SELECT id, email, display_name, status FROM users WHERE organization_id=$1 ORDER BY email', [id]);
+    return rows;
+  });
+}
+
+export interface UpdateOrgInput { name?: string; cloud?: string; dataBoundary?: string; }
+
+export async function updateOrganization(actor: Principal, id: string, input: UpdateOrgInput) {
+  authorize(actor, 'org.manage', { organizationId: id });
+  return withOrgContext(orgContextFor(actor), async (sql) => {
+    const cur = (await sql.query('SELECT * FROM organizations WHERE id=$1', [id])).rows[0];
+    if (!cur) throw Errors.notFound('organization not found');
+    const { rows } = await sql.query(
+      `UPDATE organizations SET name=$1, cloud=$2, data_boundary=$3 WHERE id=$4 RETURNING *`,
+      [input.name ?? cur.name, input.cloud ?? cur.cloud, input.dataBoundary ?? cur.data_boundary, id],
+    );
+    await audit(actor, { action: 'org.update', organizationId: id, resourceType: 'organization', resourceId: id });
+    return rows[0];
   });
 }
