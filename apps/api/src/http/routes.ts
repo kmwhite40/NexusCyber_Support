@@ -240,6 +240,19 @@ export async function registerRoutes(app: FastifyInstance) {
     return tickets.escalate(p, id, body.targetGroup, body.reason);
   });
 
+  // Manual SLA pause/resume (auto pause/resume also follows on-hold status transitions).
+  app.post('/api/v1/tickets/:id/sla/pause', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return tickets.pauseSla(p, id);
+  });
+
+  app.post('/api/v1/tickets/:id/sla/resume', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return tickets.resumeSla(p, id);
+  });
+
   // ---------------- Ticket links & merge ----------------
   app.post('/api/v1/tickets/:id/links', async (req, reply) => {
     const p = await requirePrincipal(req);

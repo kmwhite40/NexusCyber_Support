@@ -7,7 +7,7 @@ import { orgContextFor } from '../auth/principal.js';
 import { authorize, can } from '../authz/pdp.js';
 import { audit } from './audit.js';
 import { publish } from '../events/bus.js';
-import { startTicketSla } from './sla.js';
+import { startTicketSla, pauseTicketSlas, resumeTicketSlas } from './sla.js';
 import { linksForTicket } from './links.js';
 import { Errors } from '../errors.js';
 import type { Principal } from '../types.js';
@@ -310,6 +310,13 @@ export async function transition(actor: Principal, id: string, to: string, opts:
     if (to === 'closed') sets.push('closed_at=now()');
 
     const { rows } = await sql.query(`UPDATE tickets SET ${sets.join(', ')} WHERE id=$1 RETURNING *`, params);
+
+    // SLA clock follows on-hold states: pause when the ticket goes on hold (waiting on
+    // the customer/vendor), resume when work restarts. Resolution stop is handled above.
+    const ON_HOLD = new Set(['waiting_customer', 'waiting_vendor', 'on_hold']);
+    if (ON_HOLD.has(to) && !ON_HOLD.has(t.status)) await pauseTicketSlas(sql, id);
+    if (to === 'in_progress' && ON_HOLD.has(t.status)) await resumeTicketSlas(sql, id);
+
     await sql.query(
       `INSERT INTO ticket_events (organization_id, ticket_id, actor_id, event_type, detail)
        VALUES ($1,$2,$3,'status_changed',$4)`,
@@ -319,5 +326,29 @@ export async function transition(actor: Principal, id: string, to: string, opts:
     publish('ticket.status_changed', t.organization_id, { ticket_id: id, org_id: t.organization_id, from: t.status, to });
     if (to === 'resolved') publish('ticket.resolved', t.organization_id, { ticket_id: id, org_id: t.organization_id, resolution_code: opts.resolutionCode });
     return rows[0];
+  });
+}
+
+/** Manually pause a ticket's running SLA clocks (e.g. blocked on a third party). */
+export async function pauseSla(actor: Principal, id: string) {
+  authorize(actor, 'ticket.update');
+  return withOrgContext(orgContextFor(actor), async (sql) => {
+    const t = (await sql.query('SELECT organization_id FROM tickets WHERE id=$1', [id])).rows[0];
+    if (!t) throw Errors.notFound('ticket not found');
+    const paused = await pauseTicketSlas(sql, id);
+    await audit(actor, { action: 'ticket.sla.pause', organizationId: t.organization_id, resourceType: 'ticket', resourceId: id, detail: { paused } });
+    return { paused };
+  });
+}
+
+/** Resume a ticket's paused SLA clocks, shifting due dates by the paused duration. */
+export async function resumeSla(actor: Principal, id: string) {
+  authorize(actor, 'ticket.update');
+  return withOrgContext(orgContextFor(actor), async (sql) => {
+    const t = (await sql.query('SELECT organization_id FROM tickets WHERE id=$1', [id])).rows[0];
+    if (!t) throw Errors.notFound('ticket not found');
+    const resumed = await resumeTicketSlas(sql, id);
+    await audit(actor, { action: 'ticket.sla.resume', organizationId: t.organization_id, resourceType: 'ticket', resourceId: id, detail: { resumed } });
+    return { resumed };
   });
 }
