@@ -43,7 +43,14 @@ Private Endpoints for Postgres/Key Vault, Managed Identity + Key Vault for secre
 (replace the env-var `SESSION_SIGNING_KEY` / DB passwords), Log Analytics + App
 Insights, and CMK for high-sensitivity tenants.
 
-## Azure Government enclave
+## Azure Government enclave (GCC / .us) — App Service / Web Apps
+
+**Full runbook: [azure-gov-webapp.md](./azure-gov-webapp.md)** — one-command deploy to
+**Azure Web Apps for Containers** in Azure US Government via
+[`infra/azure/webapp-gov.bicep`](../../../../infra/azure/webapp-gov.bicep) +
+[`infra/azure/deploy-gov.sh`](../../../../infra/azure/deploy-gov.sh) (ACR in-region build,
+Key Vault secrets, Postgres Flexible Server, managed-identity pull, migrate+seed). The
+Bicep validates with `az bicep build`.
 
 Deploy the **same images** into a **separate** Azure Government subscription/resource
 group with its own pipeline and data boundary. Differences are configuration only:
