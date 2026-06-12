@@ -14,6 +14,26 @@ export interface Config {
   enclave: Enclave;
   isProduction: boolean;
   m365: M365Config;
+  oidc: OidcConfig;
+}
+
+/** Entra ID (Azure Gov) OIDC for the agent plane — see docs/nexus/artifacts/auth-entra-oidc-scope.md. */
+export interface OidcConfig {
+  /** Master switch. */
+  enabled: boolean;
+  /** True only when enabled AND authority + clientId + redirectUri are present. */
+  configured: boolean;
+  /** e.g. https://login.microsoftonline.us/{tenant}/v2.0 (gov, NOT .com). */
+  authority: string;
+  tenantId: string;
+  clientId: string;
+  /** Confidential-client secret; empty for a public PKCE client. */
+  clientSecret: string;
+  redirectUri: string;
+  /** Web URL the callback redirects to with the session token in the fragment. */
+  postLoginRedirect: string;
+  /** App roles (e.g. Anchor.SecurityAnalyst) allowed to sign in / self-provision. Empty = allow any role the token carries. */
+  allowedAppRoles: string[];
 }
 
 export type M365Cloud = 'commercial' | 'gcc' | 'gcchigh' | 'azgov';
@@ -55,6 +75,35 @@ export function parseM365Config(env: NodeJS.ProcessEnv): M365Config {
   };
 }
 
+export function parseOidcConfig(env: NodeJS.ProcessEnv): OidcConfig {
+  const enabled = bool(env.OIDC_ENABLED);
+  const tenantId = env.OIDC_TENANT_ID ?? env.M365_TENANT_ID ?? '';
+  // Azure Government authority (login.microsoftonline.us). Override for other clouds.
+  const authority =
+    env.OIDC_AUTHORITY ?? (tenantId ? `https://login.microsoftonline.us/${tenantId}/v2.0` : '');
+  const clientId = env.OIDC_CLIENT_ID ?? '';
+  const clientSecret = env.OIDC_CLIENT_SECRET ?? '';
+  const redirectUri = env.OIDC_REDIRECT_URI ?? '';
+  const webOrigin = (env.WEB_ORIGIN ?? 'http://localhost:3000').split(',')[0];
+  const postLoginRedirect = env.OIDC_POST_LOGIN_REDIRECT ?? `${webOrigin}/auth/callback`;
+  const allowedAppRoles = (env.OIDC_ALLOWED_APP_ROLES ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const configured = enabled && !!authority && !!clientId && !!redirectUri;
+  return {
+    enabled,
+    configured,
+    authority,
+    tenantId,
+    clientId,
+    clientSecret,
+    redirectUri,
+    postLoginRedirect,
+    allowedAppRoles,
+  };
+}
+
 function required(name: string, fallback?: string): string {
   const v = process.env[name] ?? fallback;
   if (v === undefined) throw new Error(`Missing required env var: ${name}`);
@@ -75,4 +124,5 @@ export const config: Config = {
   enclave: (process.env.ENCLAVE as Enclave) ?? 'commercial',
   isProduction: process.env.NODE_ENV === 'production',
   m365: parseM365Config(process.env),
+  oidc: parseOidcConfig(process.env),
 };

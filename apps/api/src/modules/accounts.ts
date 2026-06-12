@@ -13,6 +13,7 @@ import { publish } from '../events/bus.js';
 import { config } from '../config.js';
 import { Errors } from '../errors.js';
 import { authorize } from '../authz/pdp.js';
+import type { OidcIdentity } from '../auth/oidc.js';
 import type { Principal, SessionClaims } from '../types.js';
 
 function emailDomain(email: string): string {
@@ -177,6 +178,92 @@ export async function devLogin(email: string): Promise<AuthResult> {
   };
   const token = issueSession(claims);
   const principal = await loadPrincipal(claims as SessionClaims);
+  return { token, principal };
+}
+
+/**
+ * Agent-plane login via Entra OIDC. The id_token is already validated by auth/oidc.ts;
+ * here we map the Entra identity to a nexus user (by oid, then email), JIT-provisioning
+ * one when the token carries an allowed Anchor.* app role, and sync role assignments
+ * across all customer orgs (nexus agents have cross-customer scope, like the seed).
+ * Ends by minting the same local session JWT as every other login path.
+ */
+export async function loginOrProvisionAgentOidc(identity: OidcIdentity): Promise<AuthResult> {
+  const email = identity.email.trim().toLowerCase();
+  const allow = config.oidc.allowedAppRoles;
+  // Keep only app roles the deployment permits (empty allow-list = accept any).
+  const grantedAppRoles = identity.appRoles.filter((r) => allow.length === 0 || allow.includes(r));
+  // Map "Anchor.SecurityAnalyst" -> role key "SecurityAnalyst".
+  const roleKeys = [...new Set(grantedAppRoles.map((r) => r.replace(/^Anchor\./, '')))];
+
+  const user = await withSystemContext(async (sql) => {
+    // 1) Match by stable Entra oid.
+    let row = (
+      await sql.query(
+        `SELECT id, plane, organization_id, email FROM users WHERE external_id = $1 AND plane = 'nexus'`,
+        [identity.oid],
+      )
+    ).rows[0];
+
+    // 2) Fall back to email; link the oid if found.
+    if (!row) {
+      const byEmail = (
+        await sql.query(
+          `SELECT id, plane, organization_id, email, external_id FROM users WHERE plane = 'nexus' AND email = $1`,
+          [email],
+        )
+      ).rows[0];
+      if (byEmail) {
+        row = byEmail;
+        if (!byEmail.external_id) {
+          await sql.query(`UPDATE users SET external_id = $1 WHERE id = $2`, [identity.oid, byEmail.id]);
+        }
+      }
+    }
+
+    // 3) JIT-provision a new agent — only if the token grants an allowed role.
+    if (!row) {
+      if (roleKeys.length === 0) {
+        throw Errors.forbidden('no Anchor app role assigned for this user');
+      }
+      row = (
+        await sql.query(
+          `INSERT INTO users (plane, organization_id, email, display_name, external_id)
+           VALUES ('nexus', NULL, $1, $2, $3)
+           RETURNING id, plane, organization_id, email`,
+          [email, identity.displayName ?? email, identity.oid],
+        )
+      ).rows[0];
+    }
+
+    // Sync role assignments to match the token (cross-customer scope across all orgs).
+    if (roleKeys.length) {
+      const orgs = (await sql.query(`SELECT id FROM organizations`)).rows;
+      for (const rk of roleKeys) {
+        const role = (await sql.query(`SELECT id FROM roles WHERE key = $1`, [rk])).rows[0];
+        if (!role) continue;
+        for (const o of orgs) {
+          await sql.query(
+            `INSERT INTO role_assignments (user_id, role_id, organization_id)
+             VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+            [row.id, role.id, o.id],
+          );
+        }
+      }
+    }
+    return row;
+  });
+
+  const claims: Omit<SessionClaims, 'iat' | 'exp'> = {
+    sub: user.id,
+    plane: 'nexus',
+    email: user.email,
+    org: null,
+    roles: roleKeys,
+  };
+  const token = issueSession(claims);
+  const principal = await loadPrincipal(claims as SessionClaims);
+  await audit(principal, { action: 'auth.oidc_login', resourceType: 'user', resourceId: user.id });
   return { token, principal };
 }
 

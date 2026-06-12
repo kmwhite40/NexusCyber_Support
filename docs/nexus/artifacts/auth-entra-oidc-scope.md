@@ -1,5 +1,13 @@
 # Scope: Entra ID (Azure Gov) OIDC for the Anchor agent plane
 
+> **Status (Phase 1 implemented, disabled by default).** The full flow is built and
+> typechecks/builds green: `apps/api/src/auth/oidc.ts` (discovery, PKCE, code exchange,
+> id_token validation via `jose`), `accounts.loginOrProvisionAgentOidc` (JIT map app
+> roles → nexus user), routes `/auth/config`, `/auth/oidc/start`, `/auth/oidc/callback`,
+> migration `0026_oidc_external_id.sql`, and the web login button + `/auth/callback` page.
+> Gated by `OIDC_ENABLED` (default **false**) — inert until an Entra **app registration**
+> exists and the `OIDC_*` app settings are filled (see "Go-live" at the bottom).
+
 **Goal:** Let Anchor **agents** (nexus plane) sign in with their organization's Entra ID
 in Azure Government — replacing the interim shared scrypt passwords — without changing
 the authorization model. Customers keep local register/login (a later phase can federate
@@ -87,6 +95,21 @@ Reuse the existing `M365_TENANT_ID` / `M365_CLIENT_ID` config or add dedicated
 ~**4–6 engineering days** + the Entra app registration (ops). Phaseable: ship agent OIDC
 first (highest value — removes the shared agent password), defer per-customer customer-IdP
 federation to a later phase.
+
+## Go-live checklist (what's left — mostly Entra ops)
+
+1. **Create the Entra app registration** in the gov tenant:
+   - Redirect URI (Web): `https://anchor-api.azurewebsites.us/api/v1/auth/oidc/callback`
+   - A client secret (or cert). Define **app roles** `Anchor.Tier1/Tier2/ServiceDeskManager/SecurityAnalyst`
+     and assign agents (Enterprise applications → Users and groups).
+2. **Set app settings** on `anchor-api` (or pass the bicep params): `OIDC_ENABLED=true`,
+   `OIDC_TENANT_ID`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_ALLOWED_APP_ROLES`
+   (e.g. `Anchor.Tier2,Anchor.SecurityAnalyst`). `OIDC_REDIRECT_URI` /
+   `OIDC_POST_LOGIN_REDIRECT` are defaulted by the bicep.
+3. **Deploy the new code**: rebuild the API image (`az acr build`) and run migration
+   0026 (adds `users.external_id`) — same one-off ACI path as the initial deploy.
+4. The login page's **"Sign in with Microsoft (Gov)"** button appears automatically once
+   `/auth/config` reports `oidcEnabled:true`.
 
 ## Dependencies / risks
 - Gov tenant admin must create the app registration, define app roles, and assign agents.

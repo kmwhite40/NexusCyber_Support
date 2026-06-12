@@ -3,7 +3,7 @@ import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AtSign } from 'lucide-react';
-import { auth, setToken, homePath, ApiError } from '@/lib/api';
+import { auth, setToken, homePath, ApiError, oidcStartUrl } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
 import { Button, Card, Input, Badge } from '@/components/ui/primitives';
 import { BrandMark } from '@/components/ui/brand';
@@ -17,9 +17,11 @@ export default function LoginPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [demos, setDemos] = React.useState<Array<{ email: string; display_name: string; plane: string; org: string | null; roles: string[] }>>([]);
+  const [sso, setSso] = React.useState<{ enabled: boolean; label: string }>({ enabled: false, label: '' });
 
   React.useEffect(() => {
     auth.devUsers().then((r) => setDemos(r.users)).catch(() => {});
+    auth.config().then((c) => setSso({ enabled: c.oidcEnabled, label: c.oidcLabel })).catch(() => {});
   }, []);
 
   async function finish(p: Promise<{ token: string; principal: { plane: 'nexus' | 'customer' } }>) {
@@ -65,6 +67,23 @@ export default function LoginPage() {
         {error && <p className="text-xs text-danger">{error}</p>}
         <Button className="w-full" disabled={busy} type="submit">{busy ? 'Signing in…' : 'Sign in'}</Button>
       </form>
+
+      {sso.enabled && (
+        <>
+          <AuthSeparator label="OR" />
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full"
+            disabled={busy}
+            onClick={() => {
+              window.location.href = oidcStartUrl;
+            }}
+          >
+            {sso.label || 'Sign in with Microsoft (Gov)'}
+          </Button>
+        </>
+      )}
 
       <p className="text-center text-sm text-muted">
         No account?{' '}

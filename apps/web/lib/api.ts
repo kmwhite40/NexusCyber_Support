@@ -5,6 +5,11 @@
 const BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:4000/api/v1';
 const TOKEN_KEY = 'nexus_token';
 
+/** API base URL — used for top-level navigations like the OIDC SSO start endpoint. */
+export const API_BASE = BASE;
+/** Full URL the "Sign in with Microsoft (Gov)" button navigates to. */
+export const oidcStartUrl = `${BASE}/auth/oidc/start`;
+
 export function getToken(): string | null {
   if (typeof window === 'undefined') return null;
   return window.localStorage.getItem(TOKEN_KEY);
@@ -246,6 +251,7 @@ export const auth = {
   login: (email: string, password: string) => api.post<{ token: string; principal: Me }>('/auth/login', { email, password }),
   register: (input: { organizationName: string; email: string; displayName?: string; password: string; cloud?: string }) =>
     api.post<{ token: string; principal: Me }>('/auth/register', input),
+  config: () => api.get<{ oidcEnabled: boolean; oidcLabel: string }>('/auth/config'),
 };
 
 export interface ServiceRow { id: string; organization_id: string; name: string; kind: string; ticket_count: number; }

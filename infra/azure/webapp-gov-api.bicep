@@ -45,6 +45,22 @@ param planSku string = 'B1'
 @description('Public origin of the already-deployed web app, for CORS.')
 param webOrigin string = 'https://anchor.azurewebsites.us'
 
+@description('Enable Entra ID (Azure Gov) OIDC for the agent plane.')
+param oidcEnabled bool = false
+
+@description('Entra tenant id for agent OIDC (defaults to the M365 tenant if blank).')
+param oidcTenantId string = ''
+
+@description('Entra app (client) id for agent OIDC.')
+param oidcClientId string = ''
+
+@description('Entra client secret for agent OIDC (use a cert/Key Vault ref in production).')
+@secure()
+param oidcClientSecret string = ''
+
+@description('Comma-separated app roles allowed to sign in / self-provision (e.g. Anchor.Tier2,Anchor.SecurityAnalyst).')
+param oidcAllowedAppRoles string = ''
+
 var pgAdmin = 'nexus'
 var dbName = 'nexus'
 var acrName = toLower(replace('${name}acr${uniqueString(resourceGroup().id)}', '-', ''))
@@ -143,6 +159,14 @@ resource api 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'SESSION_SIGNING_KEY', value: sessionSigningKey }
         { name: 'M365_ENABLED', value: 'false' }
         { name: 'M365_CLOUD', value: 'gcchigh' }
+        // Entra OIDC (agent plane) — disabled until an app registration is wired.
+        { name: 'OIDC_ENABLED', value: string(oidcEnabled) }
+        { name: 'OIDC_TENANT_ID', value: oidcTenantId }
+        { name: 'OIDC_CLIENT_ID', value: oidcClientId }
+        { name: 'OIDC_CLIENT_SECRET', value: oidcClientSecret }
+        { name: 'OIDC_REDIRECT_URI', value: '${apiUrl}/api/v1/auth/oidc/callback' }
+        { name: 'OIDC_POST_LOGIN_REDIRECT', value: '${webOrigin}/auth/callback' }
+        { name: 'OIDC_ALLOWED_APP_ROLES', value: oidcAllowedAppRoles }
       ]
     }
   }

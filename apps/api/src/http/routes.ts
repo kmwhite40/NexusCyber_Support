@@ -1,8 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import jwt from 'jsonwebtoken';
 import { requirePrincipal } from './context.js';
 import { ApiError, Errors } from '../errors.js';
 import { config } from '../config.js';
+import * as oidc from '../auth/oidc.js';
 import { withOrgContext, withSystemContext } from '../db/pool.js';
 import { orgContextFor } from '../auth/principal.js';
 import * as accounts from '../modules/accounts.js';
@@ -127,6 +129,77 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post('/api/v1/auth/logout', async (_req, reply) => {
     reply.header('Set-Cookie', 'nexus_session=; HttpOnly; Path=/; Max-Age=0');
     return { ok: true };
+  });
+
+  // ---------------- Entra OIDC (agent plane) ----------------
+  // Public: lets the login UI decide whether to show the SSO button (no rebuild to toggle).
+  app.get('/api/v1/auth/config', async () => ({
+    oidcEnabled: config.oidc.enabled && config.oidc.configured,
+    oidcLabel: 'Sign in with Microsoft (Gov)',
+  }));
+
+  // Begin the Authorization Code + PKCE flow. The state/nonce/verifier ride in a
+  // short-lived, signed, HttpOnly cookie (Lax is fine: the callback is a top-level GET).
+  app.get('/api/v1/auth/oidc/start', async (req, reply) => {
+    if (!config.oidc.enabled || !config.oidc.configured) {
+      throw Errors.forbidden('OIDC is not configured');
+    }
+    const state = oidc.randomToken();
+    const nonce = oidc.randomToken();
+    const { verifier, challenge } = oidc.pkcePair();
+    const tx = jwt.sign({ state, nonce, verifier }, config.sessionSigningKey, { expiresIn: 600 });
+    reply.header(
+      'Set-Cookie',
+      `oidc_tx=${tx}; HttpOnly; Path=/; SameSite=Lax; Max-Age=600${config.isProduction ? '; Secure' : ''}`,
+    );
+    const url = await oidc.buildAuthUrl({ state, nonce, challenge });
+    return reply.redirect(url);
+  });
+
+  // Exchange the code, validate the token, map/JIT-provision the agent, and hand the
+  // session token back to the SPA via the URL fragment (cross-origin; bearer model).
+  app.get('/api/v1/auth/oidc/callback', async (req, reply) => {
+    const back = (frag: string) => reply.redirect(`${config.oidc.postLoginRedirect}#${frag}`);
+    if (!config.oidc.enabled || !config.oidc.configured) {
+      return back('error=' + encodeURIComponent('OIDC is not configured'));
+    }
+    const q = z
+      .object({
+        code: z.string().optional(),
+        state: z.string().optional(),
+        error: z.string().optional(),
+        error_description: z.string().optional(),
+      })
+      .parse(req.query);
+    if (q.error) return back('error=' + encodeURIComponent(q.error_description ?? q.error));
+    if (!q.code || !q.state) return back('error=' + encodeURIComponent('missing code or state'));
+
+    const m = req.headers.cookie?.match(/(?:^|;\s*)oidc_tx=([^;]+)/);
+    if (!m) return back('error=' + encodeURIComponent('missing or expired login transaction'));
+    let txp: { state: string; nonce: string; verifier: string };
+    try {
+      txp = jwt.verify(m[1], config.sessionSigningKey) as typeof txp;
+    } catch {
+      return back('error=' + encodeURIComponent('invalid login transaction'));
+    }
+    if (txp.state !== q.state) return back('error=' + encodeURIComponent('state mismatch'));
+
+    try {
+      const identity = await oidc.exchangeAndValidate(q.code, txp.verifier, txp.nonce);
+      const result = await accounts.loginOrProvisionAgentOidc(identity);
+      // Clear the tx cookie and (best-effort) set the session cookie; the SPA reads the
+      // token from the fragment since web and API are cross-origin.
+      reply.header('Set-Cookie', [
+        'oidc_tx=; HttpOnly; Path=/; Max-Age=0',
+        `nexus_session=${encodeURIComponent(result.token)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=3600${
+          config.isProduction ? '; Secure' : ''
+        }`,
+      ]);
+      return back('token=' + encodeURIComponent(result.token));
+    } catch (e) {
+      const detail = e instanceof ApiError ? e.detail : 'sign-in failed';
+      return back('error=' + encodeURIComponent(detail ?? 'sign-in failed'));
+    }
   });
 
   app.get('/api/v1/me', async (req) => {
