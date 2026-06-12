@@ -7,7 +7,7 @@ import type { DomainEvent } from '../src/events/bus.js';
 // `users` maps user-id -> email for usersByIds (so we can assert exactly which
 // parties were resolved per event).
 function makeSql(opts: {
-  ticket?: { requester_id: string | null; assigned_agent_id: string | null; organization_id: string };
+  ticket?: { requester_id: string | null; assigned_agent_id: string | null; organization_id: string; desk_email?: string | null };
   covering?: Array<{ user_id: string; email: string }>;
   users?: Record<string, string>;
 }) {
@@ -32,15 +32,25 @@ function evt(type: string, data: Record<string, unknown>): DomainEvent {
 const emails = (rs: Array<{ email: string }>) => rs.map((r) => r.email).sort();
 
 describe('resolveRecipients — event-aware routing', () => {
-  it('ticket.created (unassigned) notifies all covering agents, not the requester', async () => {
+  it('ticket.created (unassigned) notifies the owning team’s shared desk mailbox, not the customer or every agent', async () => {
     const { sql, calls } = makeSql({
-      ticket: { requester_id: 'cust-1', assigned_agent_id: null, organization_id: 'org-1' },
+      ticket: { requester_id: 'cust-1', assigned_agent_id: null, organization_id: 'org-1', desk_email: 'desk@team' },
       covering: [{ user_id: 'ag1', email: 'a1@nexus' }, { user_id: 'ag2', email: 'a2@nexus' }],
       users: { 'cust-1': 'cust@acme' },
     });
     const out = await resolveRecipients(sql, evt('ticket.created', { ticket_id: 't1' }));
-    expect(emails(out)).toEqual(['a1@nexus', 'a2@nexus']);
-    expect(calls.some((c) => c.text.includes("u.plane = 'nexus'"))).toBe(true);
+    expect(out).toEqual([{ userId: 'desk:desk@team', email: 'desk@team' }]);
+    // single shared address — does NOT fan out to covering agents
+    expect(calls.some((c) => c.text.includes("u.plane = 'nexus'"))).toBe(false);
+  });
+
+  it('ticket.created (unassigned, no group address) falls back to the platform default desk mailbox', async () => {
+    const { sql } = makeSql({
+      ticket: { requester_id: 'cust-1', assigned_agent_id: null, organization_id: 'org-1', desk_email: null },
+    });
+    const out = await resolveRecipients(sql, evt('ticket.created', { ticket_id: 't1' }));
+    // dev default from config.notifications.serviceDeskEmail
+    expect(out).toEqual([{ userId: 'desk:service-desk@nexus.example.com', email: 'service-desk@nexus.example.com' }]);
   });
 
   it('ticket.created (already assigned) notifies just the assignee', async () => {

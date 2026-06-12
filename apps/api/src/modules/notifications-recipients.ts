@@ -4,6 +4,7 @@
 // context (system context for background dispatch).
 import type { Sql } from '../db/pool.js';
 import type { DomainEvent } from '../events/bus.js';
+import { config } from '../config.js';
 
 export interface Recipient {
   userId: string;
@@ -37,9 +38,18 @@ function mergeRecipients(...lists: Recipient[][]): Recipient[] {
 async function ticketParties(
   sql: Sql,
   ticketId: string,
-): Promise<{ requester_id: string | null; assigned_agent_id: string | null; organization_id: string } | null> {
+): Promise<{
+  requester_id: string | null;
+  assigned_agent_id: string | null;
+  organization_id: string;
+  desk_email: string | null;
+} | null> {
   const { rows } = await sql.query(
-    'SELECT requester_id, assigned_agent_id, organization_id FROM tickets WHERE id = $1',
+    `SELECT t.requester_id, t.assigned_agent_id, t.organization_id,
+            g.notification_email AS desk_email
+       FROM tickets t
+       LEFT JOIN assignment_groups g ON g.id = t.assignment_group_id
+      WHERE t.id = $1`,
     [ticketId],
   );
   return rows[0] ?? null;
@@ -83,12 +93,13 @@ export async function resolveRecipients(sql: Sql, evt: DomainEvent): Promise<Rec
     const t = await ticketParties(sql, ticketId);
     if (!t) return [];
 
-    // New ticket -> notify the agent(s): the assignee if set, else the whole
-    // covering team so the new request is seen.
+    // New ticket -> low-noise: if already assigned, the assignee owns it;
+    // otherwise notify the team via ONE shared desk mailbox (the owning group's
+    // address, else the platform default). Agents also see it in their queue.
     if (type === 'ticket.created') {
-      return t.assigned_agent_id
-        ? usersByIds(sql, [t.assigned_agent_id])
-        : coveringAgents(sql, t.organization_id);
+      if (t.assigned_agent_id) return usersByIds(sql, [t.assigned_agent_id]);
+      const desk = t.desk_email ?? config.notifications.serviceDeskEmail;
+      return desk ? [{ userId: `desk:${desk}`, email: desk }] : [];
     }
 
     // Assignment -> the newly assigned agent only (customer is not notified on

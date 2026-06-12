@@ -16,6 +16,13 @@ export interface Config {
   m365: M365Config;
   oidc: OidcConfig;
   oidcCustomer: OidcCustomerConfig;
+  notifications: NotificationsConfig;
+}
+
+export interface NotificationsConfig {
+  /** Shared service-desk mailbox that receives new-ticket notifications when the
+   *  owning assignment group has no notification_email of its own. */
+  serviceDeskEmail: string | undefined;
 }
 
 /** Entra ID (Azure Gov) OIDC for the agent plane — see docs/nexus/artifacts/auth-entra-oidc-scope.md. */
@@ -162,4 +169,9 @@ export const config: Config = {
   m365: parseM365Config(process.env),
   oidc: parseOidcConfig(process.env),
   oidcCustomer: parseOidcCustomerConfig(process.env),
+  notifications: {
+    serviceDeskEmail:
+      process.env.SERVICE_DESK_EMAIL ??
+      (process.env.NODE_ENV === 'production' ? undefined : 'service-desk@nexus.example.com'),
+  },
 };
