@@ -15,6 +15,7 @@ export interface Config {
   isProduction: boolean;
   m365: M365Config;
   oidc: OidcConfig;
+  oidcCustomer: OidcCustomerConfig;
 }
 
 /** Entra ID (Azure Gov) OIDC for the agent plane — see docs/nexus/artifacts/auth-entra-oidc-scope.md. */
@@ -34,6 +35,25 @@ export interface OidcConfig {
   postLoginRedirect: string;
   /** App roles (e.g. Anchor.SecurityAnalyst) allowed to sign in / self-provision. Empty = allow any role the token carries. */
   allowedAppRoles: string[];
+}
+
+/**
+ * Multitenant Entra OIDC for the CUSTOMER plane — external customer M365 tenants sign in
+ * with their own Entra ID (see docs/nexus/artifacts/auth-entra-oidc-customer-setup.md).
+ * Distinct app registration from the agent one; tokens come from many issuers, so the
+ * tenant (tid) is validated against organizations.entra_tenant_id (the allow-list).
+ */
+export interface OidcCustomerConfig {
+  enabled: boolean;
+  configured: boolean;
+  /** Multitenant authority, e.g. https://login.microsoftonline.us/organizations/v2.0. */
+  authority: string;
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+  postLoginRedirect: string;
+  /** Default Anchor role for a JIT-provisioned customer user. */
+  defaultRoleKey: string;
 }
 
 export type M365Cloud = 'commercial' | 'gcc' | 'gcchigh' | 'azgov';
@@ -104,6 +124,22 @@ export function parseOidcConfig(env: NodeJS.ProcessEnv): OidcConfig {
   };
 }
 
+export function parseOidcCustomerConfig(env: NodeJS.ProcessEnv): OidcCustomerConfig {
+  const enabled = bool(env.OIDC_CUSTOMER_ENABLED);
+  // Multitenant gov authority — accepts any onboarded customer tenant.
+  const authority = env.OIDC_CUSTOMER_AUTHORITY ?? 'https://login.microsoftonline.us/organizations/v2.0';
+  const clientId = env.OIDC_CUSTOMER_CLIENT_ID ?? '';
+  const clientSecret = env.OIDC_CUSTOMER_CLIENT_SECRET ?? '';
+  // Reuse the same callback + post-login redirect as the agent flow (the callback
+  // branches on a signed mode flag in the tx cookie).
+  const redirectUri = env.OIDC_REDIRECT_URI ?? '';
+  const webOrigin = (env.WEB_ORIGIN ?? 'http://localhost:3000').split(',')[0];
+  const postLoginRedirect = env.OIDC_POST_LOGIN_REDIRECT ?? `${webOrigin}/auth/callback`;
+  const defaultRoleKey = env.OIDC_CUSTOMER_DEFAULT_ROLE ?? 'EndUser';
+  const configured = enabled && !!authority && !!clientId && !!redirectUri;
+  return { enabled, configured, authority, clientId, clientSecret, redirectUri, postLoginRedirect, defaultRoleKey };
+}
+
 function required(name: string, fallback?: string): string {
   const v = process.env[name] ?? fallback;
   if (v === undefined) throw new Error(`Missing required env var: ${name}`);
@@ -125,4 +161,5 @@ export const config: Config = {
   isProduction: process.env.NODE_ENV === 'production',
   m365: parseM365Config(process.env),
   oidc: parseOidcConfig(process.env),
+  oidcCustomer: parseOidcCustomerConfig(process.env),
 };

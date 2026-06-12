@@ -131,38 +131,47 @@ export async function registerRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  // ---------------- Entra OIDC (agent plane) ----------------
-  // Public: lets the login UI decide whether to show the SSO button (no rebuild to toggle).
+  // ---------------- Entra OIDC (agent + customer planes) ----------------
+  const agentOidcOn = () => config.oidc.enabled && config.oidc.configured;
+  const customerOidcOn = () => config.oidcCustomer.enabled && config.oidcCustomer.configured;
+
+  // Public: lets the login UI decide which SSO buttons to show (no rebuild to toggle).
   app.get('/api/v1/auth/config', async () => ({
-    oidcEnabled: config.oidc.enabled && config.oidc.configured,
+    oidcEnabled: agentOidcOn(),
     oidcLabel: 'Sign in with Microsoft (Gov)',
+    customerOidcEnabled: customerOidcOn(),
+    customerOidcLabel: 'Sign in with your organization',
   }));
 
-  // Begin the Authorization Code + PKCE flow. The state/nonce/verifier ride in a
-  // short-lived, signed, HttpOnly cookie (Lax is fine: the callback is a top-level GET).
+  // Begin Authorization Code + PKCE. ?mode=customer selects the multitenant customer app;
+  // otherwise the single-tenant agent app. state/nonce/verifier/mode ride in a short-lived,
+  // signed, HttpOnly cookie (Lax is fine: the callback is a top-level GET).
   app.get('/api/v1/auth/oidc/start', async (req, reply) => {
-    if (!config.oidc.enabled || !config.oidc.configured) {
+    const mode = (req.query as { mode?: string })?.mode === 'customer' ? 'customer' : 'agent';
+    if (mode === 'customer' ? !customerOidcOn() : !agentOidcOn()) {
       throw Errors.forbidden('OIDC is not configured');
     }
     const state = oidc.randomToken();
     const nonce = oidc.randomToken();
     const { verifier, challenge } = oidc.pkcePair();
-    const tx = jwt.sign({ state, nonce, verifier }, config.sessionSigningKey, { expiresIn: 600 });
+    const tx = jwt.sign({ state, nonce, verifier, mode }, config.sessionSigningKey, { expiresIn: 600 });
     reply.header(
       'Set-Cookie',
       `oidc_tx=${tx}; HttpOnly; Path=/; SameSite=Lax; Max-Age=600${config.isProduction ? '; Secure' : ''}`,
     );
-    const url = await oidc.buildAuthUrl({ state, nonce, challenge });
+    const url =
+      mode === 'customer'
+        ? await oidc.buildCustomerAuthUrl({ state, nonce, challenge })
+        : await oidc.buildAuthUrl({ state, nonce, challenge });
     return reply.redirect(url);
   });
 
-  // Exchange the code, validate the token, map/JIT-provision the agent, and hand the
-  // session token back to the SPA via the URL fragment (cross-origin; bearer model).
+  // Exchange the code, validate the token (agent: fixed issuer; customer: per-tenant issuer
+  // + tid allow-list), map/JIT-provision, and hand the session token to the cross-origin SPA
+  // via the URL fragment.
   app.get('/api/v1/auth/oidc/callback', async (req, reply) => {
-    const back = (frag: string) => reply.redirect(`${config.oidc.postLoginRedirect}#${frag}`);
-    if (!config.oidc.enabled || !config.oidc.configured) {
-      return back('error=' + encodeURIComponent('OIDC is not configured'));
-    }
+    const postLogin = config.oidc.postLoginRedirect || config.oidcCustomer.postLoginRedirect;
+    const back = (frag: string) => reply.redirect(`${postLogin}#${frag}`);
     const q = z
       .object({
         code: z.string().optional(),
@@ -176,17 +185,27 @@ export async function registerRoutes(app: FastifyInstance) {
 
     const m = req.headers.cookie?.match(/(?:^|;\s*)oidc_tx=([^;]+)/);
     if (!m) return back('error=' + encodeURIComponent('missing or expired login transaction'));
-    let txp: { state: string; nonce: string; verifier: string };
+    let txp: { state: string; nonce: string; verifier: string; mode?: 'agent' | 'customer' };
     try {
       txp = jwt.verify(m[1], config.sessionSigningKey) as typeof txp;
     } catch {
       return back('error=' + encodeURIComponent('invalid login transaction'));
     }
     if (txp.state !== q.state) return back('error=' + encodeURIComponent('state mismatch'));
+    const mode = txp.mode === 'customer' ? 'customer' : 'agent';
+    if (mode === 'customer' ? !customerOidcOn() : !agentOidcOn()) {
+      return back('error=' + encodeURIComponent('OIDC is not configured'));
+    }
 
     try {
-      const identity = await oidc.exchangeAndValidate(q.code, txp.verifier, txp.nonce);
-      const result = await accounts.loginOrProvisionAgentOidc(identity);
+      const result =
+        mode === 'customer'
+          ? await accounts.loginOrProvisionCustomerOidc(
+              await oidc.exchangeAndValidateCustomer(q.code, txp.verifier, txp.nonce),
+            )
+          : await accounts.loginOrProvisionAgentOidc(
+              await oidc.exchangeAndValidate(q.code, txp.verifier, txp.nonce),
+            );
       // Clear the tx cookie and (best-effort) set the session cookie; the SPA reads the
       // token from the fragment since web and API are cross-origin.
       reply.header('Set-Cookie', [

@@ -61,6 +61,16 @@ param oidcClientSecret string = ''
 @description('Comma-separated app roles allowed to sign in / self-provision (e.g. Anchor.Tier2,Anchor.SecurityAnalyst).')
 param oidcAllowedAppRoles string = ''
 
+@description('Enable multitenant Entra OIDC for the CUSTOMER plane (external customer M365 tenants).')
+param oidcCustomerEnabled bool = false
+
+@description('Multitenant app (client) id for customer OIDC.')
+param oidcCustomerClientId string = ''
+
+@description('Multitenant app client secret for customer OIDC.')
+@secure()
+param oidcCustomerClientSecret string = ''
+
 var pgAdmin = 'nexus'
 var dbName = 'nexus'
 var acrName = toLower(replace('${name}acr${uniqueString(resourceGroup().id)}', '-', ''))
@@ -167,6 +177,12 @@ resource api 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'OIDC_REDIRECT_URI', value: '${apiUrl}/api/v1/auth/oidc/callback' }
         { name: 'OIDC_POST_LOGIN_REDIRECT', value: '${webOrigin}/auth/callback' }
         { name: 'OIDC_ALLOWED_APP_ROLES', value: oidcAllowedAppRoles }
+        // Multitenant customer OIDC (external customer M365 tenants) — disabled until a
+        // multitenant app registration is wired. Allow-list is data-driven (organizations.entra_tenant_id).
+        { name: 'OIDC_CUSTOMER_ENABLED', value: string(oidcCustomerEnabled) }
+        { name: 'OIDC_CUSTOMER_CLIENT_ID', value: oidcCustomerClientId }
+        { name: 'OIDC_CUSTOMER_CLIENT_SECRET', value: oidcCustomerClientSecret }
+        { name: 'OIDC_CUSTOMER_AUTHORITY', value: 'https://login.microsoftonline.us/organizations/v2.0' }
       ]
     }
   }

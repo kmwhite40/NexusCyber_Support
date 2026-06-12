@@ -8,10 +8,11 @@ Step-by-step to let **customer organizations** sign in to Anchor with **their ow
 >    customers whose M365 is **also in GCC High / Azure Gov (.us)** can use this. Commercial
 >    (`login.microsoftonline.com`) customers cannot authenticate to a gov app — they need a
 >    separate commercial deployment, or B2B guest invites (see §7).
-> 2. **Code support.** The shipped Phase 1 code is **single-tenant** (it pins one issuer). The
->    multi-tenant validation + customer→org mapping below require the Phase 2 **code changes**
->    in §5 to be implemented and deployed first. Doing only the Entra config will let customers
->    reach the consent screen but their callback will be rejected until §5 ships.
+> 2. **Code support — now shipped (disabled by default).** The Phase 2 multitenant code in §5
+>    is implemented (`OIDC_CUSTOMER_*`, migration 0027, per-tenant JWKS + `tid` allow-list,
+>    `loginOrProvisionCustomerOidc`, `?mode=customer`). It is **off** until you set the
+>    `OIDC_CUSTOMER_*` settings and onboard at least one tenant (§4). It must be **deployed**
+>    (rebuild API image + run migration 0027) before turning on.
 
 ---
 
@@ -83,8 +84,8 @@ email domain — but `tid` is the stronger key.)
 
 ---
 
-## 5. Code changes required (Phase 2 — not yet shipped)
-Mirror the Phase 1 OIDC code with a multitenant mode:
+## 5. Code (Phase 2 — implemented, disabled by default)
+Shipped on `feat/nexus-platform`; mirrors the Phase 1 OIDC code with a multitenant mode:
 - **`auth/oidc.ts`** — customer variant:
   - Authorize against `…/organizations/oauth2/v2.0/authorize`.
   - On callback, read `tid` from the validated token; build/cache a JWKS **per tenant**

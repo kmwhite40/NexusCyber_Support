@@ -13,7 +13,7 @@ import { publish } from '../events/bus.js';
 import { config } from '../config.js';
 import { Errors } from '../errors.js';
 import { authorize } from '../authz/pdp.js';
-import type { OidcIdentity } from '../auth/oidc.js';
+import type { OidcIdentity, OidcCustomerIdentity } from '../auth/oidc.js';
 import type { Principal, SessionClaims } from '../types.js';
 
 function emailDomain(email: string): string {
@@ -260,6 +260,86 @@ export async function loginOrProvisionAgentOidc(identity: OidcIdentity): Promise
     email: user.email,
     org: null,
     roles: roleKeys,
+  };
+  const token = issueSession(claims);
+  const principal = await loadPrincipal(claims as SessionClaims);
+  await audit(principal, { action: 'auth.oidc_login', resourceType: 'user', resourceId: user.id });
+  return { token, principal };
+}
+
+/**
+ * Customer-plane login via multitenant Entra OIDC. The id_token is already validated by
+ * auth/oidc.ts (per-tenant issuer/JWKS). Here we enforce the allow-list — the token's
+ * tenant (tid) MUST map to an onboarded organization (organizations.entra_tenant_id) —
+ * then match/JIT-provision the user into that org with plane:'customer'. RLS/ABAC scope
+ * them to their org automatically.
+ */
+export async function loginOrProvisionCustomerOidc(
+  identity: OidcCustomerIdentity,
+): Promise<AuthResult> {
+  const email = identity.email.trim().toLowerCase();
+  const roleKey = config.oidcCustomer.defaultRoleKey;
+
+  const user = await withSystemContext(async (sql) => {
+    // Allow-list: the customer tenant must be mapped to an Anchor org.
+    const org = (
+      await sql.query(`SELECT id FROM organizations WHERE entra_tenant_id = $1`, [identity.tid])
+    ).rows[0];
+    if (!org) throw Errors.forbidden('organization not onboarded for SSO');
+
+    // Match by Entra oid, then by email within the org; link the oid if found.
+    let row = (
+      await sql.query(
+        `SELECT id, plane, organization_id, email FROM users WHERE external_id = $1 AND plane = 'customer'`,
+        [identity.oid],
+      )
+    ).rows[0];
+    if (!row) {
+      const byEmail = (
+        await sql.query(
+          `SELECT id, plane, organization_id, email, external_id
+             FROM users WHERE plane = 'customer' AND organization_id = $1 AND email = $2`,
+          [org.id, email],
+        )
+      ).rows[0];
+      if (byEmail) {
+        row = byEmail;
+        if (!byEmail.external_id) {
+          await sql.query(`UPDATE users SET external_id = $1 WHERE id = $2`, [identity.oid, byEmail.id]);
+        }
+      }
+    }
+
+    // JIT-provision into the mapped org.
+    if (!row) {
+      row = (
+        await sql.query(
+          `INSERT INTO users (plane, organization_id, email, display_name, external_id)
+           VALUES ('customer', $1, $2, $3, $4)
+           RETURNING id, plane, organization_id, email`,
+          [org.id, email, identity.displayName ?? email, identity.oid],
+        )
+      ).rows[0];
+    }
+
+    // Ensure the default role assignment within their org.
+    const role = (await sql.query(`SELECT id FROM roles WHERE key = $1`, [roleKey])).rows[0];
+    if (role) {
+      await sql.query(
+        `INSERT INTO role_assignments (user_id, role_id, organization_id)
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [row.id, role.id, org.id],
+      );
+    }
+    return row;
+  });
+
+  const claims: Omit<SessionClaims, 'iat' | 'exp'> = {
+    sub: user.id,
+    plane: 'customer',
+    email: user.email,
+    org: user.organization_id,
+    roles: [roleKey],
   };
   const token = issueSession(claims);
   const principal = await loadPrincipal(claims as SessionClaims);
