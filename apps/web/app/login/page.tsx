@@ -109,7 +109,7 @@ export default function LoginPage() {
               }}
             >
               <MicrosoftLogo className="size-4" />
-              {sso.label || 'Sign in with Microsoft (Gov)'}
+              {sso.label || 'Sign in as Anchor staff'}
             </Button>
           )}
           {sso.customerEnabled && (
@@ -129,10 +129,6 @@ export default function LoginPage() {
         </>
       )}
 
-      <p className="text-center text-sm text-muted">
-        No account?{' '}
-        <Link href="/signup" className="font-medium text-brand hover:underline">Create one</Link>
-      </p>
 
       {demos.length > 0 && (
         <>
