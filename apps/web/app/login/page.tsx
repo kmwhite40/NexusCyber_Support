@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { auth, setToken, homePath, ApiError } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
 import { Button, Card, Input, Field, Badge } from '@/components/ui/primitives';
+import { BrandMark } from '@/components/ui/brand';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -41,10 +42,8 @@ export default function LoginPage() {
         <div className="pointer-events-none absolute -left-20 top-1/3 h-96 w-96 rounded-full bg-brand/20 blur-3xl" />
         <div className="pointer-events-none absolute -right-10 bottom-0 h-80 w-80 rounded-full bg-accent/20 blur-3xl" />
         <div className="flex items-center gap-2.5">
-          <div className="grid h-10 w-10 place-items-center rounded-xl bg-brand text-brand-fg shadow-glow">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L4.5 13.5H11l-1 8.5L19.5 10H13l0-8z"/></svg>
-          </div>
-          <span className="text-lg font-semibold">Nexus</span>
+          <BrandMark size={40} />
+          <span className="text-lg font-semibold">Nexus<span className="text-muted">Cyber</span></span>
         </div>
         <div className="relative max-w-md">
           <h1 className="text-3xl font-semibold leading-tight tracking-tight">

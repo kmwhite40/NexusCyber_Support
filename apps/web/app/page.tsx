@@ -20,6 +20,7 @@ import { homePath } from '@/lib/api';
 import { GLSLHills } from '@/components/ui/glsl-hills';
 import DisplayCards from '@/components/ui/display-cards';
 import { Navbar1 } from '@/components/ui/navbar1';
+import { BrandMark } from '@/components/ui/brand';
 import { LiquidButton, MetalButton } from '@/components/ui/liquid-glass-button';
 import { Card, CardBody, Badge } from '@/components/ui/primitives';
 
@@ -214,10 +215,8 @@ export default function Landing() {
             {/* Brand */}
             <div>
               <div className="flex items-center gap-2.5">
-                <div className="grid h-9 w-9 place-items-center rounded-lg bg-brand text-brand-fg">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L4.5 13.5H11l-1 8.5L19.5 10H13l0-8z" /></svg>
-                </div>
-                <span className="text-base font-semibold text-fg">Nexus Cyber</span>
+                <BrandMark size={36} />
+                <span className="text-base font-semibold text-fg">Nexus<span className="text-muted">Cyber</span></span>
               </div>
               <p className="mt-4 max-w-xs text-sm leading-relaxed text-muted">
                 The cyber operations control plane — ITSM, on-call, and security posture, isolated

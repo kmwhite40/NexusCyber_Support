@@ -6,6 +6,7 @@ import { cn } from '@/lib/cn';
 import { useAuth } from './auth-context';
 import { Badge } from './ui/primitives';
 import { Avatar, AvatarFallback } from './ui/avatar';
+import { BrandMark } from './ui/brand';
 
 type NavItem = { href: string; label: string; icon: React.ReactNode; anyPerm?: string[] };
 
@@ -48,12 +49,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen">
       {/* Sidebar */}
       <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-border glass px-3 py-5 md:flex">
-        <Link href="/dashboard" className="mb-7 flex items-center gap-2.5 px-2">
-          <div className="grid h-9 w-9 place-items-center rounded-lg bg-brand text-brand-fg shadow-glow">
-            <IconBolt />
-          </div>
+        <Link href={isCustomer ? '/portal' : '/dashboard'} className="mb-7 flex items-center gap-2.5 px-2">
+          <BrandMark size={34} />
           <div>
-            <div className="text-sm font-semibold leading-none text-fg">Nexus Cyber</div>
+            <div className="text-sm font-semibold leading-none text-fg">Nexus<span className="text-muted">Cyber</span></div>
             <div className="text-[10px] uppercase tracking-widest text-muted">{isCustomer ? 'Support' : 'Control Plane'}</div>
           </div>
         </Link>
@@ -130,7 +129,6 @@ function IconGrid() { return <svg width="18" height="18" viewBox="0 0 24 24" fil
 function IconTicket() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v1a2 2 0 0 0 0 4v1a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-1a2 2 0 0 0 0-4V8z"/></svg>; }
 function IconShield() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg>; }
 function IconScroll() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M8 3h9a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H8M8 3a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2M8 3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2M12 8h4M12 12h4"/></svg>; }
-function IconBolt() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L4.5 13.5H11l-1 8.5L19.5 10H13l0-8z"/></svg>; }
 function IconChart() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 3v18h18"/><rect x="7" y="11" width="3" height="6" rx="1"/><rect x="12" y="7" width="3" height="10" rx="1"/><rect x="17" y="13" width="3" height="4" rx="1"/></svg>; }
 function IconCatalog() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 17.5h7M17.5 14v7"/></svg>; }
 function IconPager() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>; }
