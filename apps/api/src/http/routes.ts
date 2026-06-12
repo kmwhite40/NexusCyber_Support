@@ -283,6 +283,14 @@ export async function registerRoutes(app: FastifyInstance) {
     return accounts.getOrganization(p, id);
   });
 
+  // Admin: delete an organization (refuses if it has users).
+  app.delete('/api/v1/organizations/:id', async (req) => {
+    const p = await requirePrincipal(req);
+    if (!can(p, 'org.manage')) throw Errors.forbidden('insufficient permission to delete organizations');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return accounts.deleteOrganizationAdmin(p, id);
+  });
+
   app.patch('/api/v1/organizations/:id', async (req) => {
     const p = await requirePrincipal(req);
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);

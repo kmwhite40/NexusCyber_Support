@@ -444,6 +444,31 @@ export async function createOrganizationAdmin(
   });
 }
 
+/**
+ * Admin: delete an organization. Safety: refuses if any users belong to it (so a real
+ * customer org can't be removed). Used to tidy up mistaken/test onboardings. System context.
+ */
+export async function deleteOrganizationAdmin(
+  actor: Principal,
+  id: string,
+): Promise<{ deleted: true; id: string; name: string }> {
+  return withSystemContext(async (sql) => {
+    const org = (await sql.query(`SELECT id, name FROM organizations WHERE id = $1`, [id])).rows[0];
+    if (!org) throw Errors.notFound('organization not found');
+    const n = (await sql.query(`SELECT count(*)::int AS n FROM users WHERE organization_id = $1`, [id])).rows[0].n;
+    if (n > 0) throw Errors.badRequest(`organization "${org.name}" has ${n} user(s); refusing to delete`);
+    await sql.query(`DELETE FROM organizations WHERE id = $1`, [id]);
+    await audit(actor, {
+      action: 'org.delete',
+      organizationId: id,
+      resourceType: 'organization',
+      resourceId: id,
+      detail: { name: org.name },
+    });
+    return { deleted: true, id, name: org.name };
+  });
+}
+
 export async function updateOrganization(actor: Principal, id: string, input: UpdateOrgInput) {
   authorize(actor, 'org.manage', { organizationId: id });
   return withOrgContext(orgContextFor(actor), async (sql) => {
