@@ -8,30 +8,36 @@ import { Badge } from './ui/primitives';
 import { Avatar, AvatarFallback } from './ui/avatar';
 import { BrandMark } from './ui/brand';
 
-type NavItem = { href: string; label: string; icon: React.ReactNode; anyPerm?: string[] };
+type NavItem = { href: string; label: string; icon: React.ReactNode; anyPerm?: string[]; section?: string };
 
 // Agents get the operational control plane; customers get a focused support experience.
 const NEXUS_NAV: NavItem[] = [
-  { href: '/dashboard', label: 'Dashboard', icon: <IconGrid /> },
-  { href: '/dashboards', label: 'Dashboards', icon: <IconGauge />, anyPerm: ['dashboard.read'] },
-  { href: '/catalog', label: 'Service catalog', icon: <IconCatalog /> },
-  { href: '/kb', label: 'Knowledge base', icon: <IconBook />, anyPerm: ['kb.read'] },
-  { href: '/tickets', label: 'Tickets', icon: <IconTicket /> },
-  { href: '/queues', label: 'Queues', icon: <IconLayers />, anyPerm: ['ticket.read.all_assigned_customers'] },
-  { href: '/incidents', label: 'Incidents', icon: <IconAlert /> },
-  { href: '/changes', label: 'Changes', icon: <IconCalendar />, anyPerm: ['change.create', 'change.approve'] },
-  { href: '/problems', label: 'Problems', icon: <IconBug />, anyPerm: ['problem.manage'] },
-  { href: '/analytics', label: 'Analytics', icon: <IconChart />, anyPerm: ['report.read.operational', 'report.read.customer'] },
-  { href: '/oncall', label: 'On-call', icon: <IconPager />, anyPerm: ['oncall.acknowledge', 'oncall.manage', 'oncall.page'] },
-  { href: '/alerts', label: 'Alerts', icon: <IconBell />, anyPerm: ['alert.read'] },
-  { href: '/services', label: 'Services', icon: <IconServer />, anyPerm: ['service.read', 'service.manage'] },
-  { href: '/customers', label: 'Customers', icon: <IconUsers />, anyPerm: ['org.read', 'org.manage'] },
-  { href: '/posture', label: 'Posture', icon: <IconShield />, anyPerm: ['posture.read'] },
-  { href: '/compliance', label: 'Compliance', icon: <IconClipboard />, anyPerm: ['compliance.read'] },
-  { href: '/automations', label: 'Automations', icon: <IconRobot />, anyPerm: ['automation.author'] },
-  { href: '/channels', label: 'Channels', icon: <IconPlug />, anyPerm: ['channel.read', 'channel.manage'] },
-  { href: '/audit', label: 'Audit log', icon: <IconScroll />, anyPerm: ['audit.read'] },
-  { href: '/email-logs', label: 'Email logs', icon: <IconMail />, anyPerm: ['notifications.read'] },
+  { href: '/get-started', label: 'Get started', icon: <IconRocket /> },
+  // Work
+  { href: '/dashboard', label: 'Dashboard', icon: <IconGrid />, section: 'Work' },
+  { href: '/tickets', label: 'Tickets', icon: <IconTicket />, section: 'Work' },
+  { href: '/queues', label: 'Queues', icon: <IconLayers />, anyPerm: ['ticket.read.all_assigned_customers'], section: 'Work' },
+  { href: '/incidents', label: 'Incidents', icon: <IconAlert />, section: 'Work' },
+  { href: '/catalog', label: 'Service catalog', icon: <IconCatalog />, section: 'Work' },
+  { href: '/kb', label: 'Knowledge base', icon: <IconBook />, anyPerm: ['kb.read'], section: 'Work' },
+  { href: '/changes', label: 'Changes', icon: <IconCalendar />, anyPerm: ['change.create', 'change.approve'], section: 'Work' },
+  { href: '/problems', label: 'Problems', icon: <IconBug />, anyPerm: ['problem.manage'], section: 'Work' },
+  { href: '/archived', label: 'Archived', icon: <IconArchive />, section: 'Work' },
+  // Operations
+  { href: '/oncall', label: 'On-call', icon: <IconPager />, anyPerm: ['oncall.acknowledge', 'oncall.manage', 'oncall.page'], section: 'Operations' },
+  { href: '/alerts', label: 'Alerts', icon: <IconBell />, anyPerm: ['alert.read'], section: 'Operations' },
+  { href: '/services', label: 'Services', icon: <IconServer />, anyPerm: ['service.read', 'service.manage'], section: 'Operations' },
+  { href: '/customers', label: 'Customers', icon: <IconUsers />, anyPerm: ['org.read', 'org.manage'], section: 'Operations' },
+  { href: '/channels', label: 'Channels', icon: <IconPlug />, anyPerm: ['channel.read', 'channel.manage'], section: 'Operations' },
+  { href: '/automations', label: 'Automations', icon: <IconRobot />, anyPerm: ['automation.author'], section: 'Operations' },
+  // Insights
+  { href: '/dashboards', label: 'Dashboards', icon: <IconGauge />, anyPerm: ['dashboard.read'], section: 'Insights' },
+  { href: '/analytics', label: 'Analytics', icon: <IconChart />, anyPerm: ['report.read.operational', 'report.read.customer'], section: 'Insights' },
+  { href: '/audit', label: 'Audit log', icon: <IconScroll />, anyPerm: ['audit.read'], section: 'Insights' },
+  { href: '/email-logs', label: 'Email logs', icon: <IconMail />, anyPerm: ['notifications.read'], section: 'Insights' },
+  // Security
+  { href: '/posture', label: 'Posture', icon: <IconShield />, anyPerm: ['posture.read'], section: 'Security' },
+  { href: '/compliance', label: 'Compliance', icon: <IconClipboard />, anyPerm: ['compliance.read'], section: 'Security' },
 ];
 
 const CUSTOMER_NAV: NavItem[] = [
@@ -60,6 +66,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const isCustomer = me.plane === 'customer';
   const items = (isCustomer ? CUSTOMER_NAV : NEXUS_NAV).filter((n) => !n.anyPerm || n.anyPerm.some((p) => can(p)));
 
+  const SECTION_ORDER = ['Work', 'Operations', 'Insights', 'Security'];
+  const renderItem = (n: NavItem) => {
+    const active = pathname === n.href || pathname.startsWith(n.href + '/');
+    return (
+      <Link
+        key={n.href}
+        href={n.href}
+        className={cn(
+          'flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors',
+          active ? 'bg-brand/15 text-brand' : 'text-muted hover:bg-surface-2 hover:text-fg',
+        )}
+      >
+        <span className={cn(active ? 'text-brand' : 'text-muted')}>{n.icon}</span>
+        {n.label}
+      </Link>
+    );
+  };
+  const ungrouped = items.filter((n) => !n.section);
+
   return (
     <div className="flex min-h-screen">
       {/* Sidebar */}
@@ -73,20 +98,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </Link>
 
         <nav className="flex-1 space-y-1">
-          {items.map((n) => {
-            const active = pathname === n.href || pathname.startsWith(n.href + '/');
+          {ungrouped.map(renderItem)}
+          {SECTION_ORDER.map((sec) => {
+            const secItems = items.filter((n) => n.section === sec);
+            if (secItems.length === 0) return null;
             return (
-              <Link
-                key={n.href}
-                href={n.href}
-                className={cn(
-                  'flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors',
-                  active ? 'bg-brand/15 text-brand' : 'text-muted hover:bg-surface-2 hover:text-fg',
-                )}
-              >
-                <span className={cn(active ? 'text-brand' : 'text-muted')}>{n.icon}</span>
-                {n.label}
-              </Link>
+              <div key={sec} className="pt-3">
+                <div className="px-3 pb-1 text-[10px] font-medium uppercase tracking-widest text-muted/70">{sec}</div>
+                {secItems.map(renderItem)}
+              </div>
             );
           })}
         </nav>
@@ -127,6 +147,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 }
 
 function titleFor(path: string): string {
+  if (path.startsWith('/get-started')) return 'Get started';
+  if (path.startsWith('/archived')) return 'Archived work items';
   if (path.startsWith('/portal')) return 'Help center';
   if (path.startsWith('/tickets/new')) return 'Submit a ticket';
   if (path.startsWith('/tickets/')) return 'Ticket';
@@ -174,3 +196,5 @@ function IconMail() { return <svg width="18" height="18" viewBox="0 0 24 24" fil
 function IconBell() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>; }
 function IconPlug() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9 2v6M15 2v6M7 8h10v3a5 5 0 0 1-10 0V8zM12 16v6"/></svg>; }
 function IconGauge() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 13l4-4M5 19a9 9 0 1 1 14 0"/></svg>; }
+function IconRocket() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M5 15c-1.5 1.5-2 5-2 5s3.5-.5 5-2M9 11a4 4 0 0 1 4-4M14.5 4.5C17 3 21 3 21 3s0 4-1.5 6.5C18 12 13 16 11 16l-3-3c0-2 4-7 6.5-8.5z"/><circle cx="14.5" cy="9.5" r="1"/></svg>; }
+function IconArchive() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M9 12h6"/></svg>; }
