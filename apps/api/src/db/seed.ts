@@ -352,6 +352,186 @@ async function run() {
           step('verify', 'Verify encryption + public-access lockdown', 'Tier3'),
         ],
       },
+
+      // ---- Devices & Endpoints ----
+      {
+        key: 'device.enrollment', name: 'Device enrollment (Intune)', category: 'Devices & Endpoints',
+        ticket_type: 'service_request', owning_tier: T2, escalates_to: SEC,
+        requires_approval: false, approver_hint: null, default_priority: 'P3',
+        security_class: 'standard', sla_response_min: 60, sla_resolution_min: 480,
+        steps: [
+          step('triage', 'Verify device ownership + platform (Windows/macOS/iOS/Android)', 'Tier1'),
+          step('enroll', 'Enroll device in Intune; assign compliance + config profiles', 'Tier2', true),
+          step('verify', 'Confirm compliant + apps deployed', 'Tier2'),
+          step('notify', 'Notify user with first-run steps', 'Tier2', true),
+        ],
+      },
+      {
+        key: 'device.lost_stolen', name: 'Lost / stolen device — wipe & revoke', category: 'Devices & Endpoints',
+        ticket_type: 'incident', owning_tier: SEC, escalates_to: ENG,
+        requires_approval: false, approver_hint: 'Security Operations (immediate)', default_priority: 'P1',
+        security_class: 'security', sla_response_min: 15, sla_resolution_min: 120,
+        steps: [
+          step('contain', 'Revoke sessions/tokens + disable sign-in', 'SecurityAnalyst', true),
+          step('wipe', 'Issue remote wipe (or selective wipe for BYOD) via Intune', 'Tier2', true),
+          step('rotate', 'Rotate any cached credentials / re-enroll MFA', 'Tier2', true),
+          step('evidence', 'Record device id, action, and timeline', 'SecurityAnalyst'),
+        ],
+      },
+      {
+        key: 'device.bitlocker_recovery', name: 'BitLocker recovery key retrieval', category: 'Devices & Endpoints',
+        ticket_type: 'service_request', owning_tier: T1, escalates_to: T2,
+        requires_approval: false, approver_hint: null, default_priority: 'P2',
+        security_class: 'standard', sla_response_min: 15, sla_resolution_min: 60,
+        steps: [
+          step('verify_id', 'Verify requester identity + device ownership', 'Tier1'),
+          step('retrieve', 'Retrieve recovery key from Entra/Intune', 'Tier1', true),
+          step('notify', 'Provide key via verified channel; advise re-save', 'Tier1', true),
+        ],
+      },
+      {
+        key: 'software.install', name: 'Software installation request', category: 'Devices & Endpoints',
+        ticket_type: 'service_request', owning_tier: T1, escalates_to: T2,
+        requires_approval: true, approver_hint: 'Manager (licensed/paid software)', default_priority: 'P4',
+        security_class: 'standard', sla_response_min: 60, sla_resolution_min: 480,
+        steps: [
+          step('triage', 'Validate software is approved + license available', 'Tier1'),
+          step('approval', 'Manager approval (paid/licensed titles)', 'OrgAdmin'),
+          step('deploy', 'Deploy via Company Portal / Intune', 'Tier2', true),
+          step('verify', 'Confirm install + license assignment', 'Tier1'),
+        ],
+      },
+
+      // ---- Networking ----
+      {
+        key: 'network.vpn_access', name: 'VPN access request', category: 'Networking',
+        ticket_type: 'access_request', owning_tier: T2, escalates_to: SEC,
+        requires_approval: true, approver_hint: 'Manager + Security Operations', default_priority: 'P3',
+        security_class: 'security', sla_response_min: 60, sla_resolution_min: 480,
+        steps: [
+          step('triage', 'Validate business need + device compliance', 'Tier1'),
+          step('approval', 'Manager + SecOps approval', 'OrgAdmin'),
+          step('grant', 'Add to VPN group; enforce MFA + posture check', 'Tier2', true),
+          step('verify', 'Confirm connectivity from a compliant device', 'Tier2'),
+        ],
+      },
+      {
+        key: 'network.firewall_change', name: 'Firewall / network rule change', category: 'Networking',
+        ticket_type: 'change', owning_tier: T3, escalates_to: SEC,
+        requires_approval: true, approver_hint: 'Network owner + Security Operations (CAB)', default_priority: 'P2',
+        security_class: 'security', sla_response_min: 30, sla_resolution_min: 1440,
+        steps: [
+          step('triage', 'Document source/dest/port + justification', 'Tier3'),
+          step('approval', 'CAB: network owner + SecOps approval', 'SecurityAnalyst'),
+          step('implement', 'Apply rule via IaC; least-privilege + logging', 'Tier3', true),
+          step('verify', 'Verify flow + no broad exposure; record backout', 'Tier3'),
+        ],
+      },
+
+      // ---- Security ----
+      {
+        key: 'security.phishing_report', name: 'Report suspected phishing', category: 'Security',
+        ticket_type: 'incident', owning_tier: SEC, escalates_to: ENG,
+        requires_approval: false, approver_hint: null, default_priority: 'P2',
+        security_class: 'security', sla_response_min: 15, sla_resolution_min: 240,
+        steps: [
+          step('triage', 'Analyze headers/URLs/attachments (detonate if needed)', 'SecurityAnalyst'),
+          step('contain', 'Purge from mailboxes; block sender/URL', 'SecurityAnalyst', true),
+          step('hunt', 'Hunt for other recipients + clicks', 'SecurityAnalyst', true),
+          step('notify', 'Notify reporter + affected users', 'SecurityAnalyst'),
+        ],
+      },
+      {
+        key: 'security.access_review', name: 'Periodic access review (attestation)', category: 'Security',
+        ticket_type: 'service_request', owning_tier: SEC, escalates_to: ENG,
+        requires_approval: true, approver_hint: 'Resource owner', default_priority: 'P3',
+        security_class: 'security', sla_response_min: 120, sla_resolution_min: 2880,
+        steps: [
+          step('scope', 'Generate access list for the resource/role', 'SecurityAnalyst', true),
+          step('attest', 'Owner attests / flags removals', 'OrgAdmin'),
+          step('remediate', 'Remove flagged access; record decisions', 'Tier2', true),
+          step('evidence', 'Store attestation evidence for the control', 'SecurityAnalyst'),
+        ],
+      },
+      {
+        key: 'security.certificate_request', name: 'TLS / code-signing certificate request', category: 'Security',
+        ticket_type: 'service_request', owning_tier: T3, escalates_to: SEC,
+        requires_approval: true, approver_hint: 'Security Operations', default_priority: 'P3',
+        security_class: 'security', sla_response_min: 60, sla_resolution_min: 1440,
+        steps: [
+          step('triage', 'Validate CN/SAN, key type, and usage', 'Tier3'),
+          step('approval', 'SecOps approval (issuance policy)', 'SecurityAnalyst'),
+          step('issue', 'Issue from CA; store key in Key Vault/HSM', 'Tier3', true),
+          step('verify', 'Install + verify chain; set renewal reminder', 'Tier3', true),
+        ],
+      },
+
+      // ---- Data & Backup ----
+      {
+        key: 'data.file_restore', name: 'File / folder restore from backup', category: 'Data & Backup',
+        ticket_type: 'service_request', owning_tier: T2, escalates_to: T3,
+        requires_approval: false, approver_hint: null, default_priority: 'P3',
+        security_class: 'standard', sla_response_min: 60, sla_resolution_min: 480,
+        steps: [
+          step('triage', 'Identify path, version, and point-in-time', 'Tier1'),
+          step('restore', 'Restore from backup/recycle bin/versioning', 'Tier2', true),
+          step('verify', 'Confirm integrity + permissions with requester', 'Tier2'),
+        ],
+      },
+      {
+        key: 'data.mailbox_restore', name: 'Mailbox / item recovery', category: 'Data & Backup',
+        ticket_type: 'service_request', owning_tier: T2, escalates_to: SEC,
+        requires_approval: false, approver_hint: 'Legal-hold check for litigation', default_priority: 'P3',
+        security_class: 'standard', sla_response_min: 60, sla_resolution_min: 480,
+        steps: [
+          step('triage', 'Scope items + window; check legal hold', 'Tier2'),
+          step('recover', 'Recover from Recoverable Items / soft-deleted mailbox', 'Tier2', true),
+          step('verify', 'Confirm recovery with requester', 'Tier2'),
+        ],
+      },
+
+      // ---- Collaboration ----
+      {
+        key: 'collab.teams_site', name: 'New Team / SharePoint site', category: 'Collaboration',
+        ticket_type: 'service_request', owning_tier: T2, escalates_to: SEC,
+        requires_approval: true, approver_hint: 'Sponsor (data classification)', default_priority: 'P3',
+        security_class: 'standard', sla_response_min: 60, sla_resolution_min: 480,
+        steps: [
+          step('triage', 'Validate name, owners, and data classification', 'Tier1'),
+          step('approval', 'Sponsor approval (classification + external sharing)', 'OrgAdmin'),
+          step('provision', 'Create Team/site from approved template + labels', 'Tier2', true),
+          step('verify', 'Confirm membership, sharing scope, and labels', 'Tier2'),
+        ],
+      },
+
+      // ---- Telephony ----
+      {
+        key: 'telephony.teams_phone', name: 'Teams Phone / calling plan', category: 'Telephony',
+        ticket_type: 'service_request', owning_tier: T2, escalates_to: ENG,
+        requires_approval: true, approver_hint: 'Cost owner (calling plan)', default_priority: 'P4',
+        security_class: 'standard', sla_response_min: 120, sla_resolution_min: 1440,
+        steps: [
+          step('triage', 'Validate license + number/locale needs', 'Tier1'),
+          step('approval', 'Cost-owner approval (paid plan)', 'OrgAdmin'),
+          step('assign', 'Assign license, number, and voice policy', 'Tier2', true),
+          step('verify', 'Test inbound/outbound + emergency address', 'Tier2'),
+        ],
+      },
+
+      // ---- Government (GCC High / regulated) ----
+      {
+        key: 'gov.cui_workspace', name: 'CUI workspace provisioning', category: 'Government',
+        ticket_type: 'access_request', owning_tier: SEC, escalates_to: ENG,
+        requires_approval: true, approver_hint: 'ISSO + data owner', default_priority: 'P2',
+        security_class: 'security', sla_response_min: 60, sla_resolution_min: 2880,
+        steps: [
+          step('triage', 'Validate CUI category + handling requirements', 'SecurityAnalyst'),
+          step('approval', 'ISSO + data owner approval', 'OrgAdmin'),
+          step('provision', 'Create labeled workspace; restrict sharing/export', 'Tier2', true),
+          step('enforce', 'Apply DLP + Conditional Access + audit', 'SecurityAnalyst', true),
+          step('evidence', 'Record authorization + control mapping', 'SecurityAnalyst'),
+        ],
+      },
     ];
 
     for (const item of catalog) {
@@ -543,33 +723,108 @@ async function run() {
       }
     }
 
-    // ---- Knowledge base: a global space with a few published pages (Confluence-style) ----
+    // ---- Knowledge base: global spaces + published articles (Confluence-style) ----
+    // Idempotent per space/page so the library can be extended and re-seeded safely.
     const kbAuthor = (await sql.query("SELECT id FROM users WHERE email='analyst@nexus.example.com'")).rows[0]?.id ?? null;
-    const spaceExists = await sql.query("SELECT id FROM kb_spaces WHERE organization_id IS NULL AND key='SD'");
-    if (!spaceExists.rows[0]) {
-      const kbSpaceId = (
+
+    const kbSpaces: Array<[string, string, string]> = [
+      ['SD', 'Service Desk', 'Self-service knowledge for common requests and incidents'],
+      ['SEC', 'Security', 'Staying secure: MFA, phishing, lost devices, and incident response'],
+      ['M365', 'Microsoft 365', 'Teams, Outlook, SharePoint/OneDrive, and information protection'],
+      ['CLOUD', 'Cloud Operations', 'Azure Government, AWS GovCloud, access, and landing-zone standards'],
+      ['POL', 'Policies & Compliance', 'Policies, data handling, and continuous-monitoring overviews'],
+    ];
+    const kbSpaceIds: Record<string, string> = {};
+    for (const [key, name, description] of kbSpaces) {
+      const found = await sql.query('SELECT id FROM kb_spaces WHERE organization_id IS NULL AND key=$1', [key]);
+      kbSpaceIds[key] = found.rows[0]
+        ? found.rows[0].id
+        : (
+            await sql.query(
+              `INSERT INTO kb_spaces (organization_id, key, name, description, created_by) VALUES (NULL,$1,$2,$3,$4) RETURNING id`,
+              [key, name, description, kbAuthor],
+            )
+          ).rows[0].id;
+    }
+
+    interface KbPage { space: string; title: string; body: string; labels: string[]; parent?: string }
+    const kbPages: KbPage[] = [
+      // ----- Service Desk -----
+      { space: 'SD', title: 'Reset your password', labels: ['password', 'accounts', 'self-service'],
+        body: '# Reset your password\n\nIf you are locked out, use the self-service reset:\n\n1. Go to the sign-in page and choose **Forgot password**.\n2. Verify your identity with MFA.\n3. Set a new password meeting the complexity policy.\n\nStill stuck? Submit a **Password reset** request from the Service catalog.' },
+      { space: 'SD', title: 'Unlock your account', labels: ['accounts', 'self-service'],
+        body: '# Account locked out\n\nToo many failed sign-ins can lock your account temporarily.\n\n1. Wait 15 minutes and try again from a trusted device.\n2. If you recently changed your password, update it in every app (mail, VPN, Wi-Fi).\n3. Still locked? Submit an **Account unlock** request and we will verify your identity and clear the lockout.' },
+      { space: 'SD', title: 'Set up email & calendar on your phone', labels: ['email', 'mobile', 'outlook'],
+        body: '# Email on mobile\n\nUse the **Outlook** app (required for compliance — it keeps work data in a protected container).\n\n1. Install **Microsoft Outlook** from your app store.\n2. Add your work account and approve the MFA prompt.\n3. If asked, enroll the device or accept the app-protection policy.\n\nNative mail apps are not supported for work mail.' },
+      { space: 'SD', title: 'Request a new laptop or hardware', labels: ['hardware', 'requests'],
+        body: '# Request hardware\n\nOpen a request describing the hardware needed, your manager, and the cost center, or use the Service catalog **Software installation** / provisioning items. Standard laptops ship within 5 business days after approval.' },
+      { space: 'SD', title: 'VPN troubleshooting', labels: ['vpn', 'network', 'troubleshooting'],
+        body: '# VPN keeps disconnecting\n\nTry these steps before opening a ticket:\n\n1. Update the VPN client to the latest version.\n2. Switch networks (wired vs Wi-Fi) to isolate the issue.\n3. Confirm your device is compliant in the device portal.\n\nIf drops persist, open an incident and attach the client logs.' },
+      { space: 'SD', title: 'Printing & file shares', labels: ['printing', 'files'],
+        body: '# Printing & file shares\n\n**Printers:** install from the self-service portal; choose the printer nearest you by location code.\n\n**File shares / SharePoint:** access is granted by group. If you cannot reach a share, request access via **Group membership change** and name the share + your manager.' },
+      { space: 'SD', title: 'How to submit a great ticket', labels: ['tickets', 'how-to'],
+        body: '# Help us help you\n\nA good ticket is resolved faster. Include:\n\n- **What** happened and the exact error text or a screenshot.\n- **When** it started and whether it is constant or intermittent.\n- **Who** is affected (just you, your team, everyone?).\n- **Impact** — can you work, or are you blocked?\n\nWe set priority from **impact × urgency** — see the child article on priorities & SLAs.' },
+      { space: 'SD', title: 'Ticket priorities & SLAs explained', labels: ['sla', 'priority'], parent: 'How to submit a great ticket',
+        body: '# Priorities & SLAs\n\nPriority is derived from **impact** (how many people / how critical) and **urgency** (how time-sensitive):\n\n- **P1** — major outage or security incident. Response in minutes, resolution targeted in hours.\n- **P2** — significant degradation or a blocked individual. Same business day.\n- **P3** — standard request or single-user issue. 1–3 business days.\n- **P4** — low-impact / scheduled. As capacity allows.\n\nSLA clocks pause while a ticket is waiting on you and resume when work continues.' },
+
+      // ----- Security -----
+      { space: 'SEC', title: 'Set up multi-factor authentication (MFA)', labels: ['mfa', 'identity', 'security'],
+        body: '# Set up MFA\n\nMFA protects your account even if your password is stolen.\n\n1. Open the **My Sign-ins** page.\n2. Add the **Authenticator app** method (preferred over SMS).\n3. Approve the test prompt.\n\nMFA is required for all accounts under the Conditional Access baseline.' },
+      { space: 'SEC', title: 'Report a phishing email', labels: ['phishing', 'email', 'security'],
+        body: '# Spotted a suspicious email?\n\n**Do not click links or open attachments.**\n\n1. Use the **Report Phishing** button in Outlook (or forward to the security mailbox).\n2. Delete the message after reporting.\n3. If you already clicked or entered credentials, change your password immediately and open a **Report suspected phishing** incident.\n\nWe analyze, purge it from other mailboxes, and block the sender.' },
+      { space: 'SEC', title: 'Lost or stolen device', labels: ['device', 'incident', 'security'],
+        body: '# Lost or stolen device\n\nAct fast to protect data.\n\n1. Open a **Lost / stolen device — wipe & revoke** request immediately (P1).\n2. We revoke sessions, disable sign-in, and remote-wipe the device.\n3. Re-enroll MFA and change your password from a trusted device.\n\nReport even if you think it may turn up — we can reverse a selective wipe more easily than a breach.' },
+      { space: 'SEC', title: 'Just-in-time elevation & break-glass', labels: ['privileged', 'jit', 'security'],
+        body: '# Privileged access is time-boxed\n\nStanding admin rights are minimized. To perform privileged work:\n\n1. **Request elevation** for the specific permissions and reason.\n2. A different approver grants it (separation of duties); it expires automatically.\n3. **Break-glass** exists for emergencies — it is immediate but loud: it pages on-call and raises a critical audit event that is reviewed.' },
+      { space: 'SEC', title: 'Handling Controlled Unclassified Information (CUI)', labels: ['cui', 'compliance', 'security'],
+        body: '# CUI handling basics\n\n- Store CUI only in **approved, labeled** workspaces (request a **CUI workspace**).\n- Apply the correct **sensitivity label**; labels drive encryption and DLP.\n- Do not email CUI externally or to personal accounts; sharing is restricted by policy.\n- Report suspected spillage immediately as a security incident.' },
+
+      // ----- Microsoft 365 -----
+      { space: 'M365', title: 'Microsoft Teams — getting started', labels: ['teams', 'm365'],
+        body: '# Teams basics\n\nTeams is your hub for chat, meetings, and files.\n\n- **Chat** for quick 1:1 or group messages; **Teams & channels** for projects.\n- Files shared in a channel live in its SharePoint site.\n- Use **status** and **quiet hours** to manage notifications.\n\nNeed a new Team? See the child article.' },
+      { space: 'M365', title: 'Create a Team or channel', labels: ['teams', 'collaboration'], parent: 'Microsoft Teams — getting started',
+        body: '# Request a Team or channel\n\nTeams are provisioned from approved templates with the right data label.\n\n1. Submit a **New Team / SharePoint site** request with the name, owners, and **data classification**.\n2. A sponsor approves (classification + external-sharing scope).\n3. We create it from the template and confirm membership and sharing.\n\nFor a sub-topic in an existing Team, an owner can add a **channel** directly.' },
+      { space: 'M365', title: 'Share files safely in SharePoint & OneDrive', labels: ['sharepoint', 'onedrive', 'sharing'],
+        body: '# Sharing without oversharing\n\n- Prefer **specific people** links over “anyone with the link”.\n- External sharing may be blocked or require approval in gov tenants.\n- Use **sensitivity labels**; they travel with the file and enforce protection.\n- Review access periodically — owners receive access-review tasks.' },
+      { space: 'M365', title: 'Shared mailboxes & delegation in Outlook', labels: ['outlook', 'mailbox', 'delegation'],
+        body: '# Shared mailboxes & delegation\n\n- Request a **Shared mailbox & distribution list** from the catalog; name the owner and members.\n- Delegates get **send-as** or **full-access** on a least-privilege basis.\n- To auto-map, sign out and back in after access is granted.\n- Calendars can be delegated separately from mail.' },
+      { space: 'M365', title: 'Sensitivity labels & Purview DLP', labels: ['purview', 'dlp', 'labels'],
+        body: '# Information protection\n\n**Sensitivity labels** classify and protect content (encryption, watermarks, sharing limits). **DLP** policies prevent risky sharing of sensitive data (e.g., CUI, PII).\n\nIf a label or DLP policy blocks legitimate work, request a scoped, time-bound **Purview DLP exception** with data-owner and SecOps approval.' },
+
+      // ----- Cloud Operations -----
+      { space: 'CLOUD', title: 'Request Azure access (PIM eligible roles)', labels: ['azure', 'pim', 'access'],
+        body: '# Azure access is eligible, not standing\n\nPrivileged Azure roles are granted as **eligible** via PIM — you activate them when needed with MFA + justification.\n\n1. Submit an **Azure RBAC / PIM** request with the role and scope.\n2. Resource owner + SecOps approve.\n3. Activate the role in PIM for the time-boxed window.' },
+      { space: 'CLOUD', title: 'AWS GovCloud — Identity Center access', labels: ['aws', 'govcloud', 'access'],
+        body: '# AWS access via Identity Center\n\nAccess is granted as **permission sets** scoped to specific accounts.\n\n1. Submit an **AWS IAM Identity Center** request naming the permission set + account.\n2. Account owner + SecOps approve.\n3. Sign in through the access portal; session duration is limited by guardrails (SCPs).' },
+      { space: 'CLOUD', title: 'Landing-zone & tagging standards', labels: ['landing-zone', 'tagging', 'governance'],
+        body: '# Landing zones & tags\n\nNew subscriptions/accounts are provisioned through governed landing zones with security baselines applied automatically.\n\n**Required tags** (examples): `owner`, `cost-center`, `data-classification`, `environment`. Untagged resources may be flagged or deprovisioned. Request new resources via the Azure/AWS provisioning catalog items.' },
+
+      // ----- Policies & Compliance -----
+      { space: 'POL', title: 'Password & MFA policy', labels: ['policy', 'password', 'mfa'],
+        body: '# Password & MFA policy\n\n- Minimum length and complexity are enforced; passphrases are encouraged.\n- **MFA is mandatory** under Conditional Access; Authenticator is preferred.\n- Never reuse work passwords elsewhere or share them. Report suspected compromise immediately.' },
+      { space: 'POL', title: 'Data classification & retention', labels: ['policy', 'data', 'retention'],
+        body: '# Classify and retain correctly\n\nClassify content with the correct sensitivity label (Public, Internal, Confidential, CUI). Retention is applied by label and record type. Do not delete records under legal hold; eDiscovery and holds are managed by the security team.' },
+      { space: 'POL', title: 'Continuous Monitoring (ConMon) overview', labels: ['conmon', 'compliance'],
+        body: '# What ConMon checks\n\nWe run scheduled checks mapped to NIST 800-53/800-171 controls — MFA coverage, Conditional Access baseline, privileged-access review, vulnerability scans, patch/device compliance, email security, backups, and audit-log health. Failing checks raise posture findings and remediation tickets automatically.' },
+      { space: 'POL', title: 'Change management & the CAB', labels: ['change', 'cab', 'policy'],
+        body: '# How changes are governed\n\n- **Standard** changes are pre-approved and low-risk.\n- **Normal** changes go through the **Change Advisory Board (CAB)** for multi-party approval and are scheduled in a window (with conflict detection).\n- **Emergency** changes follow an expedited path but are reviewed after the fact.\n\nEvery change records a backout plan.' },
+    ];
+
+    for (const p of kbPages) {
+      const spaceId = kbSpaceIds[p.space];
+      const exists = await sql.query('SELECT 1 FROM kb_pages WHERE space_id=$1 AND organization_id IS NULL AND title=$2', [spaceId, p.title]);
+      if (exists.rows[0]) continue;
+      const parentId = p.parent
+        ? (await sql.query('SELECT id FROM kb_pages WHERE space_id=$1 AND organization_id IS NULL AND title=$2', [spaceId, p.parent])).rows[0]?.id ?? null
+        : null;
+      const pg = (
         await sql.query(
-          `INSERT INTO kb_spaces (organization_id, key, name, description, created_by)
-           VALUES (NULL,'SD','Service Desk','Self-service knowledge for common requests and incidents',$1) RETURNING id`,
-          [kbAuthor],
+          `INSERT INTO kb_pages (organization_id, space_id, parent_id, title, body, labels, author_id, updated_by, version, status, published_at)
+           VALUES (NULL,$1,$2,$3,$4,$5,$6,$6,1,'published', now()) RETURNING id`,
+          [spaceId, parentId, p.title, p.body, p.labels, kbAuthor],
         )
       ).rows[0].id;
-      const pages: Array<[string, string, string[]]> = [
-        ['Reset your password', '# Reset your password\n\nIf you are locked out, use the self-service reset:\n\n1. Go to the sign-in page and choose **Forgot password**.\n2. Verify your identity with MFA.\n3. Set a new password meeting the complexity policy.\n\nStill stuck? Submit a **Password reset** request from the Service catalog.', ['password', 'accounts', 'self-service']],
-        ['Set up multi-factor authentication (MFA)', '# Set up MFA\n\nMFA protects your account even if your password is stolen.\n\n1. Open the **My Sign-ins** page.\n2. Add the **Authenticator app** method.\n3. Approve the test prompt.\n\nMFA is required for all accounts under the Conditional Access baseline.', ['mfa', 'identity', 'security']],
-        ['Request a new laptop or hardware', '# Request hardware\n\nUse the Service catalog **New user creation & provisioning** or open a request describing the hardware needed, your manager, and the cost center. Standard laptops ship within 5 business days after approval.', ['hardware', 'requests']],
-        ['VPN troubleshooting', '# VPN keeps disconnecting\n\nTry these steps before opening a ticket:\n\n1. Update the VPN client to the latest version.\n2. Switch networks (wired vs Wi-Fi) to isolate the issue.\n3. Confirm your device is compliant in the device portal.\n\nIf drops persist, open an incident and attach the client logs.', ['vpn', 'network', 'troubleshooting']],
-      ];
-      for (const [title, body, labels] of pages) {
-        const pg = (
-          await sql.query(
-            `INSERT INTO kb_pages (organization_id, space_id, title, body, labels, author_id, updated_by, version, status, published_at)
-             VALUES (NULL,$1,$2,$3,$4,$5,$5,1,'published', now()) RETURNING id`,
-            [kbSpaceId, title, body, labels, kbAuthor],
-          )
-        ).rows[0].id;
-        await sql.query(`INSERT INTO kb_page_versions (page_id, version, title, body, edited_by) VALUES ($1,1,$2,$3,$4)`, [pg, title, body, kbAuthor]);
-      }
+      await sql.query(`INSERT INTO kb_page_versions (page_id, version, title, body, edited_by) VALUES ($1,1,$2,$3,$4)`, [pg, p.title, p.body, kbAuthor]);
     }
 
     // ---- Default global agent queues (SLA-aware) ----

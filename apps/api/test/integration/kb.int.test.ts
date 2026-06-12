@@ -1,4 +1,4 @@
-import { it, expect, beforeAll } from 'vitest';
+import { it, expect, beforeAll, afterAll } from 'vitest';
 import { describeDb } from '../helpers/db.js';
 import { withSystemContext } from '../../src/db/pool.js';
 import { loadPrincipal } from '../../src/auth/principal.js';
@@ -17,6 +17,14 @@ describeDb('knowledge base (integration)', () => {
 
   beforeAll(async () => {
     author = await principalByEmail('analyst@nexus.example.com');
+  });
+
+  // Clean up the throwaway spaces this suite creates so they don't accumulate in a dev DB.
+  afterAll(async () => {
+    await withSystemContext(async (sql) => {
+      await sql.query("DELETE FROM kb_pages WHERE space_id IN (SELECT id FROM kb_spaces WHERE name='Test Space')");
+      await sql.query("DELETE FROM kb_spaces WHERE name='Test Space'");
+    });
   });
 
   it('seeded global pages are full-text searchable', async () => {
