@@ -13,6 +13,7 @@ type NavItem = { href: string; label: string; icon: React.ReactNode; anyPerm?: s
 // Agents get the operational control plane; customers get a focused support experience.
 const NEXUS_NAV: NavItem[] = [
   { href: '/dashboard', label: 'Dashboard', icon: <IconGrid /> },
+  { href: '/dashboards', label: 'Dashboards', icon: <IconGauge />, anyPerm: ['dashboard.read'] },
   { href: '/catalog', label: 'Service catalog', icon: <IconCatalog /> },
   { href: '/kb', label: 'Knowledge base', icon: <IconBook />, anyPerm: ['kb.read'] },
   { href: '/tickets', label: 'Tickets', icon: <IconTicket /> },
@@ -22,11 +23,13 @@ const NEXUS_NAV: NavItem[] = [
   { href: '/problems', label: 'Problems', icon: <IconBug />, anyPerm: ['problem.manage'] },
   { href: '/analytics', label: 'Analytics', icon: <IconChart />, anyPerm: ['report.read.operational', 'report.read.customer'] },
   { href: '/oncall', label: 'On-call', icon: <IconPager />, anyPerm: ['oncall.acknowledge', 'oncall.manage', 'oncall.page'] },
+  { href: '/alerts', label: 'Alerts', icon: <IconBell />, anyPerm: ['alert.read'] },
   { href: '/services', label: 'Services', icon: <IconServer />, anyPerm: ['service.read', 'service.manage'] },
   { href: '/customers', label: 'Customers', icon: <IconUsers />, anyPerm: ['org.read', 'org.manage'] },
   { href: '/posture', label: 'Posture', icon: <IconShield />, anyPerm: ['posture.read'] },
   { href: '/compliance', label: 'Compliance', icon: <IconClipboard />, anyPerm: ['compliance.read'] },
   { href: '/automations', label: 'Automations', icon: <IconRobot />, anyPerm: ['automation.author'] },
+  { href: '/channels', label: 'Channels', icon: <IconPlug />, anyPerm: ['channel.read', 'channel.manage'] },
   { href: '/audit', label: 'Audit log', icon: <IconScroll />, anyPerm: ['audit.read'] },
   { href: '/email-logs', label: 'Email logs', icon: <IconMail />, anyPerm: ['notifications.read'] },
 ];
@@ -143,6 +146,9 @@ function titleFor(path: string): string {
   if (path.startsWith('/services')) return 'Services & assets';
   if (path.startsWith('/customers')) return 'Customers';
   if (path.startsWith('/email-logs')) return 'Email logs';
+  if (path.startsWith('/alerts')) return 'Alerts';
+  if (path.startsWith('/channels')) return 'Channels';
+  if (path.startsWith('/dashboards')) return 'Dashboards';
   return 'Dashboard';
 }
 
@@ -165,3 +171,6 @@ function IconAlert() { return <svg width="18" height="18" viewBox="0 0 24 24" fi
 function IconServer() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>; }
 function IconUsers() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 5.5a3 3 0 0 1 0 5.5M21 20a6 6 0 0 0-5-5.9"/></svg>; }
 function IconMail() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>; }
+function IconBell() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>; }
+function IconPlug() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9 2v6M15 2v6M7 8h10v3a5 5 0 0 1-10 0V8zM12 16v6"/></svg>; }
+function IconGauge() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 13l4-4M5 19a9 9 0 1 1 14 0"/></svg>; }
