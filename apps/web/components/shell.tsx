@@ -97,7 +97,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </Link>
 
-        <nav className="flex-1 space-y-1">
+        <nav className="flex-1 space-y-1 overflow-y-auto">
           {ungrouped.map(renderItem)}
           {SECTION_ORDER.map((sec) => {
             const secItems = items.filter((n) => n.section === sec);
