@@ -1,7 +1,7 @@
 // JIT elevation & break-glass (docs/nexus/02 §E.11). Pure helpers (unit-tested) plus
 // DB-backed request/approve/break-glass. Platform-internal: accessed via the system
 // context, with authorization enforced in code (mirrors automation_rules).
-import { withSystemContext } from '../db/pool.js';
+import { withSystemContext, type Sql } from '../db/pool.js';
 import { authorize } from '../authz/pdp.js';
 import { audit } from './audit.js';
 import { publish } from '../events/bus.js';
@@ -98,8 +98,11 @@ export async function breakGlass(actor: Principal, input: RequestElevationInput,
 }
 
 /** Active, non-expired grants for a user (read by loadPrincipal). */
-export async function activeGrantsFor(userId: string): Promise<GrantRow[]> {
-  return withSystemContext(async (sql) => {
+// Pass `existing` when calling from within another withSystemContext (e.g.
+// loadPrincipal) so we reuse that connection instead of acquiring a second one.
+// Nesting withSystemContext deadlocks the bounded admin pool under concurrency.
+export async function activeGrantsFor(userId: string, existing?: Sql): Promise<GrantRow[]> {
+  const run = async (sql: Sql): Promise<GrantRow[]> => {
     const { rows } = await sql.query(
       `SELECT id, user_id, granted_permissions, status, break_glass,
               to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS expires_at
@@ -108,5 +111,6 @@ export async function activeGrantsFor(userId: string): Promise<GrantRow[]> {
       [userId],
     );
     return rows as GrantRow[];
-  });
+  };
+  return existing ? run(existing) : withSystemContext(run);
 }

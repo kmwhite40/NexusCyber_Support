@@ -34,7 +34,9 @@ export async function loadPrincipal(claims: SessionClaims): Promise<Principal> {
     }
 
     // JIT elevation: union any active, non-expired grants into the effective permissions.
-    const grants = await activeGrantsFor(claims.sub);
+    // Reuse this system connection — nesting a second withSystemContext here
+    // deadlocks the bounded admin pool under concurrent requests.
+    const grants = await activeGrantsFor(claims.sub, sql);
     const elevated = grants.length > 0;
     permissions = mergeGrantedPermissions(permissions, grants);
 
