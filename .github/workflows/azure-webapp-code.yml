@@ -25,7 +25,6 @@ jobs:
   deploy-web:
     name: Build & deploy apps/web
     runs-on: ubuntu-latest
-    environment: azure-gov
     steps:
       - uses: actions/checkout@v4
 
