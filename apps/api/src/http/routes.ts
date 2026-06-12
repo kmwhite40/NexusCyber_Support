@@ -328,6 +328,13 @@ export async function registerRoutes(app: FastifyInstance) {
     return { data: await accounts.listOrganizationUsers(p, id) };
   });
 
+  app.get('/api/v1/users/search', async (req) => {
+    const p = await requirePrincipal(req);
+    const q = z.object({ q: z.string().optional(), organizationId: z.string().uuid().optional() }).parse(req.query);
+    const data = await accounts.searchUsers(p, q.q ?? '', q.organizationId);
+    return { data };
+  });
+
   // Admin: update a user's status and/or role within an org.
   app.patch('/api/v1/organizations/:orgId/users/:userId', async (req) => {
     const p = await requirePrincipal(req);

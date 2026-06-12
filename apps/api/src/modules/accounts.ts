@@ -387,6 +387,36 @@ export async function provisionUser(
   });
 }
 
+/** Which org a people-picker search runs in: customers are pinned to their own org. Pure. */
+export function resolveSearchOrg(actor: Principal, organizationId?: string): string | null {
+  if (actor.plane === 'customer') return actor.organizationId ?? null;
+  return organizationId ?? null;
+}
+
+export interface UserHit {
+  id: string;
+  display_name: string | null;
+  email: string;
+}
+
+/** Type-ahead user search for people pickers, scoped to one org and RLS-enforced. */
+export async function searchUsers(actor: Principal, q: string, organizationId?: string): Promise<UserHit[]> {
+  const orgId = resolveSearchOrg(actor, organizationId);
+  if (!orgId) return [];
+  authorize(actor, 'ticket.create', { organizationId: orgId });
+  return withOrgContext(orgContextFor(actor), async (sql) => {
+    const term = (q ?? '').trim();
+    const { rows } = await sql.query(
+      `SELECT id, display_name, email FROM users
+        WHERE organization_id = $1 AND status = 'active'
+          AND ($2 = '' OR display_name ILIKE '%' || $2 || '%' OR email ILIKE '%' || $2 || '%')
+        ORDER BY display_name NULLS LAST LIMIT 10`,
+      [orgId, term],
+    );
+    return rows as UserHit[];
+  });
+}
+
 export async function getOrganization(actor: Principal, id: string) {
   authorize(actor, 'org.read', { organizationId: id });
   return withOrgContext(orgContextFor(actor), async (sql) => {
