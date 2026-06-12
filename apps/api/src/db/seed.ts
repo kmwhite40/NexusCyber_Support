@@ -37,6 +37,7 @@ const PERMISSIONS: Array<[string, string]> = [
   ['change.create', 'change'],
   ['change.approve', 'change'],
   ['change.implement', 'change'],
+  ['problem.manage', 'problem'],
   ['elevation.request', 'platform_admin'],
   ['elevation.approve', 'platform_admin'],
   ['elevation.break_glass', 'platform_admin'],
@@ -53,16 +54,16 @@ const ROLES: Record<string, { plane: 'nexus' | 'customer'; perms: string[] }> = 
       'ticket.create', 'ticket.read.all_assigned_customers', 'ticket.update', 'ticket.comment',
       'ticket.assign', 'ticket.escalate', 'posture.read', 'report.read.operational',
       'oncall.acknowledge', 'oncall.page', 'elevation.request', 'kb.read', 'kb.author',
-      'change.create', 'change.implement',
+      'change.create', 'change.implement', 'problem.manage',
     ],
   },
   SecurityAnalyst: {
     plane: 'nexus',
-    perms: ['ticket.create', 'ticket.read.all_assigned_customers', 'ticket.escalate', 'posture.read', 'posture.write', 'posture.finding.manage', 'posture.request_exception', 'posture.approve_exception', 'oncall.acknowledge', 'oncall.page', 'audit.read', 'compliance.read', 'compliance.manage', 'elevation.request', 'elevation.break_glass', 'kb.read', 'kb.author', 'kb.publish', 'change.create', 'change.approve'],
+    perms: ['ticket.create', 'ticket.read.all_assigned_customers', 'ticket.escalate', 'posture.read', 'posture.write', 'posture.finding.manage', 'posture.request_exception', 'posture.approve_exception', 'oncall.acknowledge', 'oncall.page', 'audit.read', 'compliance.read', 'compliance.manage', 'elevation.request', 'elevation.break_glass', 'kb.read', 'kb.author', 'kb.publish', 'change.create', 'change.approve', 'problem.manage'],
   },
   ServiceDeskManager: {
     plane: 'nexus',
-    perms: ['ticket.read.all_assigned_customers', 'ticket.assign', 'ticket.update', 'ticket.comment', 'ticket.escalate', 'report.read.operational', 'customer.admin.manage_users', 'oncall.manage', 'oncall.acknowledge', 'oncall.page', 'automation.author', 'automation.publish', 'audit.read', 'posture.request_exception', 'posture.approve_exception', 'compliance.read', 'compliance.manage', 'elevation.request', 'elevation.approve', 'kb.read', 'kb.author', 'kb.publish', 'change.create', 'change.approve', 'change.implement'],
+    perms: ['ticket.read.all_assigned_customers', 'ticket.assign', 'ticket.update', 'ticket.comment', 'ticket.escalate', 'report.read.operational', 'customer.admin.manage_users', 'oncall.manage', 'oncall.acknowledge', 'oncall.page', 'automation.author', 'automation.publish', 'audit.read', 'posture.request_exception', 'posture.approve_exception', 'compliance.read', 'compliance.manage', 'elevation.request', 'elevation.approve', 'kb.read', 'kb.author', 'kb.publish', 'change.create', 'change.approve', 'change.implement', 'problem.manage'],
   },
   // Customer plane
   OrgAdmin: { plane: 'customer', perms: ['ticket.create', 'ticket.read.organization', 'ticket.comment', 'posture.read', 'posture.request_exception', 'customer.admin.manage_users', 'report.read.customer', 'audit.read', 'compliance.read', 'kb.read', 'kb.author', 'kb.publish'] },

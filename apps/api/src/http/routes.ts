@@ -19,6 +19,7 @@ import * as attachments from '../modules/attachments.js';
 import * as kb from '../modules/kb.js';
 import * as links from '../modules/links.js';
 import * as changes from '../modules/changes.js';
+import * as problems from '../modules/problems.js';
 import { computeScore, grade } from '../modules/posture.js';
 import { audit, verifyChain, formatExport, type ExportableRow } from '../modules/audit.js';
 import { authorize } from '../authz/pdp.js';
@@ -539,6 +540,56 @@ export async function registerRoutes(app: FastifyInstance) {
     const p = await requirePrincipal(req);
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     return { data: await automation.listExecutions(p, id) };
+  });
+
+  // ---------------- Problem management ----------------
+  app.get('/api/v1/problems', async (req) => {
+    const p = await requirePrincipal(req);
+    const q = z.object({ status: z.string().optional() }).parse(req.query);
+    return { data: await problems.listProblems(p, q) };
+  });
+
+  app.get('/api/v1/problems/candidates', async (req) => {
+    const p = await requirePrincipal(req);
+    const q = z.object({ organizationId: z.string().uuid().optional() }).parse(req.query);
+    return { data: await problems.candidates(p, q.organizationId) };
+  });
+
+  app.post('/api/v1/problems', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const body = z
+      .object({ title: z.string().min(3), description: z.string().optional(), priority: z.string().optional(), organizationId: z.string().uuid().optional() })
+      .parse(req.body);
+    const problem = await problems.createProblem(p, body);
+    reply.status(201);
+    return problem;
+  });
+
+  app.get('/api/v1/problems/:id', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return problems.getProblem(p, id);
+  });
+
+  app.patch('/api/v1/problems/:id', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ rootCause: z.string().optional(), workaround: z.string().optional(), knownError: z.boolean().optional(), priority: z.string().optional() }).parse(req.body);
+    return problems.updateProblem(p, id, body);
+  });
+
+  app.post('/api/v1/problems/:id/transition', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ to: z.enum(['investigating', 'known_error', 'resolved', 'closed']) }).parse(req.body);
+    return problems.transitionProblem(p, id, body.to);
+  });
+
+  app.post('/api/v1/problems/:id/link-incident', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ ticketId: z.string().uuid() }).parse(req.body);
+    return problems.linkIncident(p, id, body.ticketId);
   });
 
   // ---------------- Change management & CAB ----------------
