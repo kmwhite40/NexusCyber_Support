@@ -114,6 +114,21 @@ export interface CatalogItem {
   fulfillment_steps: Array<{ key: string; label: string; role: string; automatable?: boolean }>;
 }
 
+export interface FormFieldDef {
+  key: string;
+  label: string;
+  data_type: 'text' | 'textarea' | 'number' | 'select' | 'checkbox' | 'date' | 'user' | 'user_multi' | 'attachment';
+  required: boolean;
+  options: string[];
+}
+export interface CatalogForm {
+  id: string;
+  key: string;
+  name: string;
+  fields: FormFieldDef[];
+}
+export interface UserHit { id: string; display_name: string | null; email: string }
+
 export interface ConMonRun {
   check_key: string;
   result: string;
@@ -126,8 +141,38 @@ export interface ConMonRun {
 
 export const catalog = {
   list: () => api.get<{ data: CatalogItem[] }>('/catalog'),
-  request: (key: string, body: { subject?: string; description?: string; organizationId?: string }) =>
-    api.post<Ticket>(`/catalog/${key}/request`, body),
+  form: (key: string) => api.get<{ form: CatalogForm | null }>(`/catalog/${key}/form`),
+  request: (
+    key: string,
+    body: { subject?: string; description?: string; organizationId?: string; answers?: Record<string, unknown> },
+  ) => api.post<Ticket>(`/catalog/${key}/request`, body),
+};
+
+export const users = {
+  search: (q: string, organizationId?: string) =>
+    api.get<{ data: UserHit[] }>(
+      `/users/search?q=${encodeURIComponent(q)}${organizationId ? `&organizationId=${organizationId}` : ''}`,
+    ),
+};
+
+export const attachmentsApi = {
+  /** Multipart upload — the attachments route reads a single file field. */
+  upload: async (ticketId: string, file: File): Promise<void> => {
+    const form = new FormData();
+    form.append('file', file);
+    const token = getToken();
+    const res = await fetch(`${BASE}/tickets/${ticketId}/attachments`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      let detail = res.statusText;
+      try { detail = JSON.parse(text)?.detail ?? detail; } catch { /* ignore */ }
+      throw new ApiError(res.status, detail);
+    }
+  },
 };
 
 export const conmon = {
