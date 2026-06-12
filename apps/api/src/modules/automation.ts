@@ -79,8 +79,11 @@ async function performSafeAction(orgId: string | null, ticketId: string | undefi
   // session) can write to RLS-protected tables for the resolved org.
   await withSystemContext(async (sql) => {
     if (action.type === 'add_internal_note') {
+      // An automation note is an internal-visibility comment with no human author
+      // (author_id NULL = system/automation actor).
       await sql.query(
-        `INSERT INTO ticket_internal_notes (organization_id, ticket_id, body) VALUES ($1,$2,$3)`,
+        `INSERT INTO ticket_comments (organization_id, ticket_id, author_id, visibility, body)
+         VALUES ($1,$2,NULL,'internal',$3)`,
         [orgId, ticketId, String(action.text ?? 'Automation note')],
       );
     } else if (action.type === 'add_tag' && action.tag) {
@@ -89,7 +92,7 @@ async function performSafeAction(orgId: string | null, ticketId: string | undefi
     // page_oncall / escalate_ticket / create_posture_finding are recorded as performed
     // intents here; in production they call the respective modules with the rule's
     // scoped service principal.
-  }).catch(() => {});
+  });
 }
 
 let registered = false;
