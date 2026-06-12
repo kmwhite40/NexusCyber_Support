@@ -20,16 +20,18 @@ export function authParams(token) {
 /** A read-only journey an agent performs all day — used by smoke/load/soak. */
 export function agentReadJourney(token) {
   const p = authParams(token);
+  // Agent-wide reads (no org-scope param required). Org-scoped reads like
+  // /posture/findings need ?organizationId=... for nexus agents, by design.
   const batch = http.batch([
     ['GET', `${BASE}/me`, null, p],
     ['GET', `${BASE}/tickets?limit=25`, null, p],
     ['GET', `${BASE}/analytics/overview`, null, p],
-    ['GET', `${BASE}/posture/findings`, null, p],
+    ['GET', `${BASE}/conmon/runs`, null, p],
     ['GET', `${BASE}/oncall/schedules`, null, p],
     ['GET', `${BASE}/catalog`, null, p],
   ]);
   check(batch[0], { 'me 200': (r) => r.status === 200 });
   check(batch[1], { 'tickets 200': (r) => r.status === 200 });
   check(batch[2], { 'analytics 200': (r) => r.status === 200 });
-  check(batch[3], { 'posture 200': (r) => r.status === 200 });
+  check(batch[3], { 'conmon 200': (r) => r.status === 200 });
 }

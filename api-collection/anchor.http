@@ -1,0 +1,140 @@
+### Anchor API — REST Client collection (VS Code "REST Client" / JetBrains .http)
+### Run the requests top-to-bottom; `login` captures a bearer token reused below.
+### Mirrors docs/nexus/artifacts/api/openapi.yaml.
+
+@base = http://localhost:4000/api/v1
+
+### Liveness / readiness
+GET {{base}}/../healthz
+
+###
+GET {{base}}/../readyz
+
+### --- Auth -------------------------------------------------------------------
+# @name login
+POST {{base}}/auth/dev-login
+Content-Type: application/json
+
+{ "email": "agent@nexus.example.com" }
+
+###
+@token = {{login.response.body.token}}
+
+### Local login (password account)
+POST {{base}}/auth/login
+Content-Type: application/json
+
+{ "email": "you@acme.com", "password": "change-me-please" }
+
+### Self-service signup (creates org + Org Admin)
+POST {{base}}/auth/register
+Content-Type: application/json
+
+{ "organizationName": "Acme Corp", "email": "admin@acme.test", "password": "supersecret10", "cloud": "commercial" }
+
+### Current principal
+GET {{base}}/me
+Authorization: Bearer {{token}}
+
+### --- Organizations & users ---------------------------------------------------
+GET {{base}}/organizations
+Authorization: Bearer {{token}}
+
+### --- Tickets -----------------------------------------------------------------
+# @name createTicket
+POST {{base}}/tickets
+Authorization: Bearer {{token}}
+Content-Type: application/json
+Idempotency-Key: demo-{{$guid}}
+
+{ "type": "incident", "subject": "VPN drops every few minutes", "description": "Repros on Wi-Fi", "impact": 2, "urgency": 2, "organizationId": "REPLACE_WITH_ORG_ID" }
+
+###
+@ticketId = {{createTicket.response.body.id}}
+
+### List tickets (RLS-scoped)
+GET {{base}}/tickets?limit=15&status=in_progress
+Authorization: Bearer {{token}}
+
+### Get one ticket (comments, events, SLA, tasks, links)
+GET {{base}}/tickets/{{ticketId}}
+Authorization: Bearer {{token}}
+
+### Comment
+POST {{base}}/tickets/{{ticketId}}/comments
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "body": "Investigating now.", "visibility": "internal" }
+
+### Assign to me
+POST {{base}}/tickets/{{ticketId}}/assign
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "assignedAgentId": "{{login.response.body.principal.id}}" }
+
+### Transition
+POST {{base}}/tickets/{{ticketId}}/transition
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "to": "in_progress" }
+
+### Escalate (reassign ownership to a tier)
+POST {{base}}/tickets/{{ticketId}}/escalate
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "targetGroup": "Tier 2 — M365 Administrator", "reason": "needs M365 admin" }
+
+### --- Service catalog ----------------------------------------------------------
+GET {{base}}/catalog
+Authorization: Bearer {{token}}
+
+### Submit a catalog request
+POST {{base}}/catalog/account.password_reset/request
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "subject": "Password reset for new hire", "organizationId": "REPLACE_WITH_ORG_ID" }
+
+### --- Posture -----------------------------------------------------------------
+GET {{base}}/posture/score?organizationId=REPLACE_WITH_ORG_ID
+Authorization: Bearer {{token}}
+
+###
+GET {{base}}/posture/findings?severity=high&organizationId=REPLACE_WITH_ORG_ID
+Authorization: Bearer {{token}}
+
+### --- On-call ------------------------------------------------------------------
+GET {{base}}/oncall/schedules
+Authorization: Bearer {{token}}
+
+###
+GET {{base}}/oncall/pages
+Authorization: Bearer {{token}}
+
+### --- Analytics ----------------------------------------------------------------
+GET {{base}}/analytics/overview
+Authorization: Bearer {{token}}
+
+### --- Automations --------------------------------------------------------------
+GET {{base}}/automations
+Authorization: Bearer {{token}}
+
+### --- Compliance ---------------------------------------------------------------
+GET {{base}}/compliance/coverage?organizationId=REPLACE_WITH_ORG_ID
+Authorization: Bearer {{token}}
+
+### --- Audit (tamper-evident) ---------------------------------------------------
+GET {{base}}/audit-logs?limit=50
+Authorization: Bearer {{token}}
+
+### Verify hash chain
+GET {{base}}/audit/verify
+Authorization: Bearer {{token}}
+
+### SIEM export (NDJSON or CEF)
+GET {{base}}/audit/export?format=cef
+Authorization: Bearer {{token}}
