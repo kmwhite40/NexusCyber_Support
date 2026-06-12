@@ -238,6 +238,15 @@ export async function registerRoutes(app: FastifyInstance) {
   app.get('/api/v1/organizations', async (req) => {
     const p = await requirePrincipal(req);
     if (!can(p, 'org.read') && !can(p, 'customer.admin.manage_users')) throw Errors.forbidden('insufficient permission to list organizations');
+    // Platform admins (org.manage) see ALL orgs (system context); others are RLS-scoped.
+    if (can(p, 'org.manage')) {
+      return withSystemContext(async (sql) => {
+        const { rows } = await sql.query(
+          'SELECT id, name, cloud, status, entra_tenant_id FROM organizations ORDER BY name',
+        );
+        return { data: rows };
+      });
+    }
     return withOrgContext(orgContextFor(p), async (sql) => {
       const { rows } = await sql.query('SELECT id, name, cloud, status FROM organizations ORDER BY name');
       return { data: rows };
@@ -280,7 +289,7 @@ export async function registerRoutes(app: FastifyInstance) {
   app.get('/api/v1/organizations/:id', async (req) => {
     const p = await requirePrincipal(req);
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
-    return accounts.getOrganization(p, id);
+    return can(p, 'org.manage') ? accounts.getOrganizationAdmin(id) : accounts.getOrganization(p, id);
   });
 
   // Admin: delete an organization (refuses if it has users).
@@ -294,6 +303,18 @@ export async function registerRoutes(app: FastifyInstance) {
   app.patch('/api/v1/organizations/:id', async (req) => {
     const p = await requirePrincipal(req);
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    // Platform admins can also set the SSO tenant + status (system context).
+    if (can(p, 'org.manage')) {
+      const body = z
+        .object({
+          name: z.string().optional(),
+          cloud: z.enum(['commercial', 'gcc', 'gcchigh', 'azgov']).optional(),
+          entraTenantId: z.string().uuid().nullable().optional(),
+          status: z.enum(['active', 'suspended', 'archived']).optional(),
+        })
+        .parse(req.body);
+      return accounts.updateOrganizationAdmin(p, id, body);
+    }
     const body = z.object({ name: z.string().optional(), cloud: z.enum(['commercial', 'gcc', 'gcchigh', 'azgov']).optional(), dataBoundary: z.string().max(100).optional() }).parse(req.body);
     return accounts.updateOrganization(p, id, body);
   });
@@ -301,7 +322,31 @@ export async function registerRoutes(app: FastifyInstance) {
   app.get('/api/v1/organizations/:id/users', async (req) => {
     const p = await requirePrincipal(req);
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    if (can(p, 'org.manage')) return { data: await accounts.listOrganizationUsersAdmin(id) };
     return { data: await accounts.listOrganizationUsers(p, id) };
+  });
+
+  // Admin: update a user's status and/or role within an org.
+  app.patch('/api/v1/organizations/:orgId/users/:userId', async (req) => {
+    const p = await requirePrincipal(req);
+    const { orgId, userId } = z
+      .object({ orgId: z.string().uuid(), userId: z.string().uuid() })
+      .parse(req.params);
+    authorize(p, 'customer.admin.manage_users', { organizationId: orgId });
+    const body = z
+      .object({ status: z.enum(['active', 'suspended']).optional(), roleKey: z.string().optional() })
+      .parse(req.body);
+    return accounts.updateOrgUserAdmin(p, orgId, userId, body);
+  });
+
+  // Admin: deactivate (remove) a user within an org.
+  app.delete('/api/v1/organizations/:orgId/users/:userId', async (req) => {
+    const p = await requirePrincipal(req);
+    const { orgId, userId } = z
+      .object({ orgId: z.string().uuid(), userId: z.string().uuid() })
+      .parse(req.params);
+    authorize(p, 'customer.admin.manage_users', { organizationId: orgId });
+    return accounts.removeOrgUserAdmin(p, orgId, userId);
   });
 
   // ---------------- Tickets ----------------

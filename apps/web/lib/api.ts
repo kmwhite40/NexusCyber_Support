@@ -271,14 +271,22 @@ export const servicesApi = {
   createCi: (b: { name: string; ciClass: string; criticality?: string | number; status?: string; organizationId?: string }) => api.post<ConfigurationItem>('/configuration-items', b),
 };
 
-export interface OrgDetail { id: string; name: string; cloud: string; data_boundary?: string; user_count: number; open_tickets: number; }
-export interface OrgUser { id: string; email: string; display_name: string | null; status: string; }
-export interface OrgSummary { id: string; name: string; cloud?: string; }
+export interface OrgDetail { id: string; name: string; cloud: string; data_boundary?: string; status?: string; entra_tenant_id?: string | null; user_count: number; open_tickets: number; }
+export interface OrgUser { id: string; email: string; display_name: string | null; status: string; roles?: string[]; }
+export interface OrgSummary { id: string; name: string; cloud?: string; status?: string; entra_tenant_id?: string | null; }
+export type Cloud = 'commercial' | 'gcc' | 'gcchigh' | 'azgov';
+/** Customer-plane roles assignable in the admin UI. */
+export const CUSTOMER_ROLES = ['OrgAdmin', 'EndUser', 'SecurityContact'] as const;
 export const customersApi = {
   list: () => api.get<{ data: OrgSummary[] }>('/organizations').then((r) => r.data),
   get: (id: string) => api.get<OrgDetail>(`/organizations/${id}`),
   users: (id: string) => api.get<{ data: OrgUser[] }>(`/organizations/${id}/users`).then((r) => r.data),
-  update: (id: string, b: { name?: string; cloud?: string; dataBoundary?: string }) => api.patch<OrgDetail>(`/organizations/${id}`, b),
+  create: (b: { name: string; cloud?: Cloud; entraTenantId?: string }) => api.post<OrgDetail>('/organizations', b),
+  update: (id: string, b: { name?: string; cloud?: Cloud; entraTenantId?: string | null; status?: string }) => api.patch<OrgDetail>(`/organizations/${id}`, b),
+  remove: (id: string) => api.del<{ deleted: boolean }>(`/organizations/${id}`),
+  addUser: (orgId: string, b: { email: string; displayName?: string; roleKey?: string; password?: string }) => api.post<{ id: string }>(`/organizations/${orgId}/users`, b),
+  updateUser: (orgId: string, userId: string, b: { status?: 'active' | 'suspended'; roleKey?: string }) => api.patch<{ id: string }>(`/organizations/${orgId}/users/${userId}`, b),
+  removeUser: (orgId: string, userId: string) => api.del<{ id: string }>(`/organizations/${orgId}/users/${userId}`),
 };
 
 export interface Delivery {

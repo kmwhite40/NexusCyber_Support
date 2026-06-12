@@ -481,6 +481,125 @@ export async function deleteOrganizationAdmin(
   });
 }
 
+/** Admin (system context): org detail incl. SSO tenant + counts, for any org. */
+export async function getOrganizationAdmin(id: string) {
+  return withSystemContext(async (sql) => {
+    const org = (
+      await sql.query(
+        `SELECT id, name, cloud, status, data_boundary, entra_tenant_id, created_at FROM organizations WHERE id = $1`,
+        [id],
+      )
+    ).rows[0];
+    if (!org) throw Errors.notFound('organization not found');
+    const userCount = (await sql.query('SELECT count(*)::int AS n FROM users WHERE organization_id = $1', [id])).rows[0].n;
+    const openTickets = (
+      await sql.query(
+        `SELECT count(*)::int AS n FROM tickets WHERE organization_id = $1 AND status NOT IN ('closed','resolved')`,
+        [id],
+      )
+    ).rows[0].n;
+    return { ...org, user_count: userCount, open_tickets: openTickets };
+  });
+}
+
+/** Admin (system context): list users in any org, with their role keys. */
+export async function listOrganizationUsersAdmin(orgId: string) {
+  return withSystemContext(async (sql) => {
+    const { rows } = await sql.query(
+      `SELECT u.id, u.email, u.display_name, u.status,
+              COALESCE(array_agg(r.key) FILTER (WHERE r.key IS NOT NULL), '{}') AS roles
+         FROM users u
+         LEFT JOIN role_assignments ra ON ra.user_id = u.id AND ra.organization_id = $1
+         LEFT JOIN roles r ON r.id = ra.role_id
+        WHERE u.organization_id = $1
+        GROUP BY u.id
+        ORDER BY u.email`,
+      [orgId],
+    );
+    return rows;
+  });
+}
+
+/** Admin: update org fields incl. SSO tenant (entra_tenant_id) + status. System context. */
+export async function updateOrganizationAdmin(
+  actor: Principal,
+  id: string,
+  input: { name?: string; cloud?: string; entraTenantId?: string | null; status?: string },
+) {
+  return withSystemContext(async (sql) => {
+    const cur = (
+      await sql.query(`SELECT id, name, cloud, status, entra_tenant_id FROM organizations WHERE id = $1`, [id])
+    ).rows[0];
+    if (!cur) throw Errors.notFound('organization not found');
+    if (input.entraTenantId) {
+      const dup = (
+        await sql.query(`SELECT name FROM organizations WHERE entra_tenant_id = $1 AND id <> $2`, [input.entraTenantId, id])
+      ).rows[0];
+      if (dup) throw Errors.badRequest(`tenant already onboarded to organization "${dup.name}"`);
+    }
+    const { rows } = await sql.query(
+      `UPDATE organizations SET name = $1, cloud = $2, status = $3, entra_tenant_id = $4 WHERE id = $5
+       RETURNING id, name, cloud, status, entra_tenant_id`,
+      [
+        input.name ?? cur.name,
+        input.cloud ?? cur.cloud,
+        input.status ?? cur.status,
+        input.entraTenantId === undefined ? cur.entra_tenant_id : input.entraTenantId,
+        id,
+      ],
+    );
+    await audit(actor, { action: 'org.update', organizationId: id, resourceType: 'organization', resourceId: id });
+    return rows[0];
+  });
+}
+
+/** Admin: change a user's status and/or role within an org. System context. */
+export async function updateOrgUserAdmin(
+  actor: Principal,
+  orgId: string,
+  userId: string,
+  input: { status?: 'active' | 'suspended'; roleKey?: string },
+) {
+  return withSystemContext(async (sql) => {
+    const u = (await sql.query(`SELECT id, email FROM users WHERE id = $1 AND organization_id = $2`, [userId, orgId])).rows[0];
+    if (!u) throw Errors.notFound('user not found');
+    if (input.status) await sql.query(`UPDATE users SET status = $1 WHERE id = $2`, [input.status, userId]);
+    if (input.roleKey) {
+      await sql.query(`DELETE FROM role_assignments WHERE user_id = $1 AND organization_id = $2`, [userId, orgId]);
+      const rid = await roleId(sql, input.roleKey);
+      await sql.query(
+        `INSERT INTO role_assignments (user_id, role_id, organization_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [userId, rid, orgId],
+      );
+    }
+    await audit(actor, {
+      action: 'customer.admin.manage_users',
+      organizationId: orgId,
+      resourceType: 'user',
+      resourceId: userId,
+      detail: { status: input.status, role: input.roleKey },
+    });
+    return { id: userId };
+  });
+}
+
+/** Admin: deactivate (suspend) a user — reversible; safer than a hard delete with FK history. */
+export async function removeOrgUserAdmin(actor: Principal, orgId: string, userId: string) {
+  return withSystemContext(async (sql) => {
+    const u = (await sql.query(`SELECT id, email FROM users WHERE id = $1 AND organization_id = $2`, [userId, orgId])).rows[0];
+    if (!u) throw Errors.notFound('user not found');
+    await sql.query(`UPDATE users SET status = 'suspended' WHERE id = $1`, [userId]);
+    await audit(actor, {
+      action: 'customer.admin.manage_users',
+      organizationId: orgId,
+      resourceType: 'user',
+      resourceId: userId,
+      detail: { removed: true, email: u.email },
+    });
+    return { id: userId, status: 'suspended' };
+  });
+}
+
 export async function updateOrganization(actor: Principal, id: string, input: UpdateOrgInput) {
   authorize(actor, 'org.manage', { organizationId: id });
   return withOrgContext(orgContextFor(actor), async (sql) => {
