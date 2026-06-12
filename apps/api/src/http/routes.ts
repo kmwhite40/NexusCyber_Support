@@ -15,6 +15,7 @@ import * as oncall from '../modules/oncall.js';
 import * as automation from '../modules/automation.js';
 import * as compliance from '../modules/compliance.js';
 import { computeScore, grade } from '../modules/posture.js';
+import { audit, verifyChain, formatExport, type ExportableRow } from '../modules/audit.js';
 import { authorize } from '../authz/pdp.js';
 
 function setSessionCookie(reply: any, token: string) {
@@ -504,6 +505,56 @@ export async function registerRoutes(app: FastifyInstance) {
         params,
       );
       return { data: rows };
+    });
+  });
+
+  // Streamed SIEM export (NDJSON or CEF). Scoped for customers; nexus sees assigned orgs.
+  app.get('/api/v1/audit/export', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    authorize(p, 'audit.read');
+    const q = z
+      .object({ format: z.enum(['ndjson', 'cef']).optional(), since: z.string().optional(), limit: z.coerce.number().optional() })
+      .parse(req.query);
+    const format = q.format ?? 'ndjson';
+    const result = await withOrgContext(orgContextFor(p), async (sql) => {
+      const where: string[] = [];
+      const params: unknown[] = [];
+      if (p.plane === 'customer') {
+        params.push(p.organizationId);
+        where.push(`organization_id = $${params.length}`);
+      }
+      if (q.since) {
+        params.push(q.since);
+        where.push(`created_at >= $${params.length}`);
+      }
+      const limit = Math.min(q.limit ?? 1000, 5000);
+      const { rows } = await sql.query(
+        `SELECT id, actor_id, actor_plane, action, resource_type, resource_id, detail,
+                to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
+                prev_hash, row_hash
+           FROM audit_logs ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+          ORDER BY created_at ASC LIMIT ${limit}`,
+        params,
+      );
+      return rows as ExportableRow[];
+    });
+    await audit(p, { action: 'audit.export', detail: { format, count: result.length } });
+    reply.type(format === 'cef' ? 'text/plain' : 'application/x-ndjson').send(formatExport(result, format));
+  });
+
+  // Integrity check: recompute the hash chain and report the first divergence.
+  app.get('/api/v1/audit/verify', async (req) => {
+    const p = await requirePrincipal(req);
+    authorize(p, 'audit.read');
+    if (p.plane !== 'nexus') throw Errors.forbidden('chain verification is a platform operation');
+    return withSystemContext(async (sql) => {
+      const { rows } = await sql.query(
+        `SELECT actor_id, action, resource_id, detail,
+                to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
+                prev_hash, row_hash
+           FROM audit_logs ORDER BY created_at ASC`,
+      );
+      return verifyChain(rows as Parameters<typeof verifyChain>[0]);
     });
   });
 }

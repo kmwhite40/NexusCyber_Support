@@ -1,0 +1,86 @@
+<h2>Three directions for the landing page</h2>
+<p class="subtitle">All three drop the marketing tone — shader hero, gradient headline, stats band, hover cards, big footer. They differ in how much page is left. Click the one closest to what you want.</p>
+
+<style>
+  .mk { font-family: ui-sans-serif, system-ui, sans-serif; background:#0b0f17; border-radius:10px; padding:22px 20px; color:#c9d2e0; height:320px; display:flex; flex-direction:column; overflow:hidden; }
+  .mk .topbar { display:flex; justify-content:space-between; align-items:center; font-size:9px; color:#6b7689; margin-bottom:auto; }
+  .mk .dot { width:14px; height:14px; border-radius:4px; background:linear-gradient(135deg,#3b82f6,#22d3ee); }
+  .mk h4 { color:#eef2f8; margin:0; font-weight:600; line-height:1.15; }
+  .mk .lede { font-size:9.5px; color:#8b95a7; line-height:1.45; margin:8px 0 0; }
+  .mk .btnrow { display:flex; gap:7px; margin-top:14px; }
+  .mk .btn { font-size:8.5px; padding:5px 10px; border-radius:6px; }
+  .mk .btn.primary { background:#3b82f6; color:#fff; }
+  .mk .btn.ghost { border:1px solid #2a3343; color:#aeb8c8; }
+  .mk .pill { display:inline-block; font-size:7.5px; border:1px solid #2a3343; border-radius:999px; padding:2px 7px; color:#8b95a7; }
+  .mk .row3 { display:flex; gap:10px; margin-top:16px; }
+  .mk .col { flex:1; border-top:1px solid #1d2533; padding-top:7px; }
+  .mk .col b { color:#dde4ee; font-size:9px; font-weight:600; }
+  .mk .col span { display:block; font-size:8px; color:#727d8f; margin-top:3px; line-height:1.4; }
+  .mk .mono { font-family: ui-monospace, monospace; }
+  .mk .foot { margin-top:auto; font-size:7.5px; color:#5a6475; border-top:1px solid #1d2533; padding-top:7px; }
+</style>
+
+<div class="cards">
+
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:0;background:none;">
+      <div class="mk" style="align-items:center;text-align:center;justify-content:center;">
+        <div class="topbar" style="width:100%;position:absolute;top:18px;left:0;padding:0 20px;"><span>◆ NexusCyber</span><span>Log in</span></div>
+        <div class="dot" style="margin:0 auto 14px;"></div>
+        <h4 style="font-size:18px;">The cyber operations control plane</h4>
+        <p class="lede" style="max-width:200px;margin:10px auto 0;">ITSM, on-call, and security posture in one place.</p>
+        <div class="btnrow" style="justify-content:center;">
+          <span class="btn primary">Get started</span>
+          <span class="btn ghost">Sign in</span>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A · Quiet gateway</h3>
+      <p>One screen. Headline, one sentence, two buttons. No scroll, no sections. Feels like a product door, not a pitch.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:0;background:none;">
+      <div class="mk">
+        <div class="topbar"><span>◆ NexusCyber</span><span>Log in · Get started</span></div>
+        <div style="margin-top:14px;">
+          <h4 style="font-size:16px;">The cyber operations control plane</h4>
+          <p class="lede" style="max-width:230px;">ITSM, on-call response, and continuous security posture — isolated per customer.</p>
+          <div class="btnrow"><span class="btn primary">Get started</span><span class="btn ghost">Sign in</span></div>
+        </div>
+        <div class="row3">
+          <div class="col"><b>ITSM</b><span>Incidents, requests, change</span></div>
+          <div class="col"><b>On-call</b><span>Rotations & paging</span></div>
+          <div class="col"><b>Posture</b><span>Findings to evidence</span></div>
+        </div>
+        <div class="foot">NIST · CMMC · FedRAMP · SOC 2</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B · Calm one-pager</h3>
+      <p>Hero plus one restrained row of three plain-text pillars and a thin footer. Modern, understated — Linear / Vercel register. Recommended.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:0;background:none;">
+      <div class="mk">
+        <div class="topbar mono"><span>nexuscyber</span><span>login</span></div>
+        <div style="margin-top:14px;">
+          <span class="pill mono">v1 · multi-tenant</span>
+          <h4 class="mono" style="font-size:14px;margin-top:9px;">cyber operations control plane</h4>
+          <p class="lede mono" style="max-width:240px;">unify itsm, on-call, and posture. one tenant-isolated platform.</p>
+          <div class="btnrow"><span class="btn primary mono">→ get started</span><span class="btn ghost mono">sign in</span></div>
+        </div>
+        <div class="foot mono" style="margin-top:auto;">$ deploy → commercial · gov-cloud</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C · Developer / utilitarian</h3>
+      <p>Left-aligned, monospace accents, technical tone. Reads like a dev-tool homepage. Minimal but with engineering character.</p>
+    </div>
+  </div>
+
+</div>

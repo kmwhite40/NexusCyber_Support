@@ -207,6 +207,33 @@ export const analytics = {
   overview: () => api.get<AnalyticsOverview>('/analytics/overview'),
 };
 
+export interface AutomationRule {
+  id: string;
+  name: string;
+  state: 'draft' | 'testing' | 'published' | 'disabled';
+  version: number;
+  organization_id: string | null;
+  created_at: string;
+  definition: {
+    trigger: { event: string };
+    conditions?: { all?: Array<{ field: string; op: string; value?: unknown }>; any?: Array<{ field: string; op: string; value?: unknown }> };
+    actions: Array<{ type: string; [k: string]: unknown }>;
+  };
+}
+export interface SimResult {
+  matched: boolean;
+  intended_actions: Array<{ action: { type: string; [k: string]: unknown }; performed: boolean; gated: boolean }>;
+}
+
+export const automation = {
+  list: () => api.get<{ data: AutomationRule[] }>('/automations'),
+  create: (body: { name: string; definition: AutomationRule['definition'] }) => api.post<AutomationRule>('/automations', body),
+  simulate: (id: string, event: Record<string, unknown>) => api.post<SimResult>(`/automations/${id}/simulate`, { event }),
+  publish: (id: string) => api.post<{ state: string }>(`/automations/${id}/publish`),
+  setState: (id: string, state: 'draft' | 'disabled') => api.post<{ state: string }>(`/automations/${id}/state`, { state }),
+  executions: (id: string) => api.get<{ data: Array<{ id: string; trigger_event: string; outcome: string; steps: unknown; created_at: string }> }>(`/automations/${id}/executions`),
+};
+
 export const auth = {
   me: () => api.get<Me>('/me'),
   devUsers: () => api.get<{ users: Array<{ email: string; display_name: string; plane: string; org: string | null; roles: string[] }> }>('/auth/dev-users'),
