@@ -26,6 +26,7 @@ import * as integrations from '../modules/integrations.js';
 import * as services from '../modules/services.js';
 import * as notifications from '../modules/notifications.js';
 import * as alerts from '../modules/alerts.js';
+import * as channels from '../modules/channels.js';
 import { computeScore, grade } from '../modules/posture.js';
 import { audit, verifyChain, formatExport, type ExportableRow } from '../modules/audit.js';
 import { authorize, can } from '../authz/pdp.js';
@@ -998,4 +999,9 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post('/api/v1/alerts/:id/ack', async (req) => { const p = await requirePrincipal(req); const { id } = z.object({ id: z.string().uuid() }).parse(req.params); return alerts.acknowledgeAlert(p, id); });
   app.post('/api/v1/alerts/:id/resolve', async (req) => { const p = await requirePrincipal(req); const { id } = z.object({ id: z.string().uuid() }).parse(req.params); return alerts.resolveAlert(p, id); });
   app.post('/api/v1/alerts/:id/escalate', async (req) => { const p = await requirePrincipal(req); const { id } = z.object({ id: z.string().uuid() }).parse(req.params); const b = z.object({ toPage: z.boolean().optional(), toTicket: z.boolean().optional() }).parse(req.body ?? {}); return alerts.escalateAlert(p, id, b); });
+
+  // ---------------- Channels ----------------
+  app.get('/api/v1/channels', async (req) => { const p = await requirePrincipal(req); return { data: await channels.listChannels(p) }; });
+  app.post('/api/v1/channels', async (req, reply) => { const p = await requirePrincipal(req); const b = z.object({ type: z.enum(['email','portal','widget']), name: z.string().min(1), config: z.record(z.any()).optional(), enabled: z.boolean().optional(), organizationId: z.string().uuid().optional() }).parse(req.body); reply.code(201); return channels.createChannel(p, b); });
+  app.patch('/api/v1/channels/:id', async (req) => { const p = await requirePrincipal(req); const { id } = z.object({ id: z.string().uuid() }).parse(req.params); const b = z.object({ name: z.string().optional(), config: z.record(z.any()).optional(), enabled: z.boolean().optional() }).parse(req.body); return channels.updateChannel(p, id, b); });
 }

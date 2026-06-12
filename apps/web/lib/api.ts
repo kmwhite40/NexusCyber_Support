@@ -289,3 +289,10 @@ export const alertsApi = {
   resolve: (id: string) => api.post<Alert>(`/alerts/${id}/resolve`),
   escalate: (id: string, b: { toPage?: boolean; toTicket?: boolean }) => api.post(`/alerts/${id}/escalate`, b),
 };
+
+export interface Channel { id: string; organization_id: string; type: string; name: string; config: Record<string, unknown>; enabled: boolean; created_at: string; }
+export const channelsApi = {
+  list: () => api.get<{ data: Channel[] }>('/channels').then((r) => r.data),
+  create: (b: { type: string; name: string; config?: Record<string, unknown>; enabled?: boolean; organizationId?: string }) => api.post<Channel>('/channels', b),
+  update: (id: string, b: { name?: string; config?: Record<string, unknown>; enabled?: boolean }) => api.patch<Channel>(`/channels/${id}`, b),
+};
