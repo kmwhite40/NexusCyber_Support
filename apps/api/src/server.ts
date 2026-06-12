@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
+import multipart from '@fastify/multipart';
 import { config } from './config.js';
 import { logger } from './logger.js';
 import { pool } from './db/pool.js';
@@ -34,6 +35,9 @@ async function main() {
     timeWindow: '1 minute',
     allowList: ['127.0.0.1'],
   });
+
+  // Multipart for attachment uploads (10 MiB per file; SSRF-safe streaming download).
+  await app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024, files: 1 } });
 
   await app.register(cors, {
     origin: config.webOrigin,

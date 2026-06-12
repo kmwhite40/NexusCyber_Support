@@ -15,6 +15,7 @@ import * as oncall from '../modules/oncall.js';
 import * as automation from '../modules/automation.js';
 import * as compliance from '../modules/compliance.js';
 import * as elevation from '../modules/elevation.js';
+import * as attachments from '../modules/attachments.js';
 import { computeScore, grade } from '../modules/posture.js';
 import { audit, verifyChain, formatExport, type ExportableRow } from '../modules/audit.js';
 import { authorize } from '../authz/pdp.js';
@@ -230,6 +231,39 @@ export async function registerRoutes(app: FastifyInstance) {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const body = z.object({ targetGroup: z.string(), reason: z.string().optional() }).parse(req.body);
     return tickets.escalate(p, id, body.targetGroup, body.reason);
+  });
+
+  // ---------------- Attachments ----------------
+  app.post('/api/v1/tickets/:id/attachments', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const file = await (req as any).file();
+    if (!file) throw Errors.badRequest('multipart file field required');
+    const bytes = await file.toBuffer();
+    const att = await attachments.upload(p, {
+      ticketId: id,
+      filename: file.filename,
+      contentType: file.mimetype,
+      bytes,
+    });
+    reply.status(201);
+    return att;
+  });
+
+  app.get('/api/v1/tickets/:id/attachments', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return { data: await attachments.listForTicket(p, id) };
+  });
+
+  app.get('/api/v1/attachments/:id', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const result = await attachments.download(p, id);
+    reply
+      .header('Content-Disposition', `attachment; filename="${result.filename.replace(/"/g, '')}"`)
+      .type(result.contentType)
+      .send(result.bytes);
   });
 
   // ---------------- Service catalog & request fulfillment ----------------

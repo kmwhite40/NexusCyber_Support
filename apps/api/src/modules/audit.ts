@@ -13,45 +13,56 @@ export interface AuditInput {
   detail?: Record<string, unknown>;
 }
 
+// Fixed advisory-lock key for the audit chain. A hash chain requires serialized appends:
+// without this, concurrent writers read the same prev_hash and FORK the chain. The
+// transaction-scoped lock guarantees the prev-hash read + insert are atomic per writer.
+const AUDIT_CHAIN_LOCK = 4_242_001;
+
 export async function audit(actor: Principal | null, input: AuditInput): Promise<void> {
   await withSystemContext(async (sql) => {
-    const { rows } = await sql.query(
-      'SELECT row_hash FROM audit_logs ORDER BY seq DESC LIMIT 1',
-    );
-    const prevHash: string | null = rows[0]?.row_hash ?? null;
+    await sql.query('BEGIN');
+    try {
+      await sql.query('SELECT pg_advisory_xact_lock($1)', [AUDIT_CHAIN_LOCK]);
+      const { rows } = await sql.query('SELECT row_hash FROM audit_logs ORDER BY seq DESC LIMIT 1');
+      const prevHash: string | null = rows[0]?.row_hash ?? null;
 
-    // Capture the timestamp once and persist it into created_at so the stored row is
-    // self-consistent with its hash — this is what makes verifyChain() work over real data.
-    const at = new Date().toISOString();
-    const payload = JSON.stringify({
-      actor: actor?.id ?? null,
-      action: input.action,
-      resource: input.resourceId ?? null,
-      detail: input.detail ?? {},
-      at,
-    });
-    const rowHash = createHash('sha256')
-      .update((prevHash ?? '') + payload)
-      .digest('hex');
-
-    await sql.query(
-      `INSERT INTO audit_logs
-         (organization_id, actor_id, actor_plane, action, resource_type, resource_id, scope, detail, prev_hash, row_hash, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-      [
-        input.organizationId ?? actor?.organizationId ?? null,
-        actor?.id ?? null,
-        actor?.plane ?? null,
-        input.action,
-        input.resourceType ?? null,
-        input.resourceId ?? null,
-        input.scope ?? null,
-        input.detail ?? {},
-        prevHash,
-        rowHash,
+      // Capture the timestamp once and persist it into created_at so the stored row is
+      // self-consistent with its hash — this is what makes verifyChain() work over real data.
+      const at = new Date().toISOString();
+      const payload = JSON.stringify({
+        actor: actor?.id ?? null,
+        action: input.action,
+        resource: input.resourceId ?? null,
+        detail: input.detail ?? {},
         at,
-      ],
-    );
+      });
+      const rowHash = createHash('sha256')
+        .update((prevHash ?? '') + payload)
+        .digest('hex');
+
+      await sql.query(
+        `INSERT INTO audit_logs
+           (organization_id, actor_id, actor_plane, action, resource_type, resource_id, scope, detail, prev_hash, row_hash, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [
+          input.organizationId ?? actor?.organizationId ?? null,
+          actor?.id ?? null,
+          actor?.plane ?? null,
+          input.action,
+          input.resourceType ?? null,
+          input.resourceId ?? null,
+          input.scope ?? null,
+          input.detail ?? {},
+          prevHash,
+          rowHash,
+          at,
+        ],
+      );
+      await sql.query('COMMIT');
+    } catch (err) {
+      await sql.query('ROLLBACK');
+      throw err;
+    }
   });
 }
 
