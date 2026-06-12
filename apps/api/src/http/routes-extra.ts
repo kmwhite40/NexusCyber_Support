@@ -8,8 +8,38 @@ import * as worklogs from '../modules/worklogs.js';
 import * as automation from '../modules/automation.js';
 import * as canned from '../modules/canned.js';
 import * as bulk from '../modules/bulk.js';
+import * as participants from '../modules/participants.js';
 
 export async function registerExtraRoutes(app: FastifyInstance): Promise<void> {
+  // ---------------- Ticket participants / watchers / @mentions ----------------
+  app.get('/api/v1/tickets/:id/participants', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return { data: await participants.listForTicket(p, id) };
+  });
+
+  app.post('/api/v1/tickets/:id/participants', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ userId: z.string().uuid(), role: z.enum(['watcher', 'collaborator', 'approver']).optional() }).parse(req.body);
+    const row = await participants.addParticipant(p, id, body.userId, body.role);
+    reply.status(201);
+    return row;
+  });
+
+  app.delete('/api/v1/tickets/:id/participants/:userId', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id, userId } = z.object({ id: z.string().uuid(), userId: z.string().uuid() }).parse(req.params);
+    return participants.removeParticipant(p, id, userId);
+  });
+
+  app.post('/api/v1/tickets/:id/mentions', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ text: z.string() }).parse(req.body);
+    return participants.processMentions(p, id, body.text);
+  });
+
   // ---------------- Bulk ticket actions ----------------
   app.post('/api/v1/tickets/bulk', async (req) => {
     const p = await requirePrincipal(req);
