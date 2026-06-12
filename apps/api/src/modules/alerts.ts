@@ -12,6 +12,9 @@ import type { Principal } from '../types.js';
 
 export type AlertState = 'triggered' | 'acknowledged' | 'resolved';
 
+// Client-facing alert columns (excludes internal: details, acknowledged_by).
+const ALERT_COLS = 'id, organization_id, source, dedup_key, severity, state, summary, acknowledged_at, resolved_at, escalated_page_id, escalated_ticket_id, created_at';
+
 const TRANSITIONS: Record<AlertState, AlertState[]> = {
   triggered: ['acknowledged', 'resolved'],
   acknowledged: ['resolved'],
@@ -49,12 +52,12 @@ export async function createAlert(actor: Principal, input: CreateAlertInput) {
   authorize(actor, 'alert.manage', { organizationId: orgId });
   return withOrgContext(orgContextFor(actor), async (sql) => {
     if (input.dedupKey) {
-      const existing = (await sql.query(`SELECT * FROM alerts WHERE organization_id=$1 AND dedup_key=$2 AND state <> 'resolved' LIMIT 1`, [orgId, input.dedupKey])).rows[0];
+      const existing = (await sql.query(`SELECT ${ALERT_COLS} FROM alerts WHERE organization_id=$1 AND dedup_key=$2 AND state <> 'resolved' LIMIT 1`, [orgId, input.dedupKey])).rows[0];
       if (existing) return existing;
     }
     const { rows } = await sql.query(
       `INSERT INTO alerts (organization_id, source, dedup_key, severity, summary, details)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING ${ALERT_COLS}`,
       [orgId, input.source ?? 'manual', input.dedupKey ?? null, input.severity ?? 'P3', input.summary, JSON.stringify(input.details ?? {})],
     );
     const alert = rows[0];
@@ -66,7 +69,7 @@ export async function createAlert(actor: Principal, input: CreateAlertInput) {
 
 async function transition(actor: Principal, id: string, to: AlertState, verb: string) {
   return withOrgContext(orgContextFor(actor), async (sql) => {
-    const cur = (await sql.query('SELECT * FROM alerts WHERE id=$1', [id])).rows[0];
+    const cur = (await sql.query('SELECT id, organization_id, state, acknowledged_by, acknowledged_at, resolved_at, escalated_page_id, escalated_ticket_id FROM alerts WHERE id=$1', [id])).rows[0];
     if (!cur) throw Errors.notFound('alert not found');
     authorize(actor, verb, { organizationId: cur.organization_id });
     if (!canAlertTransition(cur.state as AlertState, to)) throw Errors.conflict(`cannot move alert from ${cur.state} to ${to}`);
@@ -74,7 +77,7 @@ async function transition(actor: Principal, id: string, to: AlertState, verb: st
     const ackAt = to === 'acknowledged' ? new Date().toISOString() : cur.acknowledged_at;
     const resAt = to === 'resolved' ? new Date().toISOString() : cur.resolved_at;
     const { rows } = await sql.query(
-      `UPDATE alerts SET state=$1, acknowledged_by=$2, acknowledged_at=$3, resolved_at=$4 WHERE id=$5 RETURNING *`,
+      `UPDATE alerts SET state=$1, acknowledged_by=$2, acknowledged_at=$3, resolved_at=$4 WHERE id=$5 RETURNING ${ALERT_COLS}`,
       [to, ackBy, ackAt, resAt, id],
     );
     await audit(actor, { action: `alert.${to}`, organizationId: cur.organization_id, resourceType: 'alert', resourceId: id });
@@ -87,7 +90,7 @@ export const resolveAlert = (actor: Principal, id: string) => transition(actor, 
 
 export async function escalateAlert(actor: Principal, id: string, opts: { toPage?: boolean; toTicket?: boolean } = {}) {
   return withOrgContext(orgContextFor(actor), async (sql) => {
-    const cur = (await sql.query('SELECT * FROM alerts WHERE id=$1', [id])).rows[0];
+    const cur = (await sql.query('SELECT id, organization_id, state, escalated_page_id, escalated_ticket_id, summary, severity FROM alerts WHERE id=$1', [id])).rows[0];
     if (!cur) throw Errors.notFound('alert not found');
     authorize(actor, 'alert.manage', { organizationId: cur.organization_id });
     let pageId = cur.escalated_page_id as string | null;
