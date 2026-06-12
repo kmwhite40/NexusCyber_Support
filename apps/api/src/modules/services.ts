@@ -26,7 +26,7 @@ export async function createService(actor: Principal, input: SaveServiceInput) {
   return withOrgContext(orgContextFor(actor), async (sql) => {
     const { rows } = await sql.query(
       `INSERT INTO services (organization_id, name, kind) VALUES ($1,$2,$3) RETURNING *`,
-      [orgId, input.name, input.kind ?? 'application'],
+      [orgId, input.name, input.kind ?? 'technical'],
     );
     await audit(actor, { action: 'service.create', organizationId: orgId, resourceType: 'service', resourceId: rows[0].id, detail: { name: input.name } });
     return rows[0];

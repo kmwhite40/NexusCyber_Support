@@ -941,8 +941,9 @@ export async function registerRoutes(app: FastifyInstance) {
 
   app.post('/api/v1/services', async (req, reply) => {
     const p = await requirePrincipal(req);
+    const body = z.object({ name: z.string().min(1), kind: z.string().optional(), organizationId: z.string().uuid().optional() }).parse(req.body);
     reply.code(201);
-    return services.createService(p, req.body as any);
+    return services.createService(p, body);
   });
 
   app.get('/api/v1/configuration-items', async (req) => {
@@ -952,7 +953,8 @@ export async function registerRoutes(app: FastifyInstance) {
 
   app.post('/api/v1/configuration-items', async (req, reply) => {
     const p = await requirePrincipal(req);
+    const body = z.object({ name: z.string().min(1), ciClass: z.string().min(1), criticality: z.union([z.string(), z.number()]).optional(), status: z.string().optional(), organizationId: z.string().uuid().optional() }).parse(req.body);
     reply.code(201);
-    return services.createConfigurationItem(p, req.body as any);
+    return services.createConfigurationItem(p, body);
   });
 }
