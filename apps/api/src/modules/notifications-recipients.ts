@@ -59,6 +59,21 @@ export async function resolveRecipients(sql: Sql, evt: DomainEvent): Promise<Rec
   }
 
   if (type.startsWith('oncall.')) {
+    // Prefer the specific responder who must act (e.g. acknowledgement_required
+    // carries the on-call user's id); only page the whole rotation when just a
+    // schedule id is available.
+    const responderId = (data.responder ?? data.responder_id ?? data.user_id) as
+      | string
+      | undefined;
+    if (responderId) {
+      const { rows } = await sql.query(
+        `SELECT u.id AS user_id, u.email
+           FROM users u
+          WHERE u.id = $1 AND u.email IS NOT NULL AND ${NOT_OPTED_OUT}`,
+        [responderId],
+      );
+      return dedupe(rows);
+    }
     const scheduleId = (data.schedule_id ?? data.scheduleId) as string | undefined;
     if (!scheduleId) return [];
     const { rows } = await sql.query(

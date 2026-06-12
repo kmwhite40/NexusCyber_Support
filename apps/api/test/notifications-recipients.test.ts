@@ -47,4 +47,15 @@ describe('resolveRecipients', () => {
     const out = await resolveRecipients(sql, evt('sla.warning', { ticket_id: 't1' }));
     expect(out).toEqual([{ userId: 'u1', email: 'a@x.gov' }]);
   });
+
+  it('resolves the specific responder for oncall.acknowledgement_required', async () => {
+    const sql = fakeSql([{ user_id: 'resp-1', email: 'oncall@x.gov' }]);
+    const out = await resolveRecipients(
+      sql,
+      evt('oncall.acknowledgement_required', { page_id: 'p1', responder: 'resp-1' }),
+    );
+    expect(out).toEqual([{ userId: 'resp-1', email: 'oncall@x.gov' }]);
+    expect(sql.query.mock.calls[0][0]).toContain('FROM users');
+    expect(sql.query.mock.calls[0][1]).toEqual(['resp-1']);
+  });
 });
