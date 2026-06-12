@@ -115,7 +115,10 @@ export function registerNotificationHandlers(): void {
   const notifying = [
     'ticket.created',
     'ticket.assigned',
+    'ticket.commented',
     'ticket.status_changed',
+    'ticket.escalated',
+    'ticket.resolved',
     'sla.warning',
     'sla.breached',
     'posture.finding_created',

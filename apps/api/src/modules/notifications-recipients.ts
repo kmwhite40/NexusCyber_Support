@@ -26,6 +26,53 @@ function dedupe(rows: { user_id: string; email: string }[]): Recipient[] {
   return [...seen.values()];
 }
 
+/** Union several recipient lists, de-duplicated by user. */
+function mergeRecipients(...lists: Recipient[][]): Recipient[] {
+  const seen = new Map<string, Recipient>();
+  for (const list of lists) for (const r of list) if (!seen.has(r.userId)) seen.set(r.userId, r);
+  return [...seen.values()];
+}
+
+/** The ticket's parties (requester, assignee, org) — drives event-aware routing. */
+async function ticketParties(
+  sql: Sql,
+  ticketId: string,
+): Promise<{ requester_id: string | null; assigned_agent_id: string | null; organization_id: string } | null> {
+  const { rows } = await sql.query(
+    'SELECT requester_id, assigned_agent_id, organization_id FROM tickets WHERE id = $1',
+    [ticketId],
+  );
+  return rows[0] ?? null;
+}
+
+/** Resolve specific users by id (assignee, requester) — opt-out filtered. */
+async function usersByIds(sql: Sql, ids: (string | null | undefined)[]): Promise<Recipient[]> {
+  const clean = [...new Set(ids.filter((x): x is string => !!x))];
+  if (!clean.length) return [];
+  const { rows } = await sql.query(
+    `SELECT u.id AS user_id, u.email
+       FROM users u
+      WHERE u.id = ANY($1::uuid[]) AND u.email IS NOT NULL AND ${NOT_OPTED_OUT}`,
+    [clean],
+  );
+  return dedupe(rows);
+}
+
+/** Nexus agents covering a customer org (scoped via active role assignment). */
+async function coveringAgents(sql: Sql, orgId: string | null): Promise<Recipient[]> {
+  if (!orgId) return [];
+  const { rows } = await sql.query(
+    `SELECT DISTINCT u.id AS user_id, u.email
+       FROM users u
+       JOIN role_assignments ra ON ra.user_id = u.id
+      WHERE u.plane = 'nexus' AND ra.organization_id = $1
+        AND (ra.expires_at IS NULL OR ra.expires_at > now())
+        AND u.email IS NOT NULL AND ${NOT_OPTED_OUT}`,
+    [orgId],
+  );
+  return dedupe(rows);
+}
+
 export async function resolveRecipients(sql: Sql, evt: DomainEvent): Promise<Recipient[]> {
   const data = evt.data as Record<string, unknown>;
   const type = evt.type;
@@ -33,14 +80,51 @@ export async function resolveRecipients(sql: Sql, evt: DomainEvent): Promise<Rec
   if (type.startsWith('ticket.') || type.startsWith('sla.')) {
     const ticketId = (data.ticket_id ?? data.id ?? data.ticketId) as string | undefined;
     if (!ticketId) return [];
-    const { rows } = await sql.query(
-      `SELECT u.id AS user_id, u.email
-         FROM tickets t
-         JOIN users u ON u.id = ANY(ARRAY[t.assigned_agent_id, t.requester_id])
-        WHERE t.id = $1 AND u.email IS NOT NULL AND ${NOT_OPTED_OUT}`,
-      [ticketId],
+    const t = await ticketParties(sql, ticketId);
+    if (!t) return [];
+
+    // New ticket -> notify the agent(s): the assignee if set, else the whole
+    // covering team so the new request is seen.
+    if (type === 'ticket.created') {
+      return t.assigned_agent_id
+        ? usersByIds(sql, [t.assigned_agent_id])
+        : coveringAgents(sql, t.organization_id);
+    }
+
+    // Assignment -> the newly assigned agent only (customer is not notified on
+    // assignment, only on the updates below).
+    if (type === 'ticket.assigned') {
+      const agentId = (data.agent_id as string | undefined) ?? t.assigned_agent_id;
+      return usersByIds(sql, [agentId]);
+    }
+
+    // Comments -> internal notes stay with the agents; customer-visible replies
+    // reach the requester (never expose internal notes to the customer plane).
+    if (type === 'ticket.commented') {
+      if (data.visibility === 'internal') {
+        return mergeRecipients(
+          await usersByIds(sql, [t.assigned_agent_id]),
+          await coveringAgents(sql, t.organization_id),
+        );
+      }
+      return usersByIds(sql, [t.requester_id, t.assigned_agent_id]);
+    }
+
+    // Escalation -> the covering team.
+    if (type === 'ticket.escalated') {
+      return coveringAgents(sql, t.organization_id);
+    }
+
+    // Customer-facing updates -> the requester (customer) plus the assignee.
+    if (type === 'ticket.status_changed' || type === 'ticket.resolved') {
+      return usersByIds(sql, [t.requester_id, t.assigned_agent_id]);
+    }
+
+    // sla.* and any other internal ticket signal -> assignee + covering team.
+    return mergeRecipients(
+      await usersByIds(sql, [t.assigned_agent_id]),
+      await coveringAgents(sql, t.organization_id),
     );
-    return dedupe(rows);
   }
 
   if (type.startsWith('posture.')) {

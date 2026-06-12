@@ -15,8 +15,12 @@ function makeSql(opts: { cloud: string; emailCap: string; teamsCap: string; reci
       inserts.push(params);
       return { rows: [] };
     }
-    // recipient resolution
-    return { rows: opts.recipients };
+    // recipient resolution (event-aware): ticket parties + covering agents.
+    if (text.includes('FROM tickets')) {
+      return { rows: [{ requester_id: 'r1', assigned_agent_id: 'ag1', organization_id: 'org-1' }] };
+    }
+    if (text.includes("u.plane = 'nexus'")) return { rows: opts.recipients }; // covering agents
+    return { rows: [] }; // usersByIds (assignee) — covered by covering-agents above
   });
   return { sql: { query } as any, inserts };
 }
