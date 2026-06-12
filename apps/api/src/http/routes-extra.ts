@@ -6,8 +6,30 @@ import { z } from 'zod';
 import { requirePrincipal } from './context.js';
 import * as worklogs from '../modules/worklogs.js';
 import * as automation from '../modules/automation.js';
+import * as canned from '../modules/canned.js';
 
 export async function registerExtraRoutes(app: FastifyInstance): Promise<void> {
+  // ---------------- Canned responses ----------------
+  app.get('/api/v1/canned-responses', async (req) => {
+    const p = await requirePrincipal(req);
+    return { data: await canned.listCanned(p) };
+  });
+
+  app.post('/api/v1/canned-responses', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const body = z.object({ name: z.string().min(1), body: z.string().min(1), tags: z.array(z.string()).optional() }).parse(req.body);
+    const c = await canned.createCanned(p, body);
+    reply.status(201);
+    return c;
+  });
+
+  app.get('/api/v1/canned-responses/:id/render', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const q = z.object({ ticketId: z.string().uuid() }).parse(req.query);
+    return canned.render(p, id, q.ticketId);
+  });
+
   // ---------------- Automation gated-action approvals ----------------
   app.get('/api/v1/automations/pending-approvals', async (req) => {
     const p = await requirePrincipal(req);
