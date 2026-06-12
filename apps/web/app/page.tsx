@@ -14,6 +14,11 @@ import {
   Network,
   Bot,
   ArrowRight,
+  Scale,
+  Handshake,
+  Activity,
+  Rocket,
+  LogIn,
 } from 'lucide-react';
 import { useAuth } from '@/components/auth-context';
 import { homePath } from '@/lib/api';
@@ -21,6 +26,7 @@ import { GLSLHills } from '@/components/ui/glsl-hills';
 import DisplayCards from '@/components/ui/display-cards';
 import { Navbar1 } from '@/components/ui/navbar1';
 import { BrandMark } from '@/components/ui/brand';
+import { Footer } from '@/components/ui/footer';
 import { LiquidButton, MetalButton } from '@/components/ui/liquid-glass-button';
 import { Card, CardBody, Badge } from '@/components/ui/primitives';
 
@@ -208,58 +214,49 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ---------- Footer ---------- */}
-      <footer className="relative z-10 border-t border-border bg-surface">
-        <div className="mx-auto max-w-6xl px-6 py-14">
-          <div className="grid gap-10 md:grid-cols-[1.5fr_1fr_1fr_1fr]">
-            {/* Brand */}
-            <div>
-              <div className="flex items-center gap-2.5">
-                <BrandMark size={36} />
-                <span className="text-base font-semibold text-fg">Nexus<span className="text-muted">Cyber</span></span>
-              </div>
-              <p className="mt-4 max-w-xs text-sm leading-relaxed text-muted">
-                The cyber operations control plane — ITSM, on-call, and security posture, isolated
-                per customer and ready for Commercial and Government clouds.
-              </p>
-              <div className="mt-5 flex flex-wrap gap-2">
-                <Badge tone="neutral">Commercial</Badge>
-                <Badge tone="neutral">GCC High</Badge>
-                <Badge tone="neutral">Azure Government</Badge>
-              </div>
-            </div>
-
-            {/* Link columns */}
-            <FooterCol title="Platform" links={[['ITSM & ITIL', '/login'], ['On-call', '/login'], ['Security posture', '/login'], ['CMDB', '/login']]} />
-            <FooterCol title="Solutions" links={[['MSP / CSP', '/signup'], ['Government cloud', '/signup'], ['Compliance', '/signup'], ['Microsoft 365', '/signup']]} />
-            <FooterCol title="Company" links={[['Sign in', '/login'], ['Get started', '/signup'], ['Security', '#'], ['Status', '#']]} />
-          </div>
-
-          <div className="mt-12 flex flex-col items-center justify-between gap-3 border-t border-border pt-6 text-xs text-muted sm:flex-row">
-            <span>© {`Nexus Cyber`} — reference implementation</span>
-            <div className="flex items-center gap-5">
-              <Link href="#" className="hover:text-fg">Privacy</Link>
-              <Link href="#" className="hover:text-fg">Terms</Link>
-              <Link href="#" className="hover:text-fg">NIST · CMMC · FedRAMP</Link>
-            </div>
-          </div>
-        </div>
-      </footer>
-    </div>
-  );
-}
-
-function FooterCol({ title, links }: { title: string; links: Array<[string, string]> }) {
-  return (
-    <div>
-      <h4 className="text-xs font-semibold uppercase tracking-wider text-fg">{title}</h4>
-      <ul className="mt-4 space-y-2.5">
-        {links.map(([label, href]) => (
-          <li key={label}>
-            <Link href={href} className="text-sm text-muted transition-colors hover:text-fg">{label}</Link>
-          </li>
-        ))}
-      </ul>
+      {/* ---------- Footer (vendored 21st.dev) ---------- */}
+      <div className="relative z-10 border-t border-border bg-surface">
+        <Footer
+          brand={{ name: 'NexusCyber', description: 'The cyber operations control plane — ITSM, on-call, and security posture for Commercial and Government clouds.' }}
+          socialLinks={[
+            { name: 'GitHub', href: 'https://github.com/kmwhite40/NexusCyber_Support' },
+            { name: 'Docs', href: '#' },
+            { name: 'Status', href: '#' },
+          ]}
+          columns={[
+            {
+              title: 'Platform',
+              links: [
+                { name: 'ITSM & ITIL', Icon: Ticket, href: '/login' },
+                { name: 'On-call', Icon: Siren, href: '/login' },
+                { name: 'Security posture', Icon: ShieldCheck, href: '/login' },
+                { name: 'CMDB & assets', Icon: Database, href: '/login' },
+              ],
+            },
+            {
+              title: 'Solutions',
+              links: [
+                { name: 'MSP / CSP', Icon: Network, href: '/signup' },
+                { name: 'Government cloud', Icon: Cloud, href: '/signup' },
+                { name: 'Compliance', Icon: FileCheck, href: '/signup' },
+                { name: 'Automation', Icon: Workflow, href: '/signup' },
+              ],
+            },
+            {
+              title: 'Company',
+              links: [
+                { name: 'Sign in', Icon: LogIn, href: '/login' },
+                { name: 'Get started', Icon: Rocket, href: '/signup' },
+                { name: 'Security', Icon: Lock, href: '#' },
+                { name: 'Status', Icon: Activity, href: '#' },
+                { name: 'Privacy', Icon: Scale, href: '#' },
+                { name: 'Terms', Icon: Handshake, href: '#' },
+              ],
+            },
+          ]}
+          copyright="Nexus Cyber © 2026 — reference implementation"
+        />
+      </div>
     </div>
   );
 }
