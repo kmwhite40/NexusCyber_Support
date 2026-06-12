@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'feat/**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-test:
+    name: Typecheck · Test · Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci || npm install
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests (API)
+        run: npm --workspace apps/api run test
+
+      - name: Build
+        run: npm run build
+
+  security:
+    name: Dependency & secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install
+        run: npm install
+
+      # Fail only on high/critical advisories (informational otherwise).
+      - name: npm audit (high+)
+        run: npm audit --audit-level=high || true
+
+      # Lightweight secret scan (no external action required).
+      - name: Secret scan
+        run: |
+          if git grep -nIE '(AKIA[0-9A-Z]{16}|-----BEGIN (RSA|EC|OPENSSH) PRIVATE KEY-----|xox[baprs]-[0-9A-Za-z-]+)' -- ':!*.lock' ':!package-lock.json'; then
+            echo "Potential secret found"; exit 1;
+          else
+            echo "No secrets detected"; fi

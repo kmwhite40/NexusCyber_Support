@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Neutral-dark surfaces + blue accents (provided design tokens), expressed as HSL
+     channels so Tailwind opacity modifiers and inline hsl(var(--x)) keep working. */
+  --bg: 0 0% 4%;              /* #0a0a0a background */
+  --surface: 0 0% 7%;        /* card — slightly elevated for legibility */
+  --surface-2: 0 0% 15%;     /* #262626 secondary/muted surface */
+  --border: 0 0% 16%;        /* #262626 */
+  --muted: 0 0% 63%;         /* #a1a1a1 muted text */
+  --fg: 0 0% 98%;            /* #fafafa foreground */
+  --brand: 222 86% 54%;      /* #2563ef (chart-3) blue accent */
+  --brand-fg: 0 0% 100%;
+  --accent: 217 91% 60%;     /* #3a81f6 (chart-2) */
+  --success: 152 50% 45%;
+  --warning: 38 92% 55%;
+  --danger: 357 100% 45%;    /* #e7000b destructive */
+  --ring: 0 0% 32%;          /* #525252 */
+  --chart-1: 212 100% 78%;   /* #91c5ff */
+  --chart-2: 217 91% 60%;    /* #3a81f6 */
+  --chart-3: 222 86% 54%;    /* #2563ef */
+  --chart-4: 224 79% 48%;    /* #1a4eda */
+  --chart-5: 227 70% 40%;    /* #1f3fad */
+  --font-sans: 'Inter';
+}
+
+/* Optional per-tenant light brand override could redefine these on a wrapper. */
+
+* {
+  border-color: hsl(var(--border));
+}
+
+html, body {
+  background: hsl(var(--bg));
+  color: hsl(var(--fg));
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  background-image:
+    radial-gradient(60rem 60rem at 110% -10%, hsl(var(--brand) / 0.08), transparent 60%),
+    radial-gradient(50rem 50rem at -10% 10%, hsl(var(--accent) / 0.07), transparent 55%);
+  background-attachment: fixed;
+}
+
+/* Subtle scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+.glass {
+  background: linear-gradient(180deg, hsl(var(--surface) / 0.9), hsl(var(--surface) / 0.7));
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: hsl(var(--surface-2));
+}
+.skeleton::after {
+  content: '';
+  position: absolute; inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, hsl(var(--fg) / 0.05), transparent);
+  animation: shimmer 1.4s infinite;
+}
