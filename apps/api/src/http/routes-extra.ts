@@ -10,8 +10,54 @@ import * as canned from '../modules/canned.js';
 import * as bulk from '../modules/bulk.js';
 import * as participants from '../modules/participants.js';
 import * as workflows from '../modules/workflows.js';
+import * as forms from '../modules/forms.js';
 
 export async function registerExtraRoutes(app: FastifyInstance): Promise<void> {
+  // ---------------- Custom request forms ----------------
+  app.get('/api/v1/forms', async (req) => {
+    const p = await requirePrincipal(req);
+    return { data: await forms.listForms(p) };
+  });
+
+  app.get('/api/v1/forms/:id', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return forms.getForm(p, id);
+  });
+
+  app.post('/api/v1/forms', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const body = z.object({ key: z.string().min(1), name: z.string().min(1), ticketType: z.string().optional() }).parse(req.body);
+    const f = await forms.createForm(p, body);
+    reply.status(201);
+    return f;
+  });
+
+  app.post('/api/v1/forms/:id/fields', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z
+      .object({
+        key: z.string().min(1),
+        label: z.string().min(1),
+        dataType: z.enum(['text', 'textarea', 'number', 'select', 'checkbox', 'date']).optional(),
+        required: z.boolean().optional(),
+        options: z.array(z.string()).optional(),
+        position: z.number().int().optional(),
+      })
+      .parse(req.body);
+    const f = await forms.addField(p, id, body);
+    reply.status(201);
+    return f;
+  });
+
+  app.post('/api/v1/tickets/:id/form-answers', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ formId: z.string().uuid(), answers: z.record(z.any()) }).parse(req.body);
+    return forms.submitAnswers(p, id, body.formId, body.answers);
+  });
+
   // ---------------- Configurable ticket workflows ----------------
   app.get('/api/v1/workflows', async (req) => {
     const p = await requirePrincipal(req);

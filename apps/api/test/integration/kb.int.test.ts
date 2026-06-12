@@ -26,23 +26,26 @@ describeDb('knowledge base (integration)', () => {
   });
 
   it('create -> edit (versions) -> publish lifecycle works and is searchable once published', async () => {
+    // A unique token per run keeps this idempotent against accumulated test data: the
+    // published page is then the sole full-text match for the token.
+    const token = `samlsso${Date.now()}`;
     const space = await createSpace(author, { key: `T${Date.now() % 100000}`, name: 'Test Space' });
-    const page = await createPage(author, { spaceId: space.id, title: 'Configuring SAML SSO', body: 'Initial draft about SAML.' });
+    const page = await createPage(author, { spaceId: space.id, title: `Configuring ${token}`, body: `Initial draft about ${token}.` });
     expect(page.version).toBe(1);
     expect(page.status).toBe('draft');
 
     // draft is not in search results
-    const beforePub = await search(author, 'SAML SSO configuring');
+    const beforePub = await search(author, token);
     expect(beforePub.find((h: any) => h.id === page.id)).toBeFalsy();
 
-    const edited = await updatePage(author, page.id, { body: 'Updated SAML SSO setup with metadata exchange.' });
+    const edited = await updatePage(author, page.id, { body: `Updated ${token} setup with metadata exchange.` });
     expect(edited.version).toBe(2);
 
     await transitionPage(author, page.id, 'published');
     const full = await getPage(author, page.id);
     expect(full.status).toBe('published');
 
-    const afterPub = await search(author, 'SAML SSO metadata');
+    const afterPub = await search(author, token);
     expect(afterPub.find((h: any) => h.id === page.id)).toBeTruthy();
   });
 });
