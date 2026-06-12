@@ -98,7 +98,7 @@ export default function Landing() {
       {/* ---------- Minimal footer (one line) ---------- */}
       <footer className="relative z-10 border-t border-border bg-surface">
         <div className="mx-auto flex max-w-5xl flex-col items-center justify-between gap-3 px-6 py-6 text-xs text-fg/45 sm:flex-row">
-          <span>© 2026 NexusCyber. A Strategic Business Systems Company. All rights reserved.</span>
+          <span>Copyright © 2026 NexusCyber. Operated as part of Strategic Business Systems, Inc. All rights reserved.</span>
           <nav className="flex items-center gap-5">
             {FOOTER_LINKS.map((l) => (
               <Link key={l.name} href={l.href} className="transition-colors hover:text-fg/80">
