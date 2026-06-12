@@ -15,7 +15,7 @@ describeDb('audit chain + SIEM export (integration)', () => {
           `SELECT actor_id, action, resource_id, detail,
                   to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
                   prev_hash, row_hash
-             FROM audit_logs ORDER BY created_at ASC`,
+             FROM audit_logs ORDER BY seq ASC`,
         )
       ).rows,
     );

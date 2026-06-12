@@ -14,6 +14,7 @@ import * as conmon from '../modules/conmon.js';
 import * as oncall from '../modules/oncall.js';
 import * as automation from '../modules/automation.js';
 import * as compliance from '../modules/compliance.js';
+import * as elevation from '../modules/elevation.js';
 import { computeScore, grade } from '../modules/posture.js';
 import { audit, verifyChain, formatExport, type ExportableRow } from '../modules/audit.js';
 import { authorize } from '../authz/pdp.js';
@@ -480,6 +481,40 @@ export async function registerRoutes(app: FastifyInstance) {
     return { data: await automation.listExecutions(p, id) };
   });
 
+  // ---------------- JIT elevation & break-glass ----------------
+  app.post('/api/v1/elevation/request', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const body = z
+      .object({ permissions: z.array(z.string()).min(1), reason: z.string().min(5), organizationId: z.string().uuid().optional() })
+      .parse(req.body);
+    const g = await elevation.requestElevation(p, body);
+    reply.status(201);
+    return g;
+  });
+
+  app.post('/api/v1/elevation/:id/approve', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ ttlMinutes: z.number().int().min(5).max(480).optional() }).parse(req.body ?? {});
+    return elevation.approveElevation(p, id, body.ttlMinutes);
+  });
+
+  app.post('/api/v1/elevation/break-glass', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const body = z
+      .object({ permissions: z.array(z.string()).min(1), reason: z.string().min(5), organizationId: z.string().uuid().optional() })
+      .parse(req.body);
+    const g = await elevation.breakGlass(p, body);
+    reply.status(201);
+    return g;
+  });
+
+  app.get('/api/v1/elevation', async (req) => {
+    const p = await requirePrincipal(req);
+    const grants = await elevation.activeGrantsFor(p.id);
+    return { data: grants };
+  });
+
   // ---------------- Audit ----------------
   app.get('/api/v1/audit-logs', async (req) => {
     const p = await requirePrincipal(req);
@@ -533,7 +568,7 @@ export async function registerRoutes(app: FastifyInstance) {
                 to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
                 prev_hash, row_hash
            FROM audit_logs ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-          ORDER BY created_at ASC LIMIT ${limit}`,
+          ORDER BY seq ASC LIMIT ${limit}`,
         params,
       );
       return rows as ExportableRow[];
@@ -552,7 +587,7 @@ export async function registerRoutes(app: FastifyInstance) {
         `SELECT actor_id, action, resource_id, detail,
                 to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
                 prev_hash, row_hash
-           FROM audit_logs ORDER BY created_at ASC`,
+           FROM audit_logs ORDER BY seq ASC`,
       );
       return verifyChain(rows as Parameters<typeof verifyChain>[0]);
     });

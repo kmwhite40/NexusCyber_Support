@@ -1,5 +1,6 @@
 // Resolve a full Principal (roles, permissions, scope) from session claims.
 import { withSystemContext } from '../db/pool.js';
+import { activeGrantsFor, mergeGrantedPermissions } from '../modules/elevation.js';
 import type { Principal, SessionClaims } from '../types.js';
 import type { OrgContext } from '../db/pool.js';
 
@@ -32,6 +33,11 @@ export async function loadPrincipal(claims: SessionClaims): Promise<Principal> {
       permissions = permRows.map((p) => p.permission_key as string);
     }
 
+    // JIT elevation: union any active, non-expired grants into the effective permissions.
+    const grants = await activeGrantsFor(claims.sub);
+    const elevated = grants.length > 0;
+    permissions = mergeGrantedPermissions(permissions, grants);
+
     return {
       id: claims.sub,
       plane: claims.plane,
@@ -41,7 +47,7 @@ export async function loadPrincipal(claims: SessionClaims): Promise<Principal> {
       roles: roleKeys,
       permissions,
       assignedOrgs,
-      elevated: false, // JIT elevation would flip this (docs/nexus/02 §E.11)
+      elevated,
     };
   });
 }

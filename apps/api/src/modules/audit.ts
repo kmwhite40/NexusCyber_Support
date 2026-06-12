@@ -16,7 +16,7 @@ export interface AuditInput {
 export async function audit(actor: Principal | null, input: AuditInput): Promise<void> {
   await withSystemContext(async (sql) => {
     const { rows } = await sql.query(
-      'SELECT row_hash FROM audit_logs ORDER BY created_at DESC LIMIT 1',
+      'SELECT row_hash FROM audit_logs ORDER BY seq DESC LIMIT 1',
     );
     const prevHash: string | null = rows[0]?.row_hash ?? null;
 
