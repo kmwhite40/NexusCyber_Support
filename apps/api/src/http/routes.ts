@@ -13,6 +13,7 @@ import * as catalog from '../modules/catalog.js';
 import * as conmon from '../modules/conmon.js';
 import * as oncall from '../modules/oncall.js';
 import * as automation from '../modules/automation.js';
+import * as compliance from '../modules/compliance.js';
 import { computeScore, grade } from '../modules/posture.js';
 import { authorize } from '../authz/pdp.js';
 
@@ -315,6 +316,54 @@ export async function registerRoutes(app: FastifyInstance) {
     const ticket = await posture.findingToTicket(p, id);
     reply.status(201);
     return ticket;
+  });
+
+  // ---------------- Compliance & evidence ----------------
+  app.get('/api/v1/compliance/controls', async (req) => {
+    await requirePrincipal(req);
+    return withSystemContext(async (sql) => {
+      const { rows } = await sql.query('SELECT control_id, framework, family, title, description FROM compliance_controls ORDER BY control_id');
+      return { data: rows };
+    });
+  });
+
+  app.get('/api/v1/compliance/coverage', async (req) => {
+    const p = await requirePrincipal(req);
+    const q = z.object({ organizationId: z.string().uuid().optional() }).parse(req.query);
+    const orgId = p.plane === 'customer' ? p.organizationId! : q.organizationId;
+    if (!orgId) throw Errors.badRequest('organizationId required');
+    return { data: await compliance.controlCoverage(p, orgId) };
+  });
+
+  app.post('/api/v1/compliance/evidence-package', async (req) => {
+    const p = await requirePrincipal(req);
+    const q = z.object({ organizationId: z.string().uuid().optional() }).parse(req.query);
+    const orgId = p.plane === 'customer' ? p.organizationId! : q.organizationId;
+    if (!orgId) throw Errors.badRequest('organizationId required');
+    return compliance.evidencePackage(p, orgId);
+  });
+
+  app.post('/api/v1/posture/findings/:id/exception', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z
+      .object({
+        justification: z.string().min(5),
+        compensatingControl: z.string().optional(),
+        expiresAt: z.string().datetime().optional(),
+        organizationId: z.string().uuid().optional(),
+      })
+      .parse(req.body);
+    const ex = await compliance.requestException(p, { findingId: id, ...body });
+    reply.status(201);
+    return ex;
+  });
+
+  app.post('/api/v1/posture/exceptions/:id/decide', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ approve: z.boolean() }).parse(req.body);
+    return compliance.decideException(p, id, body.approve);
   });
 
   // ---------------- Analytics (IT Helpdesk dashboard) ----------------

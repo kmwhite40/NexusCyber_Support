@@ -48,11 +48,11 @@ const ROLES: Record<string, { plane: 'nexus' | 'customer'; perms: string[] }> = 
   },
   SecurityAnalyst: {
     plane: 'nexus',
-    perms: ['ticket.create', 'ticket.read.all_assigned_customers', 'ticket.escalate', 'posture.read', 'posture.write', 'posture.finding.manage', 'posture.approve_exception', 'oncall.acknowledge', 'oncall.page', 'audit.read', 'compliance.read', 'compliance.manage'],
+    perms: ['ticket.create', 'ticket.read.all_assigned_customers', 'ticket.escalate', 'posture.read', 'posture.write', 'posture.finding.manage', 'posture.request_exception', 'posture.approve_exception', 'oncall.acknowledge', 'oncall.page', 'audit.read', 'compliance.read', 'compliance.manage'],
   },
   ServiceDeskManager: {
     plane: 'nexus',
-    perms: ['ticket.read.all_assigned_customers', 'ticket.assign', 'ticket.update', 'ticket.comment', 'ticket.escalate', 'report.read.operational', 'customer.admin.manage_users', 'oncall.manage', 'oncall.acknowledge', 'oncall.page', 'automation.author', 'automation.publish', 'audit.read', 'posture.approve_exception', 'compliance.read', 'compliance.manage'],
+    perms: ['ticket.read.all_assigned_customers', 'ticket.assign', 'ticket.update', 'ticket.comment', 'ticket.escalate', 'report.read.operational', 'customer.admin.manage_users', 'oncall.manage', 'oncall.acknowledge', 'oncall.page', 'automation.author', 'automation.publish', 'audit.read', 'posture.request_exception', 'posture.approve_exception', 'compliance.read', 'compliance.manage'],
   },
   // Customer plane
   OrgAdmin: { plane: 'customer', perms: ['ticket.create', 'ticket.read.organization', 'ticket.comment', 'posture.read', 'posture.request_exception', 'customer.admin.manage_users', 'report.read.customer', 'audit.read', 'compliance.read'] },
@@ -440,6 +440,49 @@ async function run() {
         `INSERT INTO conmon_checks (key,name,domain,cadence_days,control_refs,severity)
          VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (key) DO NOTHING`,
         [key, name, domain, cadence, refs as unknown as string[], severity],
+      );
+    }
+
+    // ---- Compliance control catalog (starter NIST 800-53 subset) + evidence mappings ----
+    const controls = [
+      ['AC-2', 'NIST-800-53', 'Access Control', 'Account Management'],
+      ['AC-6', 'NIST-800-53', 'Access Control', 'Least Privilege'],
+      ['AU-6', 'NIST-800-53', 'Audit and Accountability', 'Audit Review, Analysis, and Reporting'],
+      ['AU-12', 'NIST-800-53', 'Audit and Accountability', 'Audit Record Generation'],
+      ['IA-2', 'NIST-800-53', 'Identification and Authentication', 'Identification and Authentication (Users)'],
+      ['RA-5', 'NIST-800-53', 'Risk Assessment', 'Vulnerability Monitoring and Scanning'],
+      ['SI-2', 'NIST-800-53', 'System and Information Integrity', 'Flaw Remediation'],
+      ['SC-8', 'NIST-800-53', 'System and Communications Protection', 'Transmission Confidentiality and Integrity'],
+      ['CP-9', 'NIST-800-53', 'Contingency Planning', 'System Backup'],
+      ['CA-5', 'NIST-800-53', 'Assessment, Authorization, and Monitoring', 'Plan of Action and Milestones'],
+    ] as const;
+    for (const [id, framework, family, title] of controls) {
+      await sql.query(
+        `INSERT INTO compliance_controls (control_id, framework, family, title)
+         VALUES ($1,$2,$3,$4) ON CONFLICT (control_id) DO NOTHING`,
+        [id, framework, family, title],
+      );
+    }
+    // control -> evidence source mappings (conmon check keys mirror the seeded checks)
+    const mappings: Array<[string, 'audit_action' | 'posture_domain' | 'conmon_check', string]> = [
+      ['IA-2', 'conmon_check', 'mfa_coverage'],
+      ['AC-2', 'conmon_check', 'ca_baseline'],
+      ['AC-6', 'conmon_check', 'priv_review'],
+      ['RA-5', 'conmon_check', 'vuln_scan'],
+      ['SI-2', 'conmon_check', 'patch_compliance'],
+      ['SC-8', 'conmon_check', 'email_security'],
+      ['CP-9', 'conmon_check', 'backup_success'],
+      ['AU-6', 'conmon_check', 'audit_review'],
+      ['CA-5', 'conmon_check', 'poam_aging'],
+      ['AU-12', 'audit_action', 'posture.finding.create'],
+      ['AC-2', 'audit_action', 'service_request.create'],
+      ['IA-2', 'posture_domain', 'mfa'],
+    ];
+    for (const [controlId, source, sourceKey] of mappings) {
+      await sql.query(
+        `INSERT INTO control_mappings (control_id, source, source_key)
+         VALUES ($1,$2,$3) ON CONFLICT (control_id, source, source_key) DO NOTHING`,
+        [controlId, source, sourceKey],
       );
     }
 
