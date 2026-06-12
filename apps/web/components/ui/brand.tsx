@@ -1,12 +1,12 @@
 'use client';
-// NexusCyber brand mark — a four-armed circuit "nexus" emblem (4-fold rotational
+// Anchor brand mark — a four-armed circuit "nexus" emblem (4-fold rotational
 // symmetry) recreated as inline SVG so it stays crisp and inherits sizing/color.
 import * as React from 'react';
 
 export function BrandMark({ size = 32, className }: { size?: number; className?: string }) {
   const gid = React.useId();
   return (
-    <svg width={size} height={size} viewBox="0 0 64 64" className={className} role="img" aria-label="NexusCyber">
+    <svg width={size} height={size} viewBox="0 0 64 64" className={className} role="img" aria-label="Anchor">
       <defs>
         <linearGradient id={gid} x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stopColor="#e8eef6" />
@@ -36,7 +36,7 @@ export function BrandLockup({ size = 32, className }: { size?: number; className
     <span className={className} style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
       <BrandMark size={size} />
       <span className="text-base font-semibold tracking-tight text-fg">
-        Nexus<span className="text-muted">Cyber</span>
+        Anchor
       </span>
     </span>
   );

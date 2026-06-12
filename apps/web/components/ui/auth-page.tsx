@@ -43,7 +43,7 @@ export function FloatingPaths({ position }: { position: number }) {
 export function AuthLayout({
   children,
   quote = 'This platform helps us serve our customers faster — across commercial and government clouds.',
-  quoteBy = 'Nexus Service Desk',
+  quoteBy = 'Anchor Service Desk',
 }: {
   children: React.ReactNode;
   quote?: string;
@@ -61,7 +61,7 @@ export function AuthLayout({
         <div className="relative z-20 flex items-center gap-2.5">
           <BrandMark size={30} />
           <span className="text-xl font-semibold">
-            Nexus<span className="text-muted">Cyber</span>
+            Anchor
           </span>
         </div>
         <div className="relative z-20 mt-auto">

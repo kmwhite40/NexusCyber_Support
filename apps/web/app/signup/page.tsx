@@ -36,10 +36,10 @@ export default function SignupPage() {
   }
 
   return (
-    <AuthLayout quote="Create an isolated organization in seconds — you control your users, data, and posture." quoteBy="Nexus Onboarding">
+    <AuthLayout quote="Create an isolated organization in seconds — you control your users, data, and posture." quoteBy="Anchor Onboarding">
       <div className="flex items-center gap-2.5 lg:hidden">
         <BrandMark size={30} />
-        <span className="text-xl font-semibold">Nexus<span className="text-muted">Cyber</span></span>
+        <span className="text-xl font-semibold">Anchor</span>
       </div>
 
       <div className="flex flex-col space-y-1">

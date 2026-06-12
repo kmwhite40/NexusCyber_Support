@@ -18,6 +18,7 @@ import * as elevation from '../modules/elevation.js';
 import * as attachments from '../modules/attachments.js';
 import * as kb from '../modules/kb.js';
 import * as links from '../modules/links.js';
+import * as changes from '../modules/changes.js';
 import { computeScore, grade } from '../modules/posture.js';
 import { audit, verifyChain, formatExport, type ExportableRow } from '../modules/audit.js';
 import { authorize } from '../authz/pdp.js';
@@ -538,6 +539,71 @@ export async function registerRoutes(app: FastifyInstance) {
     const p = await requirePrincipal(req);
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     return { data: await automation.listExecutions(p, id) };
+  });
+
+  // ---------------- Change management & CAB ----------------
+  app.get('/api/v1/changes', async (req) => {
+    const p = await requirePrincipal(req);
+    const q = z.object({ status: z.string().optional() }).parse(req.query);
+    return { data: await changes.listChanges(p, q) };
+  });
+
+  app.get('/api/v1/changes/calendar', async (req) => {
+    const p = await requirePrincipal(req);
+    const q = z.object({ from: z.string(), to: z.string() }).parse(req.query);
+    return { data: await changes.calendar(p, q.from, q.to) };
+  });
+
+  app.post('/api/v1/changes', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const body = z
+      .object({
+        title: z.string().min(3),
+        description: z.string().optional(),
+        changeType: z.enum(['standard', 'normal', 'emergency']).optional(),
+        risk: z.enum(['low', 'medium', 'high']).optional(),
+        ticketId: z.string().uuid().optional(),
+        backoutPlan: z.string().optional(),
+        organizationId: z.string().uuid().optional(),
+      })
+      .parse(req.body);
+    const change = await changes.createChange(p, body);
+    reply.status(201);
+    return change;
+  });
+
+  app.get('/api/v1/changes/:id', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return changes.getChange(p, id);
+  });
+
+  app.post('/api/v1/changes/:id/submit-cab', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ approverIds: z.array(z.string().uuid()).default([]) }).parse(req.body ?? {});
+    return changes.submitForCab(p, id, body.approverIds);
+  });
+
+  app.post('/api/v1/changes/:id/cab-decision', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ approve: z.boolean(), reason: z.string().optional() }).parse(req.body);
+    return changes.cabDecision(p, id, body.approve, body.reason);
+  });
+
+  app.post('/api/v1/changes/:id/schedule', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ windowStart: z.string().datetime(), windowEnd: z.string().datetime() }).parse(req.body);
+    return changes.scheduleChange(p, id, body.windowStart, body.windowEnd);
+  });
+
+  app.post('/api/v1/changes/:id/transition', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ to: z.enum(['implementing', 'review', 'closed']) }).parse(req.body);
+    return changes.transitionChange(p, id, body.to);
   });
 
   // ---------------- Knowledge base (Confluence-style) ----------------

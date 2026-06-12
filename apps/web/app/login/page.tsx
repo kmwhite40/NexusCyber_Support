@@ -38,16 +38,16 @@ export default function LoginPage() {
   }
 
   return (
-    <AuthLayout quote="This platform helps us serve our customers faster — across commercial and government clouds." quoteBy="Nexus Service Desk">
+    <AuthLayout quote="This platform helps us serve our customers faster — across commercial and government clouds." quoteBy="Anchor Service Desk">
       {/* mobile brand */}
       <div className="flex items-center gap-2.5 lg:hidden">
         <BrandMark size={30} />
-        <span className="text-xl font-semibold">Nexus<span className="text-muted">Cyber</span></span>
+        <span className="text-xl font-semibold">Anchor</span>
       </div>
 
       <div className="flex flex-col space-y-1">
         <h1 className="text-2xl font-bold tracking-tight">Welcome back</h1>
-        <p className="text-sm text-muted">Sign in to your Nexus Cyber workspace.</p>
+        <p className="text-sm text-muted">Sign in to your Anchor workspace.</p>
       </div>
 
       <form
@@ -92,7 +92,7 @@ export default function LoginPage() {
                     <div className="text-xs font-medium text-fg">{u.display_name}</div>
                     <div className="text-[10px] text-muted">{u.email}</div>
                   </div>
-                  <Badge tone={u.plane === 'nexus' ? 'brand' : 'neutral'}>{u.org ?? 'Nexus'}</Badge>
+                  <Badge tone={u.plane === 'nexus' ? 'brand' : 'neutral'}>{u.org ?? 'Anchor'}</Badge>
                 </button>
               ))}
             </div>

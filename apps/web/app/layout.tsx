@@ -3,7 +3,7 @@ import './globals.css';
 import { AuthProvider } from '@/components/auth-context';
 
 export const metadata: Metadata = {
-  title: 'Nexus Cyber — Control Plane',
+  title: 'Anchor — Control Plane',
   description: 'Enterprise ITSM, on-call, and security posture platform for Commercial and Government clouds',
 };
 
