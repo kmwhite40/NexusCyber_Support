@@ -56,11 +56,29 @@ export default function PortalPage() {
   const [tickets, setTickets] = React.useState<Ticket[] | null>(null);
   const [items, setItems] = React.useState<CatalogItem[]>([]);
   const [query, setQuery] = React.useState('');
+  const [kbHits, setKbHits] = React.useState<Array<{ id: string; title: string; snippet: string }>>([]);
 
   React.useEffect(() => {
     api.get<{ data: Ticket[] }>('/tickets?limit=8').then((r) => setTickets(r.data)).catch(() => setTickets([]));
     catalog.list().then((r) => setItems(r.data)).catch(() => {});
   }, []);
+
+  // Debounced knowledge-base search so the box surfaces real self-service answers (KB
+  // articles), not just catalog item names.
+  React.useEffect(() => {
+    const q = query.trim();
+    if (!q) {
+      setKbHits([]);
+      return;
+    }
+    const t = setTimeout(() => {
+      api
+        .get<{ data: Array<{ id: string; title: string; snippet: string }> }>(`/kb/search?q=${encodeURIComponent(q)}`)
+        .then((r) => setKbHits(r.data))
+        .catch(() => setKbHits([]));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [query]);
 
   const open = (tickets ?? []).filter((t) => !['resolved', 'closed'].includes(t.status));
   const filteredCatalog = items.filter((i) => !query || i.name.toLowerCase().includes(query.toLowerCase()) || i.category.toLowerCase().includes(query.toLowerCase()));
@@ -84,13 +102,38 @@ export default function PortalPage() {
               className="h-11"
             />
           </div>
-          {query && filteredCatalog.length > 0 && (
-            <div className="mx-auto mt-3 flex max-w-md flex-wrap justify-center gap-2">
-              {filteredCatalog.slice(0, 5).map((i) => (
-                <Link key={i.key} href="/catalog" className="rounded-full border border-border bg-surface-2 px-3 py-1 text-xs text-fg hover:border-brand/40">
-                  {i.name}
-                </Link>
-              ))}
+          {query.trim() && (
+            <div className="mx-auto mt-3 max-w-md overflow-hidden rounded-xl border border-border bg-surface text-left shadow-lg">
+              {kbHits.length > 0 && (
+                <div className="border-b border-border p-2">
+                  <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted">Knowledge base</div>
+                  {kbHits.slice(0, 4).map((h) => (
+                    <Link key={h.id} href="/kb" className="block rounded-md px-2 py-1.5 hover:bg-surface-2">
+                      <div className="text-sm font-medium text-fg">{h.title}</div>
+                      {h.snippet && (
+                        <div className="mt-0.5 text-xs text-muted [&_b]:font-medium [&_b]:text-brand" dangerouslySetInnerHTML={{ __html: h.snippet }} />
+                      )}
+                    </Link>
+                  ))}
+                </div>
+              )}
+              {filteredCatalog.length > 0 && (
+                <div className="p-2">
+                  <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted">Request something</div>
+                  {filteredCatalog.slice(0, 4).map((i) => (
+                    <Link key={i.key} href="/catalog" className="flex items-center justify-between rounded-md px-2 py-1.5 hover:bg-surface-2">
+                      <span className="text-sm text-fg">{i.name}</span>
+                      <span className="ml-2 shrink-0 text-[10px] text-muted">{i.category}</span>
+                    </Link>
+                  ))}
+                </div>
+              )}
+              {kbHits.length === 0 && filteredCatalog.length === 0 && (
+                <div className="p-4 text-center text-xs text-muted">
+                  No matches for “{query.trim()}”.{' '}
+                  <Link href="/tickets/new" className="text-brand hover:underline">Submit a request →</Link>
+                </div>
+              )}
             </div>
           )}
         </div>
