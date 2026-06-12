@@ -8,6 +8,7 @@ import { audit } from './audit.js';
 import { publish } from '../events/bus.js';
 import { addBusinessMinutes } from './sla.js';
 import { Errors } from '../errors.js';
+import { getFormByCatalogKey, validateAgainstForm, mapFormAnswers } from './forms.js';
 import type { Principal } from '../types.js';
 
 export async function listCatalog() {
@@ -26,6 +27,7 @@ export interface CreateRequestInput {
   subject?: string;
   description?: string;
   organizationId?: string; // required for agent-created
+  answers?: Record<string, unknown>;
 }
 
 export async function createRequest(actor: Principal, key: string, input: CreateRequestInput) {
@@ -43,6 +45,22 @@ export async function createRequest(actor: Principal, key: string, input: Create
     return { item: it, grpId: (g?.id as string | undefined) ?? null };
   });
 
+  // If the catalog item has a custom form, validate + route its answers.
+  let mapped: import('./forms.js').MappedAnswers | null = null;
+  if (item.form_key && input.answers) {
+    const form = await getFormByCatalogKey(actor, key);
+    if (form) {
+      const v = validateAgainstForm(form.fields, input.answers);
+      if (!v.ok) throw Errors.validation(v.errors.map((e) => e.message).join('; '));
+      mapped = mapFormAnswers(form.fields, input.answers, {
+        defaultRequesterId: actor.plane === 'customer' ? actor.id : null,
+      });
+      if (actor.plane === 'nexus' && !mapped.requesterId) {
+        throw Errors.badRequest('on-behalf-of is required for agent-created requests');
+      }
+    }
+  }
+
   return withOrgContext(orgContextFor(actor), async (sql) => {
     const prefix = (await sql.query('SELECT left(upper(name),4) AS p FROM organizations WHERE id=$1', [orgId])).rows[0].p;
     const n = (
@@ -54,24 +72,29 @@ export async function createRequest(actor: Principal, key: string, input: Create
     // Requires approval -> starts 'new' (pending approval). Else routed & owned by the tier.
     const status = item.requires_approval ? 'new' : 'assigned';
 
+    const requesterId = mapped?.requesterId ?? (actor.plane === 'customer' ? actor.id : null);
+    const affectedUserId = mapped?.affectedUserId ?? null;
+    const customFields = mapped ? { ...mapped.customFields, _form: item.form_key } : {};
     const ticket = (
       await sql.query(
         `INSERT INTO tickets
-           (organization_id, ticket_number, type, requester_id, source_channel, subject, description,
-            category, priority, status, assignment_group_id, tags)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+           (organization_id, ticket_number, type, requester_id, affected_user_id, source_channel,
+            subject, description, category, priority, status, assignment_group_id, custom_fields, tags)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
         [
           orgId,
           `${prefix}-${String(n).padStart(6, '0')}`,
           item.ticket_type,
-          actor.plane === 'customer' ? actor.id : null,
+          requesterId,
+          affectedUserId,
           actor.plane === 'customer' ? 'portal' : 'agent',
-          input.subject ?? item.name,
-          input.description ?? null,
+          mapped?.subject ?? input.subject ?? item.name,
+          mapped?.description ?? input.description ?? null,
           item.key,
           item.default_priority,
           status,
           grpId,
+          JSON.stringify(customFields),
           ['service_request', item.security_class],
         ],
       )
@@ -100,10 +123,21 @@ export async function createRequest(actor: Principal, key: string, input: Create
     }
 
     if (item.requires_approval) {
-      await sql.query(
-        `INSERT INTO approvals (organization_id, subject_type, subject_id, status) VALUES ($1,'ticket',$2,'requested')`,
-        [orgId, ticket.id],
-      );
+      const approval = (
+        await sql.query(
+          `INSERT INTO approvals (organization_id, subject_type, subject_id, status)
+           VALUES ($1,'ticket',$2,'requested') RETURNING id`,
+          [orgId, ticket.id],
+        )
+      ).rows[0];
+      const approverIds = mapped?.approverIds ?? [];
+      for (let i = 0; i < approverIds.length; i++) {
+        await sql.query(
+          `INSERT INTO approval_steps (organization_id, approval_id, step_order, approver_id)
+           VALUES ($1,$2,$3,$4)`,
+          [orgId, approval.id, i, approverIds[i]],
+        );
+      }
       publish('approval.requested', orgId, { subject_type: 'ticket', subject_id: ticket.id });
     }
 

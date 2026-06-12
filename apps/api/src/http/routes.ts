@@ -520,7 +520,12 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post('/api/v1/catalog/:key/request', async (req, reply) => {
     const p = await requirePrincipal(req);
     const { key } = z.object({ key: z.string() }).parse(req.params);
-    const body = z.object({ subject: z.string().optional(), description: z.string().optional(), organizationId: z.string().uuid().optional() }).parse(req.body);
+    const body = z.object({
+      subject: z.string().optional(),
+      description: z.string().optional(),
+      organizationId: z.string().uuid().optional(),
+      answers: z.record(z.any()).optional(),
+    }).parse(req.body);
     const ticket = await catalog.createRequest(p, key, body);
     reply.status(201);
     return ticket;
