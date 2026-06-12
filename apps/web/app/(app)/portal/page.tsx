@@ -10,6 +10,36 @@ import { useAuth } from '@/components/auth-context';
 import { Card, CardBody, Button, Input, Textarea, Select, Field, Badge } from '@/components/ui/primitives';
 import { StatusBadge, PriorityBadge } from '@/components/ui/badges';
 import { EmptyState, Skeleton } from '@/components/ui/data';
+import DisplayCards from '@/components/ui/display-cards';
+import { UserMinus, ShieldAlert, AlertTriangle } from 'lucide-react';
+
+const stackBase =
+  "before:absolute before:w-[100%] before:outline-1 before:rounded-xl before:outline-border before:h-[100%] before:content-[''] before:bg-blend-overlay before:bg-background/50 grayscale-[100%] hover:before:opacity-0 before:transition-opacity before:duration-700 hover:grayscale-0 before:left-0 before:top-0";
+
+// Featured-services showcase cards for the portal hero (stacked display-cards).
+const FEATURED_CARDS = [
+  {
+    icon: <UserMinus className="size-4 text-blue-300" />,
+    title: 'Offboarding',
+    description: 'M365 — Offboard departing user',
+    date: '2-hour response',
+    className: `[grid-area:stack] hover:-translate-y-10 ${stackBase}`,
+  },
+  {
+    icon: <ShieldAlert className="size-4 text-blue-300" />,
+    title: 'Security',
+    description: 'Report a security incident',
+    date: '15-min · 24×7',
+    className: `[grid-area:stack] translate-x-16 translate-y-10 hover:-translate-y-1 ${stackBase}`,
+  },
+  {
+    icon: <AlertTriangle className="size-4 text-blue-300" />,
+    title: 'Outage',
+    description: 'Report a service outage',
+    date: '15-min · 24×7',
+    className: '[grid-area:stack] translate-x-32 translate-y-20 hover:translate-y-10',
+  },
+];
 
 const TYPE_OPTIONS = [
   { value: 'incident', label: 'Something is broken' },
@@ -65,6 +95,17 @@ export default function PortalPage() {
           )}
         </div>
       </div>
+
+      {/* Featured services showcase */}
+      <section>
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-fg">Featured services</h2>
+          <Link href="/catalog" className="text-xs text-brand hover:underline">Browse catalog →</Link>
+        </div>
+        <div className="flex min-h-[20rem] w-full items-center justify-center">
+          <DisplayCards cards={FEATURED_CARDS} />
+        </div>
+      </section>
 
       {/* Submit + popular */}
       <div className="grid gap-6 lg:grid-cols-5">
