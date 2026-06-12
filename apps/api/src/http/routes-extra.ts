@@ -7,8 +7,34 @@ import { requirePrincipal } from './context.js';
 import * as worklogs from '../modules/worklogs.js';
 import * as automation from '../modules/automation.js';
 import * as canned from '../modules/canned.js';
+import * as bulk from '../modules/bulk.js';
 
 export async function registerExtraRoutes(app: FastifyInstance): Promise<void> {
+  // ---------------- Bulk ticket actions ----------------
+  app.post('/api/v1/tickets/bulk', async (req) => {
+    const p = await requirePrincipal(req);
+    const body = z
+      .object({
+        ids: z.array(z.string().uuid()).min(1),
+        action: z.enum(['assign', 'transition', 'comment', 'escalate', 'tag']),
+        params: z
+          .object({
+            assignedAgentId: z.string().uuid().nullable().optional(),
+            assignmentGroupId: z.string().uuid().nullable().optional(),
+            to: z.string().optional(),
+            resolutionCode: z.string().optional(),
+            body: z.string().optional(),
+            visibility: z.enum(['customer', 'internal']).optional(),
+            targetGroup: z.string().optional(),
+            reason: z.string().optional(),
+            tag: z.string().optional(),
+          })
+          .optional(),
+      })
+      .parse(req.body);
+    return bulk.bulkAction(p, body.ids, body.action, body.params ?? {});
+  });
+
   // ---------------- Canned responses ----------------
   app.get('/api/v1/canned-responses', async (req) => {
     const p = await requirePrincipal(req);
