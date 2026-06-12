@@ -149,6 +149,53 @@ export async function addField(actor: Principal, formId: string, field: { key: s
   });
 }
 
+export interface MappedAnswers {
+  subject?: string;
+  description?: string;
+  requesterId?: string;
+  affectedUserId?: string;
+  customFields: Record<string, unknown>;
+  approverIds: string[];
+}
+
+/** Route a form's answers to ticket columns, approval steps, and custom_fields. Pure. */
+export function mapFormAnswers(
+  fields: FormField[],
+  answers: Record<string, unknown>,
+  opts: { defaultRequesterId?: string | null } = {},
+): MappedAnswers {
+  const out: MappedAnswers = { customFields: {}, approverIds: [] };
+  for (const f of fields) {
+    const v = answers[f.key];
+    switch (f.maps_to) {
+      case 'subject':
+        if (v) out.subject = String(v);
+        break;
+      case 'description':
+        if (v) out.description = String(v);
+        break;
+      case 'requester':
+        if (v) { out.requesterId = String(v); out.affectedUserId = String(v); }
+        break;
+      case 'approvers':
+        if (Array.isArray(v)) out.approverIds = v.map(String).filter(Boolean);
+        break;
+      case 'attachment':
+        break; // file handled out of band
+      case 'manager':
+        if (v) out.customFields[f.key] = v; // recorded; also available as custom field
+        break;
+      default:
+        if (v !== undefined && v !== null && v !== '') out.customFields[f.key] = v;
+    }
+  }
+  if (!out.requesterId && opts.defaultRequesterId) {
+    out.requesterId = opts.defaultRequesterId;
+    out.affectedUserId = opts.defaultRequesterId;
+  }
+  return out;
+}
+
 /** Validate answers against a form and merge them into a ticket's custom_fields. */
 export async function submitAnswers(actor: Principal, ticketId: string, formId: string, answers: Record<string, unknown>) {
   return withOrgContext(orgContextFor(actor), async (sql) => {
