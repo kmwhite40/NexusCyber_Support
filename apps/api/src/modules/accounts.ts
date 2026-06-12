@@ -451,12 +451,15 @@ export async function createOrganizationAdmin(
 export async function deleteOrganizationAdmin(
   actor: Principal,
   id: string,
+  force = false,
 ): Promise<{ deleted: true; id: string; name: string }> {
   return withSystemContext(async (sql) => {
     const org = (await sql.query(`SELECT id, name FROM organizations WHERE id = $1`, [id])).rows[0];
     if (!org) throw Errors.notFound('organization not found');
     const n = (await sql.query(`SELECT count(*)::int AS n FROM users WHERE organization_id = $1`, [id])).rows[0].n;
-    if (n > 0) throw Errors.badRequest(`organization "${org.name}" has ${n} user(s); refusing to delete`);
+    if (n > 0 && !force) {
+      throw Errors.badRequest(`organization "${org.name}" has ${n} user(s); pass force=true to remove them too`);
+    }
     // Clear org-scoped rows in tables whose FK to organizations is NOT ON DELETE CASCADE
     // (tickets last, since the others reference it). Remaining child tables cascade.
     for (const t of [
@@ -469,6 +472,8 @@ export async function deleteOrganizationAdmin(
     ]) {
       await sql.query(`DELETE FROM ${t} WHERE organization_id = $1`, [id]);
     }
+    // force: remove the org's users too (role_assignments cascade on user delete).
+    if (force) await sql.query(`DELETE FROM users WHERE organization_id = $1`, [id]);
     await sql.query(`DELETE FROM organizations WHERE id = $1`, [id]);
     await audit(actor, {
       action: 'org.delete',

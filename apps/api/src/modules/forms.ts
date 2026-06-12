@@ -7,7 +7,9 @@ import { audit } from './audit.js';
 import { Errors } from '../errors.js';
 import type { Principal } from '../types.js';
 
-export type FieldType = 'text' | 'textarea' | 'number' | 'select' | 'checkbox' | 'date';
+export type FieldType =
+  | 'text' | 'textarea' | 'number' | 'select' | 'checkbox' | 'date'
+  | 'user' | 'user_multi' | 'attachment';
 
 export interface FormField {
   key: string;
@@ -15,6 +17,7 @@ export interface FormField {
   data_type: FieldType;
   required: boolean;
   options: string[];
+  maps_to: string | null;
 }
 
 export interface ValidationError {
@@ -28,8 +31,10 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 export function validateAgainstForm(fields: FormField[], answers: Record<string, unknown>): { ok: boolean; errors: ValidationError[] } {
   const errors: ValidationError[] = [];
   for (const f of fields) {
+    if (f.data_type === 'attachment') continue;
     const v = answers[f.key];
-    const missing = v === undefined || v === null || v === '';
+    const missing =
+      v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0);
     if (missing) {
       if (f.required) errors.push({ field: f.key, message: `${f.label} is required` });
       continue;
@@ -48,6 +53,12 @@ export function validateAgainstForm(fields: FormField[], answers: Record<string,
         break;
       case 'date':
         if (typeof v !== 'string' || !ISO_DATE.test(v)) errors.push({ field: f.key, message: `${f.label} must be a date (YYYY-MM-DD)` });
+        break;
+      case 'user':
+        if (typeof v !== 'string') errors.push({ field: f.key, message: `${f.label} must be a user` });
+        break;
+      case 'user_multi':
+        if (!Array.isArray(v) || v.some((x) => typeof x !== 'string')) errors.push({ field: f.key, message: `${f.label} must be a list of users` });
         break;
     }
   }
@@ -72,10 +83,13 @@ export async function listForms(actor: Principal) {
 
 async function loadFields(sql: import('../db/pool.js').Sql, formId: string): Promise<FormField[]> {
   const { rows } = await sql.query(
-    'SELECT key, label, data_type, required, options FROM form_fields WHERE form_id=$1 ORDER BY position',
+    'SELECT key, label, data_type, required, options, maps_to FROM form_fields WHERE form_id=$1 ORDER BY position',
     [formId],
   );
-  return rows.map((r) => ({ key: r.key, label: r.label, data_type: r.data_type, required: r.required, options: (r.options as string[]) ?? [] }));
+  return rows.map((r) => ({
+    key: r.key, label: r.label, data_type: r.data_type, required: r.required,
+    options: (r.options as string[]) ?? [], maps_to: r.maps_to ?? null,
+  }));
 }
 
 export async function getForm(actor: Principal, id: string) {
