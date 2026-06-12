@@ -532,6 +532,48 @@ async function run() {
           step('evidence', 'Record authorization + control mapping', 'SecurityAnalyst'),
         ],
       },
+
+      // ---- Software & Hardware (common IT requests) ----
+      {
+        key: 'software.new_request', name: 'Request new software', category: 'Software',
+        description: 'If you need a software license, raise a request here.',
+        ticket_type: 'service_request', owning_tier: T1, escalates_to: T2,
+        requires_approval: true, approver_hint: 'Manager / cost owner (paid licenses)', default_priority: 'P4',
+        security_class: 'standard', sla_response_min: 60, sla_resolution_min: 480,
+        steps: [
+          step('triage', 'Validate software, license type, and availability', 'Tier1'),
+          step('approval', 'Manager / cost-owner approval (paid licenses)', 'OrgAdmin'),
+          step('assign', 'Assign or procure license', 'Tier1', true),
+          step('deploy', 'Deploy via Company Portal / Intune', 'Tier2', true),
+          step('verify', 'Confirm install + license active', 'Tier1'),
+        ],
+      },
+      {
+        key: 'hardware.report_broken', name: 'Report broken hardware', category: 'Hardware',
+        description: 'Report hardware that might be faulty or broken e.g. a broken computer screen or a damaged server.',
+        ticket_type: 'incident', owning_tier: T1, escalates_to: ENG,
+        requires_approval: false, approver_hint: null, default_priority: 'P3',
+        security_class: 'standard', sla_response_min: 30, sla_resolution_min: 480,
+        steps: [
+          step('triage', 'Capture device, fault symptoms, and impact', 'Tier1'),
+          step('diagnose', 'Diagnose remotely / confirm hardware fault', 'Tier1'),
+          step('repair', 'Repair or arrange replacement / RMA', 'Tier2'),
+          step('verify', 'Verify fix with user; update asset record', 'Tier1'),
+        ],
+      },
+      {
+        key: 'hardware.request_new', name: 'Request new hardware', category: 'Hardware',
+        description: 'For example, a new mouse or monitor.',
+        ticket_type: 'service_request', owning_tier: T1, escalates_to: ENG,
+        requires_approval: true, approver_hint: 'Manager / cost owner', default_priority: 'P4',
+        security_class: 'standard', sla_response_min: 60, sla_resolution_min: 480,
+        steps: [
+          step('triage', 'Validate item, justification, and budget', 'Tier1'),
+          step('approval', 'Manager / cost-owner approval', 'OrgAdmin'),
+          step('order', 'Order or allocate from stock', 'Tier1', true),
+          step('deliver', 'Deliver / ship and confirm receipt', 'Tier1'),
+        ],
+      },
     ];
 
     for (const item of catalog) {
@@ -541,11 +583,12 @@ async function run() {
             approver_hint,default_priority,security_class,sla_response_min,sla_resolution_min,fulfillment_steps)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
          ON CONFLICT (key) DO UPDATE SET
-           name=EXCLUDED.name, owning_tier=EXCLUDED.owning_tier, escalates_to=EXCLUDED.escalates_to,
+           name=EXCLUDED.name, category=EXCLUDED.category, description=EXCLUDED.description,
+           owning_tier=EXCLUDED.owning_tier, escalates_to=EXCLUDED.escalates_to,
            requires_approval=EXCLUDED.requires_approval, fulfillment_steps=EXCLUDED.fulfillment_steps,
            sla_response_min=EXCLUDED.sla_response_min, sla_resolution_min=EXCLUDED.sla_resolution_min`,
         [
-          item.key, item.name, item.category, item.name, item.ticket_type, item.owning_tier,
+          item.key, item.name, item.category, (item as { description?: string }).description ?? item.name, item.ticket_type, item.owning_tier,
           item.escalates_to, item.requires_approval, item.approver_hint, item.default_priority,
           item.security_class, item.sla_response_min, item.sla_resolution_min, JSON.stringify(item.steps),
         ],
