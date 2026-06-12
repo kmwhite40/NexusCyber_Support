@@ -457,6 +457,18 @@ export async function deleteOrganizationAdmin(
     if (!org) throw Errors.notFound('organization not found');
     const n = (await sql.query(`SELECT count(*)::int AS n FROM users WHERE organization_id = $1`, [id])).rows[0].n;
     if (n > 0) throw Errors.badRequest(`organization "${org.name}" has ${n} user(s); refusing to delete`);
+    // Clear org-scoped rows in tables whose FK to organizations is NOT ON DELETE CASCADE
+    // (tickets last, since the others reference it). Remaining child tables cascade.
+    for (const t of [
+      'notification_deliveries',
+      'oncall_pages',
+      'sla_instances',
+      'ticket_comments',
+      'ticket_events',
+      'tickets',
+    ]) {
+      await sql.query(`DELETE FROM ${t} WHERE organization_id = $1`, [id]);
+    }
     await sql.query(`DELETE FROM organizations WHERE id = $1`, [id]);
     await audit(actor, {
       action: 'org.delete',
