@@ -1,17 +1,19 @@
 name: Deploy Web (Code) to Azure Gov App Service
 
-# Deploys apps/web as "Code" to an Azure (Government) App Service — the M365GCC pattern
-# (Node 20-LTS, Linux). App Service builds it with Oryx, so set these on the web app FIRST:
-#   - App setting  SCM_DO_BUILD_DURING_DEPLOYMENT = true
-#   - App setting  NEXT_PUBLIC_API_BASE = https://<api-host>.azurewebsites.us/api/v1
-#   - Startup command: npm run start
+# Builds apps/web in CI (reliable even on an F1 app) and deploys it as "Code" to an
+# Azure (Government) App Service — the M365GCC pattern (Node 22-LTS, Linux).
 #
-# Secrets/vars to add in the repo:
-#   - secret AZURE_WEBAPP_PUBLISH_PROFILE  (App Service -> Get publish profile)
-#   - var    AZURE_WEBAPP_NAME             (e.g. M365GCC or anchor-web)
+# Configure the WEB app first (Settings -> Configuration):
+#   - Startup Command: npm run start
+#   - App setting  SCM_DO_BUILD_DURING_DEPLOYMENT = false   (we build here, not on the box)
 #
-# Publish-profile auth targets the app's *.scm.azurewebsites.us (Kudu) endpoint, which
-# works against Azure Government.
+# Repo Settings -> Secrets and variables -> Actions:
+#   - secret  AZURE_WEBAPP_PUBLISH_PROFILE  (App Service -> Get publish profile, paste file)
+#   - var     AZURE_WEBAPP_NAME             = Anchor
+#   - var     NEXT_PUBLIC_API_BASE          = https://anchor-api.azurewebsites.us/api/v1
+#
+# Publish-profile auth targets the app's *.scm.azurewebsites.us (Kudu) endpoint — works
+# against Azure Government. Run manually (Run workflow) on whichever branch you deploy from.
 
 on:
   workflow_dispatch:
@@ -21,13 +23,25 @@ on:
 
 jobs:
   deploy-web:
-    name: Build (Oryx) & deploy apps/web
+    name: Build & deploy apps/web
     runs-on: ubuntu-latest
     environment: azure-gov
     steps:
       - uses: actions/checkout@v4
 
-      # Deploy the apps/web source; App Service (Oryx) runs npm install + next build.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build apps/web
+        working-directory: apps/web
+        env:
+          # Baked into the client bundle at build time -> the API's gov URL.
+          NEXT_PUBLIC_API_BASE: ${{ vars.NEXT_PUBLIC_API_BASE }}
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
