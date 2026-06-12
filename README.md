@@ -135,6 +135,17 @@ npm run bootstrap                  # install + db up + migrate + seed (one shot)
   test (with a Postgres service) → build, plus `npm audit` (high+), secret scan, **CodeQL**
   SAST, **CycloneDX SBOM**, and dependency review.
 
+## Microsoft 365 (GCC) notifications
+
+The API integrates with M365 (GCC by default) for email notifications and inbound
+mail-to-ticket. With no credentials, a **console dev transport** logs messages instead
+of sending — the full pipeline still runs. To go live, set the `M365_*` vars in `.env`
+(see `.env.example`): an app registration with the **Mail.Send** (and, for ingestion,
+**Mail.Read**) application permissions, admin-consented, plus the service mailbox UPN.
+Verify with `GET /api/v1/integrations/m365/health` and `POST /api/v1/integrations/m365/test`
+(`{"sendTo":"you@agency.gov"}`). GCC uses the commercial Graph endpoints; GCC High/DoD
+use the `.us` endpoints (already seeded in `cloud_environments`).
+
 ## Mapping to the spec
 
 | Spec section | Implemented in |
