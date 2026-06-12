@@ -23,6 +23,7 @@ import * as problems from '../modules/problems.js';
 import * as csat from '../modules/csat.js';
 import * as queues from '../modules/queues.js';
 import * as integrations from '../modules/integrations.js';
+import * as services from '../modules/services.js';
 import { computeScore, grade } from '../modules/posture.js';
 import { audit, verifyChain, formatExport, type ExportableRow } from '../modules/audit.js';
 import { authorize } from '../authz/pdp.js';
@@ -930,5 +931,28 @@ export async function registerRoutes(app: FastifyInstance) {
     authorize(p, 'integration.manage');
     const body = z.object({ sendTo: z.string().email().optional() }).parse(req.body ?? {});
     return integrations.runTest({ sendTo: body.sendTo });
+  });
+
+  // ---------------- Services & CMDB ----------------
+  app.get('/api/v1/services', async (req) => {
+    const p = await requirePrincipal(req);
+    return { data: await services.listServices(p) };
+  });
+
+  app.post('/api/v1/services', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    reply.code(201);
+    return services.createService(p, req.body as any);
+  });
+
+  app.get('/api/v1/configuration-items', async (req) => {
+    const p = await requirePrincipal(req);
+    return { data: await services.listConfigurationItems(p, req.query as any) };
+  });
+
+  app.post('/api/v1/configuration-items', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    reply.code(201);
+    return services.createConfigurationItem(p, req.body as any);
   });
 }

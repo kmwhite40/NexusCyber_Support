@@ -247,3 +247,12 @@ export const auth = {
   register: (input: { organizationName: string; email: string; displayName?: string; password: string; cloud?: string }) =>
     api.post<{ token: string; principal: Me }>('/auth/register', input),
 };
+
+export interface ServiceRow { id: string; organization_id: string; name: string; kind: string; ticket_count: number; }
+export interface ConfigurationItem { id: string; organization_id: string; ci_class: string; name: string; criticality: number; status: string; ticket_count: number; }
+export const servicesApi = {
+  list: () => api.get<{ data: ServiceRow[] }>('/services').then((r) => r.data),
+  create: (b: { name: string; kind?: string; organizationId?: string }) => api.post<ServiceRow>('/services', b),
+  cis: (q = '') => api.get<{ data: ConfigurationItem[] }>(`/configuration-items${q}`).then((r) => r.data),
+  createCi: (b: { name: string; ciClass: string; criticality?: string | number; status?: string; organizationId?: string }) => api.post<ConfigurationItem>('/configuration-items', b),
+};
