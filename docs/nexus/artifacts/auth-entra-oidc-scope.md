@@ -111,8 +111,67 @@ federation to a later phase.
 4. The login page's **"Sign in with Microsoft (Gov)"** button appears automatically once
    `/auth/config` reports `oidcEnabled:true`.
 
+## Phase 2 — Customer access from external M365 tenants (multi-tenant)
+
+Phase 1 is **single-tenant** (agents in the Anchor gov tenant). To let *customer*
+organizations sign in with **their own** Entra ID, the app must accept tokens from many
+issuers. This is a distinct mode, not a config tweak.
+
+### The model: one multi-tenant app + a tenant allow-list → org mapping
+1. **Mark the app registration multi-tenant** ("Accounts in any organizational directory").
+   Authorize against the multi-tenant endpoint, not a fixed tenant:
+   `https://login.microsoftonline.us/organizations/oauth2/v2.0/authorize`.
+2. **Per-customer admin consent (onboarding gate).** Each customer tenant admin hits
+   `https://login.microsoftonline.us/organizations/v2.0/adminconsent?client_id=<app>&scope=openid profile email&redirect_uri=<consent-return>`
+   once. That provisions Anchor's service principal in *their* directory. No consent → their
+   users can't sign in. This is the onboarding switch.
+3. **Token validation changes (the critical security control).** You can no longer pin one
+   issuer. Per token:
+   - Read `tid` (tenant id); accept only if `tid ∈ allow-list` of onboarded customers.
+   - Validate signature against **that tenant's** JWKS and accept issuer
+     `https://login.microsoftonline.us/{tid}/v2.0`; keep `aud = clientId`, nonce, exp.
+   - **Without the `tid` allow-list, any tenant in the cloud could authenticate.** Mandatory.
+4. **Tenant → Anchor org mapping.** Add `organization_tenants(tid uuid → organization_id)`
+   (or reuse the verified-domain table `organization_domains` the mail ingest already uses,
+   apps/api/src/integrations/m365/ingest.ts). Resolve `tid`/email-domain → `organization_id`,
+   issue a session with **`plane: 'customer'`**, and existing RLS/ABAC scope the user to
+   their org automatically.
+
+### Code changes (parallel to Phase 1)
+- `auth/oidc.ts`: a multi-tenant variant — `/organizations` authority, per-tenant JWKS
+  (`createRemoteJWKSet` per `tid`, cached), validate `tid` against the allow-list, accept the
+  per-tenant issuer.
+- `accounts.loginOrProvisionCustomerOidc()`: map `tid`/domain → org, `plane: 'customer'`,
+  JIT-provision the user into that org (default role `EndUser`, or `OrgAdmin` for the first
+  admin). Mirrors `loginOrProvisionAgentOidc`.
+- Config: `OIDC_CUSTOMER_ENABLED`, allow-list driven from the `organizations` table (a
+  `entra_tenant_id` column per onboarded org) rather than a static env list.
+- Web: a "Sign in with your organization" button (customer login) → same `/auth/oidc/start`
+  with a `mode=customer` hint.
+
+### ⚠️ Cloud-isolation constraint (decides who can even use this)
+Microsoft clouds are isolated. Anchor runs in **Azure Government** (`login.microsoftonline.us`):
+- Customer M365 **also in GCC High / Azure Gov (.us)** → ✅ works with the model above.
+- Customer M365 in **commercial** (`login.microsoftonline.com`) → ❌ cannot authenticate to a
+  gov app. Would need a separate commercial app registration/deployment. "Any M365 tenant"
+  means "any tenant **in the same Microsoft cloud as Anchor**."
+
+### Simpler alternative: B2B guest invite
+Invite customer admins as **B2B guests** into the Anchor gov tenant (Entra External ID); they
+then use the **Phase 1 single-tenant** app — no per-tenant consent, no `tid` allow-list.
+Trade-off: guest objects in your directory + invitation management. Good for a few customer
+admins; multi-tenant scales better for many self-serving customer orgs. Same-cloud limit still
+applies.
+
+### Estimate
+~**3–5 engineering days** on top of Phase 1 (most of the OIDC plumbing is reused; the new work
+is multi-issuer validation, the tenant→org allow-list/mapping, and the admin-consent onboarding
+flow).
+
 ## Dependencies / risks
 - Gov tenant admin must create the app registration, define app roles, and assign agents.
+- Phase 2: each **customer** tenant admin must grant admin consent; customers must be in the
+  same Microsoft cloud (gov) as Anchor.
 - Basic-auth-disabled / NIST policy posture is unaffected (OIDC adds no inbound creds).
 - Pairs naturally with the **KV + private-endpoint** hardening already flagged
   (see [[azure-gov-deployment]] / deploy docs) so the client secret/cert lives in KV.
