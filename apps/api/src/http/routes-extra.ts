@@ -5,8 +5,27 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requirePrincipal } from './context.js';
 import * as worklogs from '../modules/worklogs.js';
+import * as automation from '../modules/automation.js';
 
 export async function registerExtraRoutes(app: FastifyInstance): Promise<void> {
+  // ---------------- Automation gated-action approvals ----------------
+  app.get('/api/v1/automations/pending-approvals', async (req) => {
+    const p = await requirePrincipal(req);
+    return { data: await automation.listPendingApprovals(p) };
+  });
+
+  app.post('/api/v1/automations/executions/:id/approve', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return automation.approveExecution(p, id);
+  });
+
+  app.post('/api/v1/automations/executions/:id/reject', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return automation.rejectExecution(p, id);
+  });
+
   // ---------------- Ticket worklogs / time tracking ----------------
   app.post('/api/v1/tickets/:id/worklogs', async (req, reply) => {
     const p = await requirePrincipal(req);
