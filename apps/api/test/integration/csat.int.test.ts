@@ -3,6 +3,7 @@ import { describeDb } from '../helpers/db.js';
 import { withSystemContext } from '../../src/db/pool.js';
 import { loadPrincipal } from '../../src/auth/principal.js';
 import { createSurveyForTicket, respond, pending, metrics } from '../../src/modules/csat.js';
+import { createTicket } from '../../src/modules/tickets.js';
 import type { Principal } from '../../src/types.js';
 
 async function principalByEmail(email: string): Promise<Principal> {
@@ -19,11 +20,11 @@ describeDb('CSAT (integration)', () => {
 
   beforeAll(async () => {
     endUser = await principalByEmail('user@acme.example.com');
-    const row = await withSystemContext(async (sql) =>
-      (await sql.query("SELECT t.id AS tid, t.organization_id AS oid FROM tickets t JOIN organizations o ON o.id=t.organization_id WHERE o.name='Acme' AND t.requester_id=(SELECT id FROM users WHERE email='user@acme.example.com') LIMIT 1")).rows[0],
-    );
-    ticketId = row.tid;
-    acmeId = row.oid;
+    acmeId = endUser.organizationId!;
+    // A fresh ticket per run keeps the survey unanswered (csat_surveys is unique per ticket),
+    // so this test is idempotent across repeated runs.
+    const t = await createTicket(endUser, { subject: `CSAT survey target ${Date.now()}`, impact: 3, urgency: 3 });
+    ticketId = t.id;
   });
 
   it('issues a survey, accepts a response, and writes back satisfaction_score', async () => {

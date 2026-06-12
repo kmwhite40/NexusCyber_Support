@@ -11,8 +11,42 @@ import * as bulk from '../modules/bulk.js';
 import * as participants from '../modules/participants.js';
 import * as workflows from '../modules/workflows.js';
 import * as forms from '../modules/forms.js';
+import * as announcements from '../modules/announcements.js';
 
 export async function registerExtraRoutes(app: FastifyInstance): Promise<void> {
+  // ---------------- Portal announcements ----------------
+  app.get('/api/v1/announcements', async (req) => {
+    const p = await requirePrincipal(req);
+    return { data: await announcements.listActive(p) };
+  });
+
+  app.get('/api/v1/announcements/all', async (req) => {
+    const p = await requirePrincipal(req);
+    return { data: await announcements.listAll(p) };
+  });
+
+  app.post('/api/v1/announcements', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const body = z
+      .object({
+        title: z.string().min(1),
+        body: z.string().min(1),
+        severity: z.enum(['info', 'warning', 'critical']).optional(),
+        endsAt: z.string().datetime().optional(),
+        organizationId: z.string().uuid().nullable().optional(),
+      })
+      .parse(req.body);
+    const a = await announcements.createAnnouncement(p, body);
+    reply.status(201);
+    return a;
+  });
+
+  app.delete('/api/v1/announcements/:id', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return announcements.deactivate(p, id);
+  });
+
   // ---------------- Custom request forms ----------------
   app.get('/api/v1/forms', async (req) => {
     const p = await requirePrincipal(req);
