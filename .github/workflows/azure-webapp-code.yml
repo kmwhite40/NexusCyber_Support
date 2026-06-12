@@ -19,9 +19,12 @@ name: Deploy Web (Code) to Azure Gov App Service
 
 on:
   workflow_dispatch:
+  # The OIDC federated credential on the 'anchor-gha' app is scoped to this branch
+  # (repo:...:ref:refs/heads/feat/nexus-platform), so the deploy must run from here — not
+  # main. Web changes auto-deploy; editing this workflow does not (kept out of paths).
   push:
-    branches: [main]
-    paths: ['apps/web/**', '.github/workflows/azure-webapp-code.yml']
+    branches: [feat/nexus-platform]
+    paths: ['apps/web/**']
 
 permissions:
   id-token: write   # required for OIDC federated login
