@@ -38,6 +38,7 @@ const PERMISSIONS: Array<[string, string]> = [
   ['change.approve', 'change'],
   ['change.implement', 'change'],
   ['problem.manage', 'problem'],
+  ['queue.manage', 'queue'],
   ['elevation.request', 'platform_admin'],
   ['elevation.approve', 'platform_admin'],
   ['elevation.break_glass', 'platform_admin'],
@@ -63,7 +64,7 @@ const ROLES: Record<string, { plane: 'nexus' | 'customer'; perms: string[] }> = 
   },
   ServiceDeskManager: {
     plane: 'nexus',
-    perms: ['ticket.read.all_assigned_customers', 'ticket.assign', 'ticket.update', 'ticket.comment', 'ticket.escalate', 'report.read.operational', 'customer.admin.manage_users', 'oncall.manage', 'oncall.acknowledge', 'oncall.page', 'automation.author', 'automation.publish', 'audit.read', 'posture.request_exception', 'posture.approve_exception', 'compliance.read', 'compliance.manage', 'elevation.request', 'elevation.approve', 'kb.read', 'kb.author', 'kb.publish', 'change.create', 'change.approve', 'change.implement', 'problem.manage'],
+    perms: ['ticket.read.all_assigned_customers', 'ticket.assign', 'ticket.update', 'ticket.comment', 'ticket.escalate', 'report.read.operational', 'customer.admin.manage_users', 'oncall.manage', 'oncall.acknowledge', 'oncall.page', 'automation.author', 'automation.publish', 'audit.read', 'posture.request_exception', 'posture.approve_exception', 'compliance.read', 'compliance.manage', 'elevation.request', 'elevation.approve', 'kb.read', 'kb.author', 'kb.publish', 'change.create', 'change.approve', 'change.implement', 'problem.manage', 'queue.manage'],
   },
   // Customer plane
   OrgAdmin: { plane: 'customer', perms: ['ticket.create', 'ticket.read.organization', 'ticket.comment', 'posture.read', 'posture.request_exception', 'customer.admin.manage_users', 'report.read.customer', 'audit.read', 'compliance.read', 'kb.read', 'kb.author', 'kb.publish'] },
@@ -595,6 +596,23 @@ async function run() {
         await sql.query(
           `INSERT INTO kb_page_versions (page_id, version, title, body, edited_by) VALUES ($1,1,$2,$3,$4)`,
           [pg, title, body, kbAuthor],
+        );
+      }
+    }
+
+    // ---- Default global agent queues (SLA-aware) ----
+    const queueCount = await sql.query('SELECT count(*)::int AS n FROM queues');
+    if (queueCount.rows[0].n === 0) {
+      const queues: Array<[string, object, string]> = [
+        ['Unassigned', { unassigned: true, status: ['new', 'triage', 'assigned'] }, 'sla'],
+        ['P1 incidents', { priority: 'P1' }, 'sla'],
+        ['In progress', { status: 'in_progress' }, 'sla'],
+        ['Security', { tag: 'security' }, 'priority'],
+      ];
+      for (const [name, def, orderBy] of queues) {
+        await sql.query(
+          `INSERT INTO queues (organization_id, name, definition, order_by, created_by) VALUES (NULL,$1,$2,$3,$4)`,
+          [name, JSON.stringify(def), orderBy, kbAuthor],
         );
       }
     }

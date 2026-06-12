@@ -21,6 +21,7 @@ import * as links from '../modules/links.js';
 import * as changes from '../modules/changes.js';
 import * as problems from '../modules/problems.js';
 import * as csat from '../modules/csat.js';
+import * as queues from '../modules/queues.js';
 import { computeScore, grade } from '../modules/posture.js';
 import { audit, verifyChain, formatExport, type ExportableRow } from '../modules/audit.js';
 import { authorize } from '../authz/pdp.js';
@@ -541,6 +542,37 @@ export async function registerRoutes(app: FastifyInstance) {
     const p = await requirePrincipal(req);
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     return { data: await automation.listExecutions(p, id) };
+  });
+
+  // ---------------- Agent work queues ----------------
+  app.get('/api/v1/queues', async (req) => {
+    const p = await requirePrincipal(req);
+    return { data: await queues.listQueues(p) };
+  });
+
+  app.post('/api/v1/queues', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const body = z
+      .object({
+        name: z.string().min(1),
+        definition: z.object({
+          status: z.union([z.string(), z.array(z.string())]).optional(),
+          priority: z.union([z.string(), z.array(z.string())]).optional(),
+          unassigned: z.boolean().optional(),
+          tag: z.string().optional(),
+        }).optional(),
+        orderBy: z.enum(['sla', 'priority', 'created']).optional(),
+      })
+      .parse(req.body);
+    const queue = await queues.createQueue(p, body);
+    reply.status(201);
+    return queue;
+  });
+
+  app.get('/api/v1/queues/:id/tickets', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return queues.queueTickets(p, id);
   });
 
   // ---------------- CSAT satisfaction surveys ----------------

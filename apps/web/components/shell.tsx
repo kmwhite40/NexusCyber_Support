@@ -16,6 +16,7 @@ const NEXUS_NAV: NavItem[] = [
   { href: '/catalog', label: 'Service catalog', icon: <IconCatalog /> },
   { href: '/kb', label: 'Knowledge base', icon: <IconBook />, anyPerm: ['kb.read'] },
   { href: '/tickets', label: 'Tickets', icon: <IconTicket /> },
+  { href: '/queues', label: 'Queues', icon: <IconLayers />, anyPerm: ['ticket.read.all_assigned_customers'] },
   { href: '/changes', label: 'Changes', icon: <IconCalendar />, anyPerm: ['change.create', 'change.approve'] },
   { href: '/problems', label: 'Problems', icon: <IconBug />, anyPerm: ['problem.manage'] },
   { href: '/analytics', label: 'Analytics', icon: <IconChart />, anyPerm: ['report.read.operational', 'report.read.customer'] },
@@ -127,6 +128,7 @@ function titleFor(path: string): string {
   if (path.startsWith('/kb')) return 'Knowledge base';
   if (path.startsWith('/changes')) return 'Change management';
   if (path.startsWith('/problems')) return 'Problem management';
+  if (path.startsWith('/queues')) return 'Work queues';
   if (path.startsWith('/oncall')) return 'On-call console';
   if (path.startsWith('/posture')) return 'Security posture';
   if (path.startsWith('/compliance')) return 'Compliance';
@@ -149,4 +151,5 @@ function IconClipboard() { return <svg width="18" height="18" viewBox="0 0 24 24
 function IconBook() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 5a2 2 0 0 1 2-2h12v16H6a2 2 0 0 0-2 2V5z"/><path d="M18 17H6a2 2 0 0 0-2 2"/></svg>; }
 function IconCalendar() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>; }
 function IconBug() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="8" y="6" width="8" height="12" rx="4"/><path d="M12 6V4M5 9l2 1M19 9l-2 1M5 15l2-1M19 15l-2-1M4 12h2M18 12h2"/></svg>; }
+function IconLayers() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5M3 17l9 5 9-5"/></svg>; }
 function IconRobot() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="4" y="8" width="16" height="11" rx="2.5"/><path d="M12 8V4M9 13h.01M15 13h.01M9 16h6"/><circle cx="12" cy="3" r="1"/></svg>; }
