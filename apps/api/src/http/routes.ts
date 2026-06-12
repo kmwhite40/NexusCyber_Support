@@ -27,7 +27,7 @@ import * as services from '../modules/services.js';
 import * as notifications from '../modules/notifications.js';
 import { computeScore, grade } from '../modules/posture.js';
 import { audit, verifyChain, formatExport, type ExportableRow } from '../modules/audit.js';
-import { authorize } from '../authz/pdp.js';
+import { authorize, can } from '../authz/pdp.js';
 
 function setSessionCookie(reply: any, token: string) {
   reply.header(
@@ -142,7 +142,7 @@ export async function registerRoutes(app: FastifyInstance) {
   // ---------------- Organizations & users ----------------
   app.get('/api/v1/organizations', async (req) => {
     const p = await requirePrincipal(req);
-    authorize(p, 'customer.admin.manage_users'); // org admins / agents with mgmt scope
+    if (!can(p, 'org.read') && !can(p, 'customer.admin.manage_users')) throw Errors.forbidden('insufficient permission to list organizations');
     return withOrgContext(orgContextFor(p), async (sql) => {
       const { rows } = await sql.query('SELECT id, name, cloud, status FROM organizations ORDER BY name');
       return { data: rows };
@@ -214,6 +214,7 @@ export async function registerRoutes(app: FastifyInstance) {
         assignee: z.string().optional(),
         priority: z.string().optional(),
         limit: z.coerce.number().optional(),
+        type: z.string().optional(),
       })
       .parse(req.query);
     const data = await tickets.listTickets(p, q);

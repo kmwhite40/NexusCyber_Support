@@ -8,6 +8,7 @@ import { Errors } from '../errors.js';
 import type { Principal } from '../types.js';
 
 export async function listServices(actor: Principal) {
+  authorize(actor, 'service.read', {});
   return withOrgContext(orgContextFor(actor), async (sql) => {
     const { rows } = await sql.query(
       `SELECT s.*, (SELECT count(*)::int FROM tickets t WHERE t.service_id = s.id) AS ticket_count
@@ -34,6 +35,7 @@ export async function createService(actor: Principal, input: SaveServiceInput) {
 }
 
 export async function listConfigurationItems(actor: Principal, filter: { ciClass?: string; status?: string } = {}) {
+  authorize(actor, 'service.read', {});
   return withOrgContext(orgContextFor(actor), async (sql) => {
     const where: string[] = [];
     const params: unknown[] = [];

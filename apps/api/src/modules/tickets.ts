@@ -128,6 +128,7 @@ export interface ListFilter {
   assignee?: string; // 'me' | userId
   priority?: string;
   limit?: number;
+  type?: string;
 }
 
 export async function listTickets(actor: Principal, filter: ListFilter) {
@@ -144,6 +145,10 @@ export async function listTickets(actor: Principal, filter: ListFilter) {
     if (filter.status) {
       params.push(filter.status);
       where.push(`status = $${params.length}`);
+    }
+    if (filter.type) {
+      params.push(filter.type);
+      where.push(`type = $${params.length}`);
     }
     if (filter.priority) {
       params.push(filter.priority);
