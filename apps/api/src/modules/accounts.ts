@@ -406,6 +406,42 @@ export async function listOrganizationUsers(actor: Principal, id: string) {
 
 export interface UpdateOrgInput { name?: string; cloud?: 'commercial' | 'gcc' | 'gcchigh' | 'azgov'; dataBoundary?: string; }
 
+/**
+ * Admin: create a customer organization (no user) and optionally onboard it for SSO by
+ * mapping its Entra tenant. Used to onboard external customer tenants for multitenant OIDC
+ * (the tid allow-list). Caller must hold org.manage (checked in the route). Uses the system
+ * context because there is no org/RLS scope yet.
+ */
+export async function createOrganizationAdmin(
+  actor: Principal,
+  input: { name: string; cloud?: 'commercial' | 'gcc' | 'gcchigh' | 'azgov'; entraTenantId?: string },
+): Promise<{ id: string; name: string; cloud: string; entra_tenant_id: string | null }> {
+  const cloud = input.cloud ?? 'gcchigh';
+  const enclaveId = cloud === 'gcchigh' || cloud === 'azgov' ? 'gov' : 'commercial';
+  return withSystemContext(async (sql) => {
+    if (input.entraTenantId) {
+      const dup = (
+        await sql.query(`SELECT id, name FROM organizations WHERE entra_tenant_id = $1`, [input.entraTenantId])
+      ).rows[0];
+      if (dup) throw Errors.badRequest(`tenant already onboarded to organization "${dup.name}"`);
+    }
+    const { rows } = await sql.query(
+      `INSERT INTO organizations (name, cloud, enclave_id, status, entra_tenant_id)
+       VALUES ($1, $2, $3, 'active', $4)
+       RETURNING id, name, cloud, entra_tenant_id`,
+      [input.name, cloud, enclaveId, input.entraTenantId ?? null],
+    );
+    await audit(actor, {
+      action: 'org.create',
+      organizationId: rows[0].id,
+      resourceType: 'organization',
+      resourceId: rows[0].id,
+      detail: { entra_tenant_id: input.entraTenantId ?? null },
+    });
+    return rows[0];
+  });
+}
+
 export async function updateOrganization(actor: Principal, id: string, input: UpdateOrgInput) {
   authorize(actor, 'org.manage', { organizationId: id });
   return withOrgContext(orgContextFor(actor), async (sql) => {

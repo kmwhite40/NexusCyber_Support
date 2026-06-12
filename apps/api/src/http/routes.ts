@@ -261,6 +261,22 @@ export async function registerRoutes(app: FastifyInstance) {
     return result;
   });
 
+  // Admin: create a customer org (optionally onboarding its Entra tenant for customer SSO).
+  app.post('/api/v1/organizations', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    if (!can(p, 'org.manage')) throw Errors.forbidden('insufficient permission to create organizations');
+    const body = z
+      .object({
+        name: z.string().min(2),
+        cloud: z.enum(['commercial', 'gcc', 'gcchigh', 'azgov']).optional(),
+        entraTenantId: z.string().uuid().optional(),
+      })
+      .parse(req.body);
+    const org = await accounts.createOrganizationAdmin(p, body);
+    reply.status(201);
+    return org;
+  });
+
   app.get('/api/v1/organizations/:id', async (req) => {
     const p = await requirePrincipal(req);
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
