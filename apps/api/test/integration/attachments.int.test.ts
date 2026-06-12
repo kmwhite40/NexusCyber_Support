@@ -17,7 +17,7 @@ describeDb('attachments (integration)', () => {
     );
     agent = await loadPrincipal({ sub: u.id, plane: u.plane, email: u.email, org: u.organization_id, roles: [] });
     ticketId = await withSystemContext(async (sql) =>
-      (await sql.query("SELECT id FROM tickets WHERE ticket_number='ACME-000001'")).rows[0].id,
+      (await sql.query("SELECT id FROM tickets WHERE ticket_number='DEMO-000001'")).rows[0].id,
     );
   });
 

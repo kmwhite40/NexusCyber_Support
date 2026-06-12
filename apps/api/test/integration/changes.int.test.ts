@@ -20,7 +20,7 @@ describeDb('change management + CAB (integration)', () => {
   beforeAll(async () => {
     manager = await principalByEmail('manager@nexus.example.com');
     analyst = await principalByEmail('analyst@nexus.example.com');
-    acmeId = await withSystemContext(async (sql) => (await sql.query("SELECT id FROM organizations WHERE name='Acme'")).rows[0].id);
+    acmeId = await withSystemContext(async (sql) => (await sql.query("SELECT id FROM organizations WHERE name='Demo Corp'")).rows[0].id);
   });
 
   it('standard changes are pre-approved without CAB', async () => {

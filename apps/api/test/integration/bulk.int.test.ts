@@ -20,7 +20,7 @@ describeDb('bulk ticket actions (integration)', () => {
 
   beforeAll(async () => {
     agent = await principalByEmail('agent@nexus.example.com');
-    acmeId = await withSystemContext(async (sql) => (await sql.query("SELECT id FROM organizations WHERE name='Acme'")).rows[0].id);
+    acmeId = await withSystemContext(async (sql) => (await sql.query("SELECT id FROM organizations WHERE name='Demo Corp'")).rows[0].id);
     const a = await createTicket(agent, { subject: 'Bulk target one', organizationId: acmeId, impact: 3, urgency: 3 });
     const b = await createTicket(agent, { subject: 'Bulk target two', organizationId: acmeId, impact: 3, urgency: 3 });
     ids = [a.id, b.id];

@@ -19,7 +19,7 @@ describeDb('worklogs (integration)', () => {
   beforeAll(async () => {
     agent = await principalByEmail('agent@nexus.example.com');
     ticketId = await withSystemContext(async (sql) =>
-      (await sql.query("SELECT id FROM tickets WHERE ticket_number='ACME-000001'")).rows[0].id,
+      (await sql.query("SELECT id FROM tickets WHERE ticket_number='DEMO-000001'")).rows[0].id,
     );
   });
 

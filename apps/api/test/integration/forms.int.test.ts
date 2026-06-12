@@ -20,7 +20,7 @@ describeDb('custom request forms (integration)', () => {
 
   beforeAll(async () => {
     agent = await principalByEmail('agent@nexus.example.com');
-    acmeId = await withSystemContext(async (sql) => (await sql.query("SELECT id FROM organizations WHERE name='Acme'")).rows[0].id);
+    acmeId = await withSystemContext(async (sql) => (await sql.query("SELECT id FROM organizations WHERE name='Demo Corp'")).rows[0].id);
   });
 
   it('lists the seeded global form and loads its fields', async () => {

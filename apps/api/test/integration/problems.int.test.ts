@@ -18,7 +18,7 @@ describeDb('problem management (integration)', () => {
 
   beforeAll(async () => {
     analyst = await principalByEmail('analyst@nexus.example.com');
-    acmeId = await withSystemContext(async (sql) => (await sql.query("SELECT id FROM organizations WHERE name='Acme'")).rows[0].id);
+    acmeId = await withSystemContext(async (sql) => (await sql.query("SELECT id FROM organizations WHERE name='Demo Corp'")).rows[0].id);
   });
 
   it('creates a problem, records a known-error workaround, links an incident, and resolves', async () => {
@@ -31,7 +31,7 @@ describeDb('problem management (integration)', () => {
     await transitionProblem(analyst, prob.id, 'known_error');
 
     const incident = await withSystemContext(async (sql) =>
-      (await sql.query("SELECT id FROM tickets WHERE organization_id=$1 AND ticket_number='ACME-000003'", [acmeId])).rows[0],
+      (await sql.query("SELECT id FROM tickets WHERE organization_id=$1 AND ticket_number='DEMO-000003'", [acmeId])).rows[0],
     );
     await linkIncident(analyst, prob.id, incident.id);
     const full = await getProblem(analyst, prob.id);

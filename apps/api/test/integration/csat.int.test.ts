@@ -19,7 +19,7 @@ describeDb('CSAT (integration)', () => {
   let ticketId: string;
 
   beforeAll(async () => {
-    endUser = await principalByEmail('user@acme.example.com');
+    endUser = await principalByEmail('user@demo.example.com');
     acmeId = endUser.organizationId!;
     // A fresh ticket per run keeps the survey unanswered (csat_surveys is unique per ticket),
     // so this test is idempotent across repeated runs.

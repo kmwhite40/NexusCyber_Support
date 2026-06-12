@@ -18,7 +18,7 @@ describeDb('portal announcements (integration)', () => {
 
   beforeAll(async () => {
     manager = await principalByEmail('manager@nexus.example.com');
-    endUser = await principalByEmail('user@acme.example.com');
+    endUser = await principalByEmail('user@demo.example.com');
   });
 
   it('a created global announcement is visible to customers, then retractable', async () => {

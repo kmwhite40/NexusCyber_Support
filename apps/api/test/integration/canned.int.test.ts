@@ -19,7 +19,7 @@ describeDb('canned responses (integration)', () => {
   beforeAll(async () => {
     agent = await principalByEmail('agent@nexus.example.com');
     ticketId = await withSystemContext(async (sql) =>
-      (await sql.query("SELECT id FROM tickets WHERE ticket_number='ACME-000001'")).rows[0].id,
+      (await sql.query("SELECT id FROM tickets WHERE ticket_number='DEMO-000001'")).rows[0].id,
     );
   });
 
@@ -30,7 +30,7 @@ describeDb('canned responses (integration)', () => {
     expect(ack).toBeTruthy();
 
     const out = await render(agent, ack.id, ticketId);
-    expect(out.body).toContain('ACME-000001'); // {{ticket_number}} substituted
+    expect(out.body).toContain('DEMO-000001'); // {{ticket_number}} substituted
     expect(out.body).not.toContain('{{'); // no unrendered tokens for known keys
   });
 });

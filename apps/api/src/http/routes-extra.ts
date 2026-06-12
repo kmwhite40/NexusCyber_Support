@@ -12,8 +12,26 @@ import * as participants from '../modules/participants.js';
 import * as workflows from '../modules/workflows.js';
 import * as forms from '../modules/forms.js';
 import * as announcements from '../modules/announcements.js';
+import * as demo from '../modules/demo.js';
 
 export async function registerExtraRoutes(app: FastifyInstance): Promise<void> {
+  // ---------------- Demo account view toggle (admin <-> customer) ----------------
+  app.get('/api/v1/auth/demo/status', async (req) => {
+    const p = await requirePrincipal(req);
+    return demo.status(p);
+  });
+
+  app.post('/api/v1/auth/demo/toggle', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const result = await demo.toggle(p);
+    // Mirror the login cookie so cookie-based sessions also flip to the paired view.
+    reply.header(
+      'Set-Cookie',
+      `nexus_session=${encodeURIComponent(result.token)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=3600`,
+    );
+    return result;
+  });
+
   // ---------------- Portal announcements ----------------
   app.get('/api/v1/announcements', async (req) => {
     const p = await requirePrincipal(req);

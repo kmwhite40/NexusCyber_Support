@@ -22,7 +22,7 @@ describeDb('SLA pause/resume (integration)', () => {
 
   beforeAll(async () => {
     agent = await principalByEmail('agent@nexus.example.com');
-    acmeId = await withSystemContext(async (sql) => (await sql.query("SELECT id FROM organizations WHERE name='Acme'")).rows[0].id);
+    acmeId = await withSystemContext(async (sql) => (await sql.query("SELECT id FROM organizations WHERE name='Demo Corp'")).rows[0].id);
   });
 
   it('on-hold transition pauses running SLAs; resuming work resumes them', async () => {

@@ -19,7 +19,7 @@ describeDb('compliance (integration)', () => {
   beforeAll(async () => {
     analyst = await principalByEmail('analyst@nexus.example.com');
     acmeId = await withSystemContext(async (sql) =>
-      (await sql.query("SELECT id FROM organizations WHERE name='Acme'")).rows[0].id,
+      (await sql.query("SELECT id FROM organizations WHERE name='Demo Corp'")).rows[0].id,
     );
   });
 

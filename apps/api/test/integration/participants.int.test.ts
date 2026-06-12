@@ -20,8 +20,8 @@ describeDb('ticket participants + @mentions (integration)', () => {
   beforeAll(async () => {
     agent = await principalByEmail('agent@nexus.example.com');
     const row = await withSystemContext(async (sql) => ({
-      ticket: (await sql.query("SELECT id FROM tickets WHERE ticket_number='ACME-000001'")).rows[0].id,
-      admin: (await sql.query("SELECT id FROM users WHERE email='admin@acme.example.com'")).rows[0].id,
+      ticket: (await sql.query("SELECT id FROM tickets WHERE ticket_number='DEMO-000001'")).rows[0].id,
+      admin: (await sql.query("SELECT id FROM users WHERE email='demo-customer@demo.example'")).rows[0].id,
     }));
     ticketId = row.ticket;
     acmeAdminId = row.admin;
@@ -37,8 +37,8 @@ describeDb('ticket participants + @mentions (integration)', () => {
   });
 
   it('@mention adds the user as a watcher', async () => {
-    const res = await processMentions(agent, ticketId, 'paging @admin@acme.example.com to take a look');
-    expect(res.mentioned).toContain('admin@acme.example.com');
+    const res = await processMentions(agent, ticketId, 'paging @demo-customer@demo.example to take a look');
+    expect(res.mentioned).toContain('demo-customer@demo.example');
     const list = await listForTicket(agent, ticketId);
     expect(list.find((p: any) => p.user_id === acmeAdminId)?.role).toBe('watcher');
   });

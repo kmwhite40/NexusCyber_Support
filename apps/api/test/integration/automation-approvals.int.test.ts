@@ -40,9 +40,9 @@ describeDb('automation gated-action approvals (integration)', () => {
   beforeAll(async () => {
     manager = await principalByEmail('manager@nexus.example.com');
     const row = await withSystemContext(async (sql) => ({
-      org: (await sql.query("SELECT id FROM organizations WHERE name='Acme'")).rows[0].id,
+      org: (await sql.query("SELECT id FROM organizations WHERE name='Demo Corp'")).rows[0].id,
       rule: (await sql.query('SELECT id FROM automation_rules LIMIT 1')).rows[0].id,
-      ticket: (await sql.query("SELECT id FROM tickets WHERE ticket_number='ACME-000002'")).rows[0].id,
+      ticket: (await sql.query("SELECT id FROM tickets WHERE ticket_number='DEMO-000002'")).rows[0].id,
     }));
     orgId = row.org; ruleId = row.rule; ticketId = row.ticket;
   });
