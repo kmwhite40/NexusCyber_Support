@@ -12,6 +12,7 @@ import * as analytics from '../modules/analytics.js';
 import * as catalog from '../modules/catalog.js';
 import * as conmon from '../modules/conmon.js';
 import * as oncall from '../modules/oncall.js';
+import * as automation from '../modules/automation.js';
 import { computeScore, grade } from '../modules/posture.js';
 import { authorize } from '../authz/pdp.js';
 
@@ -355,6 +356,46 @@ export async function registerRoutes(app: FastifyInstance) {
     const p = await requirePrincipal(req);
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     return oncall.escalatePage(p, id);
+  });
+
+  // ---------------- Automation / workflow engine ----------------
+  app.get('/api/v1/automations', async (req) => {
+    const p = await requirePrincipal(req);
+    return { data: await automation.listRules(p) };
+  });
+
+  app.post('/api/v1/automations', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const body = z.object({ name: z.string().min(3), definition: z.any(), organizationId: z.string().uuid().optional() }).parse(req.body);
+    const rule = await automation.createRule(p, { name: body.name, definition: body.definition, organizationId: body.organizationId });
+    reply.status(201);
+    return rule;
+  });
+
+  app.post('/api/v1/automations/:id/simulate', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ event: z.record(z.any()).optional() }).parse(req.body ?? {});
+    return automation.simulate(p, id, body.event ?? {});
+  });
+
+  app.post('/api/v1/automations/:id/publish', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return automation.publishRule(p, id);
+  });
+
+  app.post('/api/v1/automations/:id/state', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ state: z.enum(['draft', 'disabled']) }).parse(req.body);
+    return automation.setState(p, id, body.state);
+  });
+
+  app.get('/api/v1/automations/:id/executions', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return { data: await automation.listExecutions(p, id) };
   });
 
   // ---------------- Audit ----------------

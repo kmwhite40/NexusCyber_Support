@@ -23,6 +23,8 @@ const PERMISSIONS: Array<[string, string]> = [
   ['oncall.acknowledge', 'oncall'],
   ['oncall.page', 'oncall'],
   ['oncall.manage', 'oncall'],
+  ['automation.author', 'automation'],
+  ['automation.publish', 'automation'],
   ['ticket.escalate', 'ticket'],
   ['audit.read', 'audit'],
   ['report.read.operational', 'reporting'],
@@ -48,7 +50,7 @@ const ROLES: Record<string, { plane: 'nexus' | 'customer'; perms: string[] }> = 
   },
   ServiceDeskManager: {
     plane: 'nexus',
-    perms: ['ticket.read.all_assigned_customers', 'ticket.assign', 'ticket.update', 'ticket.comment', 'ticket.escalate', 'report.read.operational', 'customer.admin.manage_users', 'oncall.manage', 'oncall.acknowledge', 'oncall.page', 'audit.read'],
+    perms: ['ticket.read.all_assigned_customers', 'ticket.assign', 'ticket.update', 'ticket.comment', 'ticket.escalate', 'report.read.operational', 'customer.admin.manage_users', 'oncall.manage', 'oncall.acknowledge', 'oncall.page', 'automation.author', 'automation.publish', 'audit.read'],
   },
   // Customer plane
   OrgAdmin: { plane: 'customer', perms: ['ticket.create', 'ticket.read.organization', 'ticket.comment', 'posture.read', 'posture.request_exception', 'customer.admin.manage_users', 'report.read.customer', 'audit.read'] },
@@ -437,6 +439,41 @@ async function run() {
          VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (key) DO NOTHING`,
         [key, name, domain, cadence, refs as unknown as string[], severity],
       );
+    }
+
+    // ---- Example automation rules (global, published) ----
+    const automationRules = [
+      {
+        name: 'Tag & note P1 incidents',
+        definition: {
+          trigger: { event: 'ticket.created' },
+          conditions: { all: [{ field: 'priority', op: 'eq', value: 'P1' }, { field: 'type', op: 'eq', value: 'incident' }] },
+          actions: [
+            { type: 'add_tag', tag: 'urgent' },
+            { type: 'add_internal_note', text: 'Auto: P1 incident created — confirm on-call coverage.' },
+          ],
+        },
+      },
+      {
+        name: 'Note on SLA breach',
+        definition: {
+          trigger: { event: 'sla.breached' },
+          conditions: { all: [{ field: 'metric', op: 'eq', value: 'resolution' }] },
+          actions: [{ type: 'add_internal_note', text: 'Auto: resolution SLA breached — manager review required.' }],
+        },
+      },
+    ];
+    const rulesExist = await sql.query('SELECT count(*)::int AS n FROM automation_rules');
+    if (rulesExist.rows[0].n === 0) {
+      // author and publisher differ (separation of duties)
+      const author = (await sql.query("SELECT id FROM users WHERE email='analyst@nexus.example.com'")).rows[0]?.id;
+      const publisher = (await sql.query("SELECT id FROM users WHERE email='manager@nexus.example.com'")).rows[0]?.id;
+      for (const r of automationRules) {
+        await sql.query(
+          `INSERT INTO automation_rules (name, definition, state, author_id, publisher_id) VALUES ($1,$2,'published',$3,$4)`,
+          [r.name, JSON.stringify(r.definition), author ?? null, publisher ?? null],
+        );
+      }
     }
 
     // Demo posture findings for Acme

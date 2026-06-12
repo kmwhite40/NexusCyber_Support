@@ -6,7 +6,9 @@ import { config } from './config.js';
 import { logger } from './logger.js';
 import { pool } from './db/pool.js';
 import { registerRoutes } from './http/routes.js';
+import { registerIdempotency, IdempotencyStore } from './http/idempotency.js';
 import { registerNotificationHandlers } from './modules/notifications.js';
+import { registerAutomationHandlers } from './modules/automation.js';
 import { startSlaSweeper } from './jobs/sla-sweeper.js';
 import { startConMonScheduler } from './modules/conmon.js';
 
@@ -55,10 +57,14 @@ async function main() {
     }
   });
 
+  // Idempotency for mutating requests (replays original response for repeated keys).
+  registerIdempotency(app, new IdempotencyStore());
+
   await registerRoutes(app);
 
-  // Wire event consumers (notification dispatcher).
+  // Wire event consumers (notification dispatcher + automation engine).
   registerNotificationHandlers();
+  registerAutomationHandlers();
 
   // Background SLA evaluation sweep (warning/breach), idempotent.
   startSlaSweeper();
