@@ -24,6 +24,7 @@ import * as csat from '../modules/csat.js';
 import * as queues from '../modules/queues.js';
 import * as integrations from '../modules/integrations.js';
 import * as services from '../modules/services.js';
+import * as notifications from '../modules/notifications.js';
 import { computeScore, grade } from '../modules/posture.js';
 import { audit, verifyChain, formatExport, type ExportableRow } from '../modules/audit.js';
 import { authorize } from '../authz/pdp.js';
@@ -975,5 +976,11 @@ export async function registerRoutes(app: FastifyInstance) {
     const body = z.object({ name: z.string().min(1), ciClass: z.string().min(1), criticality: z.union([z.string(), z.number()]).optional(), status: z.string().optional(), organizationId: z.string().uuid().optional() }).parse(req.body);
     reply.code(201);
     return services.createConfigurationItem(p, body);
+  });
+
+  // ---------------- Notification delivery log ----------------
+  app.get('/api/v1/notifications/deliveries', async (req) => {
+    const p = await requirePrincipal(req);
+    return { data: await notifications.listDeliveries(p, req.query as any) };
   });
 }

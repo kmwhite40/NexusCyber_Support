@@ -3,7 +3,10 @@
 // sends via the selected adapter (Graph when configured, console otherwise).
 // Per-cloud capability matrix drives channel selection with the fallback chain
 // Teams -> Email -> Portal; portal is the universal floor and is always recorded.
-import { withSystemContext, type Sql } from '../db/pool.js';
+import { withSystemContext, withOrgContext, type Sql } from '../db/pool.js';
+import { orgContextFor } from '../auth/principal.js';
+import { authorize } from '../authz/pdp.js';
+import type { Principal } from '../types.js';
 import { subscribe, type DomainEvent } from '../events/bus.js';
 import { logger } from '../logger.js';
 import { resolveRecipients } from './notifications-recipients.js';
@@ -128,4 +131,31 @@ export function registerNotificationHandlers(): void {
       }
     });
   }
+}
+
+// ---- Query API ----
+
+export interface DeliveryFilter {
+  channel?: string;
+  status?: string;
+  eventType?: string;
+  limit?: number;
+}
+
+export async function listDeliveries(actor: Principal, filter: DeliveryFilter = {}) {
+  authorize(actor, 'notifications.read');
+  return withOrgContext(orgContextFor(actor), async (sql) => {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (filter.channel) { params.push(filter.channel); where.push(`channel = $${params.length}`); }
+    if (filter.status) { params.push(filter.status); where.push(`status = $${params.length}`); }
+    if (filter.eventType) { params.push(filter.eventType); where.push(`event_type = $${params.length}`); }
+    params.push(Math.min(Number(filter.limit) || 200, 500));
+    const { rows } = await sql.query(
+      `SELECT id, event_type, channel, recipient, status, substitution_reason, provider_message_id, created_at
+         FROM notification_deliveries ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY created_at DESC LIMIT $${params.length}`,
+      params,
+    );
+    return rows;
+  });
 }

@@ -266,3 +266,17 @@ export const customersApi = {
   users: (id: string) => api.get<{ data: OrgUser[] }>(`/organizations/${id}/users`).then((r) => r.data),
   update: (id: string, b: { name?: string; cloud?: string; dataBoundary?: string }) => api.patch<OrgDetail>(`/organizations/${id}`, b),
 };
+
+export interface Delivery {
+  id: string;
+  event_type: string;
+  channel: string;
+  recipient: string;
+  status: string;
+  substitution_reason: string | null;
+  provider_message_id: string | null;
+  created_at: string;
+}
+export const emailLogApi = {
+  list: (q = '') => api.get<{ data: Delivery[] }>(`/notifications/deliveries${q}`).then((r) => r.data),
+};
