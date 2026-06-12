@@ -17,6 +17,7 @@ import { startConMonScheduler } from './modules/conmon.js';
 import { subscribe } from './events/bus.js';
 import { incCounter, renderMetrics, statusClass } from './metrics.js';
 import { startMailIngest } from './jobs/mail-ingest.js';
+import { startRetentionPurge } from './jobs/retention-purge.js';
 
 async function main() {
   // Fastify gets a logger config (not a pino instance) to keep its FastifyBaseLogger
@@ -98,6 +99,12 @@ async function main() {
 
   // Inbound M365 mail -> ticket polling (no-op unless configured + enabled).
   startMailIngest();
+
+  // Data-retention purge: delete resolved incidents/problems/changes after the window.
+  if (config.retention.enabled) {
+    startRetentionPurge();
+    logger.info(`Retention purge enabled (${config.retention.days}d)`);
+  }
 
   await app.listen({ port: config.port, host: '0.0.0.0' });
   logger.info(`Nexus API listening on :${config.port} (enclave=${config.enclave})`);

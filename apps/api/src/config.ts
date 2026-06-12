@@ -17,12 +17,20 @@ export interface Config {
   oidc: OidcConfig;
   oidcCustomer: OidcCustomerConfig;
   notifications: NotificationsConfig;
+  retention: RetentionConfig;
 }
 
 export interface NotificationsConfig {
   /** Shared service-desk mailbox that receives new-ticket notifications when the
    *  owning assignment group has no notification_email of its own. */
   serviceDeskEmail: string | undefined;
+}
+
+/** Data-retention purge: permanently delete resolved incidents, problems, and changes
+ *  older than `days`. A daily background job enforces this. */
+export interface RetentionConfig {
+  enabled: boolean;
+  days: number;
 }
 
 /** Entra ID (Azure Gov) OIDC for the agent plane — see docs/nexus/artifacts/auth-entra-oidc-scope.md. */
@@ -173,5 +181,10 @@ export const config: Config = {
     serviceDeskEmail:
       process.env.SERVICE_DESK_EMAIL ??
       (process.env.NODE_ENV === 'production' ? undefined : 'service-desk@nexus.example.com'),
+  },
+  retention: {
+    // Default ON: resolved incidents/problems/changes are purged after `days`.
+    enabled: process.env.RETENTION_PURGE_ENABLED ? bool(process.env.RETENTION_PURGE_ENABLED) : true,
+    days: Number(process.env.RETENTION_DAYS ?? 30),
   },
 };
