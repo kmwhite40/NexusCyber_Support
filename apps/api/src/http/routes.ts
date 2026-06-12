@@ -30,6 +30,7 @@ import * as notifications from '../modules/notifications.js';
 import * as alerts from '../modules/alerts.js';
 import * as channels from '../modules/channels.js';
 import * as dashboards from '../modules/dashboards.js';
+import * as forms from '../modules/forms.js';
 import { computeScore, grade } from '../modules/posture.js';
 import { audit, verifyChain, formatExport, type ExportableRow } from '../modules/audit.js';
 import { authorize, can } from '../authz/pdp.js';
@@ -500,6 +501,13 @@ export async function registerRoutes(app: FastifyInstance) {
   app.get('/api/v1/catalog', async (req) => {
     await requirePrincipal(req);
     return { data: await catalog.listCatalog() };
+  });
+
+  app.get('/api/v1/catalog/:key/form', async (req) => {
+    const p = await requirePrincipal(req);
+    const { key } = z.object({ key: z.string() }).parse(req.params);
+    const form = await forms.getFormByCatalogKey(p, key);
+    return { form };
   });
 
   app.post('/api/v1/catalog/:key/request', async (req, reply) => {

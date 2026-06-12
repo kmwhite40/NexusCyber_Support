@@ -102,6 +102,23 @@ export async function getForm(actor: Principal, id: string) {
   });
 }
 
+/** Resolve the form linked to a catalog item (service_catalog_items.form_key). Null when none. */
+export async function getFormByCatalogKey(actor: Principal, catalogKey: string) {
+  authorize(actor, 'ticket.create');
+  return withSystemContext(async (sql) => {
+    const item = (
+      await sql.query('SELECT form_key FROM service_catalog_items WHERE key=$1 AND active', [catalogKey])
+    ).rows[0];
+    if (!item?.form_key) return null;
+    const form = (
+      await sql.query('SELECT * FROM request_forms WHERE key=$1 AND organization_id IS NULL AND active', [item.form_key])
+    ).rows[0];
+    if (!form) return null;
+    const fields = await loadFields(sql, form.id);
+    return { ...form, fields };
+  });
+}
+
 export async function createForm(actor: Principal, input: { key: string; name: string; ticketType?: string }) {
   if (!canManageForms(actor)) throw Errors.forbidden('not permitted to manage forms');
   const orgId = actor.plane === 'customer' ? actor.organizationId : null;
