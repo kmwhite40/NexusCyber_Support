@@ -13,6 +13,7 @@ import { registerAutomationHandlers } from './modules/automation.js';
 import { registerCsatHandlers } from './modules/csat.js';
 import { startSlaSweeper } from './jobs/sla-sweeper.js';
 import { startConMonScheduler } from './modules/conmon.js';
+import { startMailIngest } from './jobs/mail-ingest.js';
 
 async function main() {
   // Fastify gets a logger config (not a pino instance) to keep its FastifyBaseLogger
@@ -77,6 +78,9 @@ async function main() {
 
   // Continuous Monitoring scheduler (NIST 800-137 / FedRAMP ConMon), idempotent findings.
   startConMonScheduler();
+
+  // Inbound M365 mail -> ticket polling (no-op unless configured + enabled).
+  startMailIngest();
 
   await app.listen({ port: config.port, host: '0.0.0.0' });
   logger.info(`Nexus API listening on :${config.port} (enclave=${config.enclave})`);
