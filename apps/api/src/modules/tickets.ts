@@ -8,6 +8,7 @@ import { authorize, can } from '../authz/pdp.js';
 import { audit } from './audit.js';
 import { publish } from '../events/bus.js';
 import { startTicketSla } from './sla.js';
+import { linksForTicket } from './links.js';
 import { Errors } from '../errors.js';
 import type { Principal } from '../types.js';
 
@@ -177,7 +178,8 @@ export async function getTicket(actor: Principal, id: string) {
     const slas = (await sql.query('SELECT * FROM sla_instances WHERE ticket_id=$1', [id])).rows;
     const tasks = (await sql.query('SELECT * FROM service_request_tasks WHERE ticket_id=$1 ORDER BY position', [id])).rows;
     const approvals = (await sql.query('SELECT * FROM approvals WHERE subject_id=$1', [id])).rows;
-    return { ...ticket, comments, events, slas, tasks, approvals };
+    const links = await linksForTicket(sql, id);
+    return { ...ticket, comments, events, slas, tasks, approvals, links };
   });
 }
 

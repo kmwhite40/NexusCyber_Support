@@ -1,7 +1,7 @@
 'use client';
 import * as React from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { api, oncall, ApiError, type Ticket, TIER_GROUPS } from '@/lib/api';
+import { api, oncall, ApiError, type Ticket, TIER_GROUPS, LINK_TYPES } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
 import { Card, CardHeader, CardTitle, CardBody, Button, Textarea, Badge, Select } from '@/components/ui/primitives';
 import { Skeleton } from '@/components/ui/data';
@@ -210,6 +210,8 @@ export default function TicketDetailPage() {
             </Card>
           )}
 
+          <LinkedTickets ticket={ticket} isAgent={isAgent} canUpdate={can('ticket.update')} onChange={load} />
+
           <Card>
             <CardHeader><CardTitle>Description</CardTitle></CardHeader>
             <CardBody><p className="whitespace-pre-wrap text-sm text-fg/90">{ticket.description || 'No description provided.'}</p></CardBody>
@@ -302,5 +304,74 @@ function Row({ k, v }: { k: string; v: string }) {
       <span className="text-xs text-muted">{k}</span>
       <span className="text-right text-xs font-medium text-fg">{v}</span>
     </div>
+  );
+}
+
+function LinkedTickets({ ticket, isAgent, canUpdate, onChange }: { ticket: Ticket; isAgent: boolean; canUpdate: boolean; onChange: () => void }) {
+  const [open, setOpen] = React.useState(false);
+  const [number, setNumber] = React.useState('');
+  const [linkType, setLinkType] = React.useState<string>(LINK_TYPES[0]);
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState<string | null>(null);
+  const linksList = ticket.links ?? [];
+
+  async function addLink() {
+    setBusy(true); setErr(null);
+    try {
+      // Resolve the target ticket by its human number within the same org's queue.
+      const res = await api.get<{ data: Ticket[] }>(`/tickets?limit=500`);
+      const target = res.data.find((t) => t.ticket_number.toLowerCase() === number.trim().toLowerCase());
+      if (!target) throw new ApiError(404, `No ticket numbered ${number}`);
+      await api.post(`/tickets/${ticket.id}/links`, { toTicketId: target.id, linkType });
+      setNumber(''); setOpen(false); onChange();
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.detail : 'Failed to link');
+    } finally { setBusy(false); }
+  }
+
+  async function removeLink(linkId: string) {
+    await api.del(`/tickets/${ticket.id}/links/${linkId}`).catch(() => {});
+    onChange();
+  }
+
+  if (linksList.length === 0 && !isAgent) return null;
+  return (
+    <Card>
+      <div className="flex items-center justify-between border-b border-border p-4">
+        <CardTitle>Linked tickets</CardTitle>
+        {isAgent && canUpdate && <Button size="sm" variant="outline" onClick={() => setOpen((o) => !o)}>{open ? 'Cancel' : 'Link a ticket'}</Button>}
+      </div>
+      <CardBody className="space-y-2">
+        {open && (
+          <div className="space-y-2 rounded-md border border-border bg-surface-2/40 p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Select className="h-9 w-40" value={linkType} onChange={(e) => setLinkType(e.target.value)}>
+                {LINK_TYPES.map((t) => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
+              </Select>
+              <input
+                value={number}
+                onChange={(e) => setNumber(e.target.value)}
+                placeholder="Ticket number (e.g. ACME-000002)"
+                className="h-9 flex-1 rounded-md border border-border bg-surface px-3 text-sm text-fg"
+              />
+              <Button size="sm" onClick={addLink} disabled={busy || !number.trim()}>Link</Button>
+            </div>
+            {err && <p className="text-xs text-danger">{err}</p>}
+          </div>
+        )}
+        {linksList.length === 0 ? (
+          <p className="text-sm text-muted">No linked tickets.</p>
+        ) : (
+          linksList.map((l) => (
+            <div key={l.id} className="flex items-center gap-2 rounded-md border border-border bg-surface-2/40 px-3 py-2">
+              <Badge tone="neutral">{l.label}</Badge>
+              <span className="font-mono text-xs text-muted">{l.other_number}</span>
+              <span className="min-w-0 flex-1 truncate text-sm text-fg/90">{l.other_subject}</span>
+              {isAgent && canUpdate && <button onClick={() => removeLink(l.id)} className="text-xs text-muted hover:text-danger">remove</button>}
+            </div>
+          ))
+        )}
+      </CardBody>
+    </Card>
   );
 }

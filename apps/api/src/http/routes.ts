@@ -17,6 +17,7 @@ import * as compliance from '../modules/compliance.js';
 import * as elevation from '../modules/elevation.js';
 import * as attachments from '../modules/attachments.js';
 import * as kb from '../modules/kb.js';
+import * as links from '../modules/links.js';
 import { computeScore, grade } from '../modules/posture.js';
 import { audit, verifyChain, formatExport, type ExportableRow } from '../modules/audit.js';
 import { authorize } from '../authz/pdp.js';
@@ -232,6 +233,29 @@ export async function registerRoutes(app: FastifyInstance) {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const body = z.object({ targetGroup: z.string(), reason: z.string().optional() }).parse(req.body);
     return tickets.escalate(p, id, body.targetGroup, body.reason);
+  });
+
+  // ---------------- Ticket links & merge ----------------
+  app.post('/api/v1/tickets/:id/links', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ toTicketId: z.string().uuid(), linkType: z.string() }).parse(req.body);
+    const link = await links.createLink(p, id, body.toTicketId, body.linkType);
+    reply.status(201);
+    return link;
+  });
+
+  app.delete('/api/v1/tickets/:id/links/:linkId', async (req) => {
+    const p = await requirePrincipal(req);
+    const { linkId } = z.object({ id: z.string().uuid(), linkId: z.string().uuid() }).parse(req.params);
+    return links.removeLink(p, linkId);
+  });
+
+  app.post('/api/v1/tickets/:id/merge', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ intoTicketId: z.string().uuid() }).parse(req.body);
+    return links.merge(p, id, body.intoTicketId);
   });
 
   // ---------------- Attachments ----------------

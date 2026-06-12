@@ -45,6 +45,7 @@ export const api = {
   get: <T>(p: string) => request<T>('GET', p),
   post: <T>(p: string, body?: unknown) => request<T>('POST', p, body),
   patch: <T>(p: string, body?: unknown) => request<T>('PATCH', p, body),
+  del: <T>(p: string) => request<T>('DELETE', p),
 };
 
 // ---- Typed helpers ----
@@ -83,7 +84,11 @@ export interface Ticket {
   slas?: Array<{ id: string; metric: string; state: string; due_at: string }>;
   tasks?: Array<{ id: string; step_key: string; label: string; assignee_role: string | null; status: string; automatable: boolean; position: number }>;
   approvals?: Array<{ id: string; status: string }>;
+  parent_ticket_id?: string | null;
+  links?: Array<{ id: string; direction: 'outgoing' | 'incoming'; label: string; link_type: string; other_id: string; other_number: string; other_subject: string }>;
 }
+
+export const LINK_TYPES = ['related_to', 'duplicate_of', 'caused_by', 'blocks', 'child_of'] as const;
 
 export interface CatalogItem {
   key: string;
