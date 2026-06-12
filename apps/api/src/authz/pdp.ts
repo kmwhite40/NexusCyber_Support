@@ -27,6 +27,7 @@ function hasVerb(principal: Principal, verb: string): boolean {
 /** Is the principal allowed to touch a resource in this org (ABAC scope)? */
 function inOrgScope(principal: Principal, orgId?: string | null): boolean {
   if (!orgId) return true; // org-agnostic resource
+  if (principal.permissions.includes('admin.superuser')) return true; // platform superuser: all orgs
   if (principal.plane === 'customer') return principal.organizationId === orgId;
   // nexus plane: must be an assigned customer
   return principal.assignedOrgs.includes(orgId);

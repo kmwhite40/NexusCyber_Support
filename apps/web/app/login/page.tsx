@@ -109,7 +109,7 @@ export default function LoginPage() {
               }}
             >
               <MicrosoftLogo className="size-4" />
-              {sso.label || 'Sign in as Anchor staff'}
+              {sso.label || 'Sign in as Admin'}
             </Button>
           )}
           {sso.customerEnabled && (

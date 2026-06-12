@@ -138,7 +138,7 @@ export async function registerRoutes(app: FastifyInstance) {
   // Public: lets the login UI decide which SSO buttons to show (no rebuild to toggle).
   app.get('/api/v1/auth/config', async () => ({
     oidcEnabled: agentOidcOn(),
-    oidcLabel: 'Sign in as Anchor staff',
+    oidcLabel: 'Sign in as Admin',
     customerOidcEnabled: customerOidcOn(),
     customerOidcLabel: 'Sign in with your organization',
   }));
