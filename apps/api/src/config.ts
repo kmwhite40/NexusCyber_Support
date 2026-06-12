@@ -64,7 +64,9 @@ function required(name: string, fallback?: string): string {
 const adminDatabaseUrl = required('DATABASE_URL', 'postgres://nexus:nexus@localhost:5432/nexus');
 
 export const config: Config = {
-  port: Number(process.env.API_PORT ?? 4000),
+  // Azure App Service (Code/Linux) injects PORT and routes to it; honor it first,
+  // then API_PORT, then the local default.
+  port: Number(process.env.PORT ?? process.env.API_PORT ?? 4000),
   adminDatabaseUrl,
   appDatabaseUrl:
     process.env.APP_DATABASE_URL ?? 'postgres://nexus_app:nexus_app@localhost:5432/nexus',
