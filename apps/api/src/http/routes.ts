@@ -27,6 +27,7 @@ import * as services from '../modules/services.js';
 import * as notifications from '../modules/notifications.js';
 import * as alerts from '../modules/alerts.js';
 import * as channels from '../modules/channels.js';
+import * as dashboards from '../modules/dashboards.js';
 import { computeScore, grade } from '../modules/posture.js';
 import { audit, verifyChain, formatExport, type ExportableRow } from '../modules/audit.js';
 import { authorize, can } from '../authz/pdp.js';
@@ -1004,4 +1005,10 @@ export async function registerRoutes(app: FastifyInstance) {
   app.get('/api/v1/channels', async (req) => { const p = await requirePrincipal(req); return { data: await channels.listChannels(p) }; });
   app.post('/api/v1/channels', async (req, reply) => { const p = await requirePrincipal(req); const b = z.object({ type: z.enum(['email','portal','widget']), name: z.string().min(1), config: z.record(z.any()).optional(), enabled: z.boolean().optional(), organizationId: z.string().uuid().optional() }).parse(req.body); reply.code(201); return channels.createChannel(p, b); });
   app.patch('/api/v1/channels/:id', async (req) => { const p = await requirePrincipal(req); const { id } = z.object({ id: z.string().uuid() }).parse(req.params); const b = z.object({ name: z.string().optional(), config: z.record(z.any()).optional(), enabled: z.boolean().optional() }).parse(req.body); return channels.updateChannel(p, id, b); });
+
+  // ---------------- Named dashboards ----------------
+  app.get('/api/v1/dashboards', async (req) => { const p = await requirePrincipal(req); return { data: await dashboards.listDashboards(p) }; });
+  app.post('/api/v1/dashboards', async (req, reply) => { const p = await requirePrincipal(req); const b = z.object({ name: z.string().min(1), layout: z.array(z.object({ type: z.string() })).optional(), organizationId: z.string().uuid().optional() }).parse(req.body); reply.code(201); return dashboards.createDashboard(p, b); });
+  app.patch('/api/v1/dashboards/:id', async (req) => { const p = await requirePrincipal(req); const { id } = z.object({ id: z.string().uuid() }).parse(req.params); const b = z.object({ name: z.string().optional(), layout: z.array(z.object({ type: z.string() })).optional() }).parse(req.body); return dashboards.updateDashboard(p, id, b); });
+  app.delete('/api/v1/dashboards/:id', async (req) => { const p = await requirePrincipal(req); const { id } = z.object({ id: z.string().uuid() }).parse(req.params); return dashboards.deleteDashboard(p, id); });
 }

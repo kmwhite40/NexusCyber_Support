@@ -296,3 +296,11 @@ export const channelsApi = {
   create: (b: { type: string; name: string; config?: Record<string, unknown>; enabled?: boolean; organizationId?: string }) => api.post<Channel>('/channels', b),
   update: (id: string, b: { name?: string; config?: Record<string, unknown>; enabled?: boolean }) => api.patch<Channel>(`/channels/${id}`, b),
 };
+
+export interface Dashboard { id: string; organization_id: string; owner_user_id: string | null; name: string; layout: { type: string }[]; is_default: boolean; }
+export const dashboardsApi = {
+  list: () => api.get<{ data: Dashboard[] }>('/dashboards').then((r) => r.data),
+  create: (b: { name: string; layout?: { type: string }[]; organizationId?: string }) => api.post<Dashboard>('/dashboards', b),
+  update: (id: string, b: { name?: string; layout?: { type: string }[] }) => api.patch<Dashboard>(`/dashboards/${id}`, b),
+  remove: (id: string) => api.del<{ ok: true }>(`/dashboards/${id}`),
+};
