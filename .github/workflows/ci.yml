@@ -10,6 +10,21 @@ jobs:
   build-test:
     name: Typecheck · Test · Build
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: nexus
+          POSTGRES_PASSWORD: nexus
+          POSTGRES_DB: nexus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nexus" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://nexus:nexus@localhost:5432/nexus
+      APP_DATABASE_URL: postgres://nexus_app:nexus_app@localhost:5432/nexus
     steps:
       - uses: actions/checkout@v4
 
@@ -24,15 +39,25 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Unit tests (API)
+      # Migration 0001 creates the nexus_app role; migrate + seed populate the test DB so
+      # the DB-backed integration suites (skip-if-no-DB) execute in CI.
+      - name: Migrate & seed
+        run: |
+          npm --workspace apps/api run migrate
+          npm --workspace apps/api run seed
+
+      - name: Tests (unit + integration)
         run: npm --workspace apps/api run test
 
       - name: Build
         run: npm run build
 
   security:
-    name: Dependency & secret scan
+    name: Dependency · Secret · SAST · SBOM
     runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -56,3 +81,27 @@ jobs:
             echo "Potential secret found"; exit 1;
           else
             echo "No secrets detected"; fi
+
+      - name: Generate SBOM (CycloneDX)
+        run: npx --yes @cyclonedx/cyclonedx-npm@^1 --output-file sbom.json || echo "sbom generation non-fatal"
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.json
+          if-no-files-found: ignore
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+      - name: Dependency review
+        uses: actions/dependency-review-action@v4
+        if: github.event_name == 'pull_request'
+        with:
+          fail-on-severity: high

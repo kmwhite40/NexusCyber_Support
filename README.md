@@ -102,10 +102,26 @@ npm run bootstrap                  # install + db up + migrate + seed (one shot)
   resolved via the system context so NULL-org rows aren't blocked by tenant policies.
 - **On-call/paging engine**: deterministic weekly rotation, current-responder resolution,
   page → acknowledge → escalate (single-owner reassignment).
-- **Tests**: 22 unit tests (authorization PDP, SLA business-hours math, priority matrix,
-  posture scoring, on-call rotation) run without a database.
-- **CI** ([.github/workflows/ci.yml](.github/workflows/ci.yml)): typecheck → test → build, plus
-  `npm audit` (high+) and a secret scan.
+- **Compliance & evidence**: NIST 800-53 control catalog with runtime evidence mappings
+  (posture / ConMon / audit), per-control coverage (satisfied / partial / gap), hash-stamped
+  evidence-package export, and posture exceptions with separation-of-duties approval.
+- **Tamper-evident audit + SIEM export**: hash-chained `audit_logs` with a monotonic sequence
+  and advisory-lock-serialized appends (the chain cannot fork under concurrency); `GET
+  /audit/verify` recomputes the chain, `GET /audit/export` streams NDJSON or CEF to a SIEM sink.
+- **JIT elevation & break-glass**: time-boxed privilege grants with separation-of-duties
+  approval, effective only while active; break-glass grants are immediate but loud (critical
+  audit event + on-call page).
+- **Secure attachments**: content-type/size allow-listing, content hashing, malware-scan seam
+  (EICAR-aware mock), and org-scoped streaming downloads — infected files are stored but never
+  served.
+- **Adapter seams** (gov-egress-safe): SIEM sink, blob store, and malware scanner are swappable
+  interfaces with mock implementations; no third-party runtime fetch.
+- **Tests**: 60 unit + DB-backed integration tests (PDP, SLA math, priority matrix, posture
+  scoring, on-call rotation, compliance coverage, audit chain, elevation SoD, attachments);
+  integration suites auto-skip when no `DATABASE_URL` is configured.
+- **CI** ([.github/workflows/ci.yml](.github/workflows/ci.yml)): typecheck → migrate/seed →
+  test (with a Postgres service) → build, plus `npm audit` (high+), secret scan, **CodeQL**
+  SAST, **CycloneDX SBOM**, and dependency review.
 
 ## Mapping to the spec
 
