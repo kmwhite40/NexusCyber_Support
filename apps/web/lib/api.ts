@@ -280,3 +280,12 @@ export interface Delivery {
 export const emailLogApi = {
   list: (q = '') => api.get<{ data: Delivery[] }>(`/notifications/deliveries${q}`).then((r) => r.data),
 };
+
+export interface Alert { id: string; organization_id: string; source: string; dedup_key: string | null; severity: string; state: string; summary: string; acknowledged_at: string | null; resolved_at: string | null; escalated_page_id: string | null; escalated_ticket_id: string | null; created_at: string; }
+export const alertsApi = {
+  list: (q = '') => api.get<{ data: Alert[] }>(`/alerts${q}`).then((r) => r.data),
+  create: (b: { summary: string; severity?: string; source?: string; dedupKey?: string; organizationId?: string }) => api.post<Alert>('/alerts', b),
+  ack: (id: string) => api.post<Alert>(`/alerts/${id}/ack`),
+  resolve: (id: string) => api.post<Alert>(`/alerts/${id}/resolve`),
+  escalate: (id: string, b: { toPage?: boolean; toTicket?: boolean }) => api.post(`/alerts/${id}/escalate`, b),
+};

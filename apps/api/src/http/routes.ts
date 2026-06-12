@@ -25,6 +25,7 @@ import * as queues from '../modules/queues.js';
 import * as integrations from '../modules/integrations.js';
 import * as services from '../modules/services.js';
 import * as notifications from '../modules/notifications.js';
+import * as alerts from '../modules/alerts.js';
 import { computeScore, grade } from '../modules/posture.js';
 import { audit, verifyChain, formatExport, type ExportableRow } from '../modules/audit.js';
 import { authorize, can } from '../authz/pdp.js';
@@ -990,4 +991,11 @@ export async function registerRoutes(app: FastifyInstance) {
     }).parse(req.query);
     return { data: await notifications.listDeliveries(p, q) };
   });
+
+  // ---------------- Alerts ----------------
+  app.get('/api/v1/alerts', async (req) => { const p = await requirePrincipal(req); const q = z.object({ state: z.string().optional(), severity: z.string().optional() }).parse(req.query); return { data: await alerts.listAlerts(p, q) }; });
+  app.post('/api/v1/alerts', async (req, reply) => { const p = await requirePrincipal(req); const b = z.object({ summary: z.string().min(1), severity: z.enum(['P1','P2','P3','P4']).optional(), source: z.string().optional(), dedupKey: z.string().optional(), details: z.record(z.any()).optional(), organizationId: z.string().uuid().optional() }).parse(req.body); reply.code(201); return alerts.createAlert(p, b); });
+  app.post('/api/v1/alerts/:id/ack', async (req) => { const p = await requirePrincipal(req); const { id } = z.object({ id: z.string().uuid() }).parse(req.params); return alerts.acknowledgeAlert(p, id); });
+  app.post('/api/v1/alerts/:id/resolve', async (req) => { const p = await requirePrincipal(req); const { id } = z.object({ id: z.string().uuid() }).parse(req.params); return alerts.resolveAlert(p, id); });
+  app.post('/api/v1/alerts/:id/escalate', async (req) => { const p = await requirePrincipal(req); const { id } = z.object({ id: z.string().uuid() }).parse(req.params); const b = z.object({ toPage: z.boolean().optional(), toTicket: z.boolean().optional() }).parse(req.body ?? {}); return alerts.escalateAlert(p, id, b); });
 }
