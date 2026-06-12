@@ -302,6 +302,7 @@ async function run() {
     const tierGroups = [
       'Tier 1 — Helpdesk Analyst',
       'Tier 2 — M365 Administrator',
+      'Tier 3 — Cloud Operations',
       'Security Operations',
       'Engagement Management',
     ];
@@ -337,7 +338,9 @@ async function run() {
     // ---- Service catalog (request fulfillment workflows) ----
     const T1 = 'Tier 1 — Helpdesk Analyst';
     const T2 = 'Tier 2 — M365 Administrator';
+    const T3 = 'Tier 3 — Cloud Operations';
     const SEC = 'Security Operations';
+    const ENG = 'Engagement Management';
     const step = (key: string, label: string, role: string, automatable = false) => ({ key, label, role, automatable });
 
     const catalog = [
@@ -427,6 +430,128 @@ async function run() {
           step('session', 'Establish session via approved tool', 'Tier1'),
           step('resolve', 'Troubleshoot / resolve (reassign to Tier 2 if M365)', 'Tier1'),
           step('evidence', 'Session log/recording -> evidence', 'Tier1'),
+        ],
+      },
+
+      // ---- Microsoft 365 (GCC / GCC High) ----
+      {
+        key: 'm365.shared_mailbox', name: 'Shared mailbox & distribution list provisioning', category: 'Microsoft 365',
+        ticket_type: 'service_request', owning_tier: T2, escalates_to: SEC,
+        requires_approval: false, approver_hint: null, default_priority: 'P3',
+        security_class: 'standard', sla_response_min: 60, sla_resolution_min: 480,
+        steps: [
+          step('triage', 'Tier 1: validate request, owner & naming standard', 'Tier1'),
+          step('create', 'Create shared mailbox / DL in Exchange Online (GCC)', 'Tier2', true),
+          step('delegate', 'Assign send-as / full-access delegates (least privilege)', 'Tier2', true),
+          step('verify', 'Verify mail flow + delegate access', 'Tier2'),
+          step('notify', 'Notify requester', 'Tier2', true),
+        ],
+      },
+      {
+        key: 'm365.guest_access', name: 'External (B2B) guest access', category: 'Microsoft 365',
+        ticket_type: 'access_request', owning_tier: T2, escalates_to: SEC,
+        requires_approval: true, approver_hint: 'Sponsor + Security Operations', default_priority: 'P2',
+        security_class: 'security', sla_response_min: 30, sla_resolution_min: 240,
+        steps: [
+          step('triage', 'Tier 1: validate sponsor & business need', 'Tier1'),
+          step('approval', 'SecOps + sponsor approval (external sharing in gov tenant)', 'SecurityAnalyst'),
+          step('configure', 'Create B2B guest; scope entitlement + Conditional Access', 'Tier2', true),
+          step('timebound', 'Set access review / expiration (time-bound)', 'Tier2', true),
+          step('verify', 'Verify least-privilege guest access', 'Tier2'),
+        ],
+      },
+      {
+        key: 'm365.purview_dlp_exception', name: 'Purview DLP / sensitivity-label exception', category: 'Microsoft 365',
+        ticket_type: 'service_request', owning_tier: SEC, escalates_to: ENG,
+        requires_approval: true, approver_hint: 'Data owner + Security Operations', default_priority: 'P2',
+        security_class: 'security', sla_response_min: 30, sla_resolution_min: 240,
+        steps: [
+          step('triage', 'Classify data + policy impacted (CUI/ITAR check)', 'SecurityAnalyst'),
+          step('approval', 'Data owner + SecOps approval (SoD)', 'OrgAdmin'),
+          step('scope', 'Scope exception (user / site / time-bound)', 'SecurityAnalyst', true),
+          step('implement', 'Apply Purview policy exception', 'Tier2', true),
+          step('evidence', 'Record exception + compensating control', 'SecurityAnalyst'),
+        ],
+      },
+
+      // ---- Azure Government ----
+      {
+        key: 'azure.pim_role', name: 'Azure RBAC / PIM eligible role assignment', category: 'Azure Government',
+        ticket_type: 'access_request', owning_tier: T3, escalates_to: SEC,
+        requires_approval: true, approver_hint: 'Resource owner + Security Operations', default_priority: 'P2',
+        security_class: 'privileged', sla_response_min: 30, sla_resolution_min: 240,
+        steps: [
+          step('triage', 'Validate role + scope (least privilege)', 'Tier3'),
+          step('approval', 'Resource owner + SecOps approval', 'OrgAdmin'),
+          step('configure', 'Make eligible in PIM; require MFA + justification', 'Tier3', true),
+          step('timebound', 'Set activation window + max duration', 'Tier3', true),
+          step('verify', 'Verify eligible (not standing) assignment', 'Tier3'),
+        ],
+      },
+      {
+        key: 'azure.landing_zone', name: 'Azure Gov landing-zone / resource provisioning', category: 'Azure Government',
+        ticket_type: 'service_request', owning_tier: T3, escalates_to: ENG,
+        requires_approval: true, approver_hint: 'Cloud governance board', default_priority: 'P3',
+        security_class: 'standard', sla_response_min: 60, sla_resolution_min: 1440,
+        steps: [
+          step('triage', 'Validate subscription / management group + naming & tags', 'Tier3'),
+          step('approval', 'Cloud governance approval', 'OrgAdmin'),
+          step('provision', 'Deploy via IaC (policy + security baseline)', 'Tier3', true),
+          step('policy', 'Confirm Azure Policy / guardrails applied', 'Tier3', true),
+          step('verify', 'Verify compliance + cost tags', 'Tier3'),
+        ],
+      },
+      {
+        key: 'azure.keyvault_access', name: 'Key Vault access policy change', category: 'Azure Government',
+        ticket_type: 'access_request', owning_tier: T3, escalates_to: SEC,
+        requires_approval: true, approver_hint: 'Vault owner + Security Operations', default_priority: 'P2',
+        security_class: 'security', sla_response_min: 30, sla_resolution_min: 240,
+        steps: [
+          step('triage', 'Validate secret/key + requester need', 'Tier3'),
+          step('approval', 'Vault owner + SecOps approval', 'SecurityAnalyst'),
+          step('grant', 'Grant access policy / RBAC (least privilege)', 'Tier3', true),
+          step('timebound', 'Time-bound access + enable logging', 'Tier3', true),
+          step('verify', 'Verify scoped access', 'Tier3'),
+        ],
+      },
+
+      // ---- AWS GovCloud (US) ----
+      {
+        key: 'aws.identity_center', name: 'AWS IAM Identity Center permission-set assignment', category: 'AWS GovCloud',
+        ticket_type: 'access_request', owning_tier: T3, escalates_to: SEC,
+        requires_approval: true, approver_hint: 'Account owner + Security Operations', default_priority: 'P2',
+        security_class: 'privileged', sla_response_min: 30, sla_resolution_min: 240,
+        steps: [
+          step('triage', 'Validate permission set + account scope', 'Tier3'),
+          step('approval', 'Account owner + SecOps approval', 'OrgAdmin'),
+          step('assign', 'Assign permission set in IAM Identity Center', 'Tier3', true),
+          step('guardrail', 'Confirm SCP guardrails + session duration', 'Tier3', true),
+          step('verify', 'Verify least-privilege effective access', 'Tier3'),
+        ],
+      },
+      {
+        key: 'aws.account_provisioning', name: 'AWS GovCloud account / OU provisioning', category: 'AWS GovCloud',
+        ticket_type: 'service_request', owning_tier: T3, escalates_to: ENG,
+        requires_approval: true, approver_hint: 'Cloud governance board', default_priority: 'P3',
+        security_class: 'standard', sla_response_min: 120, sla_resolution_min: 2880,
+        steps: [
+          step('triage', 'Validate OU placement + naming', 'Tier3'),
+          step('approval', 'Cloud governance approval', 'OrgAdmin'),
+          step('provision', 'Provision account via Control Tower (GovCloud)', 'Tier3', true),
+          step('baseline', 'Apply SCPs, CloudTrail, Config, GuardDuty baseline', 'Tier3', true),
+          step('verify', 'Verify baseline + billing / tags', 'Tier3'),
+        ],
+      },
+      {
+        key: 'aws.s3_secure_bucket', name: 'AWS S3 bucket provisioning (gov baseline)', category: 'AWS GovCloud',
+        ticket_type: 'service_request', owning_tier: T3, escalates_to: SEC,
+        requires_approval: false, approver_hint: null, default_priority: 'P3',
+        security_class: 'standard', sla_response_min: 60, sla_resolution_min: 480,
+        steps: [
+          step('triage', 'Validate data classification + naming', 'Tier3'),
+          step('provision', 'Create bucket: SSE-KMS, Block Public Access, versioning', 'Tier3', true),
+          step('policy', 'Apply least-privilege bucket policy + TLS-only', 'Tier3', true),
+          step('verify', 'Verify encryption + public-access lockdown', 'Tier3'),
         ],
       },
     ];
