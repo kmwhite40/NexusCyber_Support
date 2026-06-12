@@ -1,19 +1,17 @@
 'use client';
 import React from 'react';
 import Link from 'next/link';
-import { dashboardsApi, type Dashboard } from '@/lib/api';
-import { Card, CardBody, Badge } from '@/components/ui/primitives';
+import { api, dashboardsApi, type Dashboard, type AnalyticsOverview } from '@/lib/api';
+import { Card, CardBody } from '@/components/ui/primitives';
 import { EmptyState, Skeleton } from '@/components/ui/data';
-
-const WIDGET_LABEL: Record<string, string> = {
-  kpis: 'KPI cards', ticket_volume: 'Ticket volume', posture_gauge: 'Posture gauge',
-  top_findings: 'Top posture findings', sla_breaches: 'SLA breaches', recent_tickets: 'Recent tickets',
-};
+import { DashboardWidget } from '@/components/ui/dashboard-widgets';
 
 export default function DashboardsPage() {
   const [list, setList] = React.useState<Dashboard[] | null>(null);
   const [active, setActive] = React.useState<Dashboard | null>(null);
+  const [overview, setOverview] = React.useState<AnalyticsOverview | null>(null);
   React.useEffect(() => { dashboardsApi.list().then((d) => { setList(d); setActive(d.find((x) => x.is_default) ?? d[0] ?? null); }).catch(() => setList([])); }, []);
+  React.useEffect(() => { api.get<AnalyticsOverview>('/analytics/overview').then(setOverview).catch(() => setOverview(null)); }, []);
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
@@ -31,10 +29,8 @@ export default function DashboardsPage() {
           {!active ? <EmptyState title="Select a dashboard" /> : (
             <div className="space-y-3">
               <h2 className="text-lg font-semibold">{active.name}</h2>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {active.layout.map((w, i) => (
-                  <div key={i} className="rounded-lg border border-border bg-surface-2 px-4 py-6 text-center"><Badge>{WIDGET_LABEL[w.type] ?? w.type}</Badge></div>
-                ))}
+              <div className="grid gap-4">
+                {active.layout.map((w, i) => <DashboardWidget key={i} type={w.type} overview={overview} />)}
               </div>
             </div>
           )}
