@@ -9,6 +9,18 @@ import { Button, Card, Input, Badge } from '@/components/ui/primitives';
 import { BrandMark } from '@/components/ui/brand';
 import { AuthLayout, AuthSeparator } from '@/components/ui/auth-page';
 
+/** Microsoft 4-square logo (official brand colors) for the SSO buttons. */
+function MicrosoftLogo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 21 21" width="16" height="16" className={className} aria-hidden="true">
+      <rect x="1" y="1" width="9" height="9" fill="#F25022" />
+      <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
+      <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
+      <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
+    </svg>
+  );
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const { refresh } = useAuth();
@@ -96,6 +108,7 @@ export default function LoginPage() {
                 window.location.href = oidcStartUrl;
               }}
             >
+              <MicrosoftLogo className="size-4" />
               {sso.label || 'Sign in with Microsoft (Gov)'}
             </Button>
           )}
@@ -109,6 +122,7 @@ export default function LoginPage() {
                 window.location.href = oidcCustomerStartUrl;
               }}
             >
+              <MicrosoftLogo className="size-4" />
               {sso.customerLabel || 'Sign in with your organization'}
             </Button>
           )}
