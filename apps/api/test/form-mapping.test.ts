@@ -35,4 +35,15 @@ describe('mapFormAnswers', () => {
     expect(m.requesterId).toBe('self-1');
     expect(m.affectedUserId).toBe('self-1');
   });
+
+  it("routes an 'affected' field to affected-user only; requester falls back to the submitter", () => {
+    const offboarding: FormField[] = [
+      F({ key: 'departing_user', data_type: 'user', maps_to: 'affected' }),
+      F({ key: 'summary', data_type: 'text', maps_to: 'subject' }),
+    ];
+    const m = mapFormAnswers(offboarding, { departing_user: 'usr-leaving', summary: 'Offboard Jo' }, { defaultRequesterId: 'mgr-1' });
+    expect(m.affectedUserId).toBe('usr-leaving'); // the departing person
+    expect(m.requesterId).toBe('mgr-1'); // the manager raising it (submitter)
+    expect(m.customFields).toMatchObject({ departing_user: 'usr-leaving' });
+  });
 });

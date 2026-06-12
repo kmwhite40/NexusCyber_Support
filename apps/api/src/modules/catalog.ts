@@ -55,7 +55,10 @@ export async function createRequest(actor: Principal, key: string, input: Create
       mapped = mapFormAnswers(form.fields, input.answers, {
         defaultRequesterId: actor.plane === 'customer' ? actor.id : null,
       });
-      if (actor.plane === 'nexus' && !mapped.requesterId) {
+      // Require on-behalf-of for agents only when the form actually routes a field to
+      // the requester (forms like offboarding have no requester field — agent is requester).
+      const hasRequesterField = form.fields.some((ff: { maps_to: string | null }) => ff.maps_to === 'requester');
+      if (actor.plane === 'nexus' && hasRequesterField && !mapped.requesterId) {
         throw Errors.badRequest('on-behalf-of is required for agent-created requests');
       }
     }

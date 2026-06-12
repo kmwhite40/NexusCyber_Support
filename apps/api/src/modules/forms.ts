@@ -177,6 +177,11 @@ export function mapFormAnswers(
       case 'requester':
         if (v) { out.requesterId = String(v); out.affectedUserId = String(v); }
         break;
+      case 'affected':
+        // The person the request is ABOUT (e.g. offboarding) when that differs from
+        // the requester. Sets affected-user only; requester falls back to the submitter.
+        if (v) { out.affectedUserId = String(v); out.customFields[f.key] = v; }
+        break;
       case 'approvers':
         if (Array.isArray(v)) out.approverIds = v.map(String).filter(Boolean);
         break;
@@ -191,7 +196,7 @@ export function mapFormAnswers(
   }
   if (!out.requesterId && opts.defaultRequesterId) {
     out.requesterId = opts.defaultRequesterId;
-    out.affectedUserId = opts.defaultRequesterId;
+    if (!out.affectedUserId) out.affectedUserId = opts.defaultRequesterId;
   }
   return out;
 }
