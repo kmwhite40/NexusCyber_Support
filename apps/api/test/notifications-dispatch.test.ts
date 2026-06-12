@@ -64,4 +64,28 @@ describe('dispatch', () => {
     expect(portal[4]).toBe('sent'); // status column
     expect(inserts.some((p) => p[5] && String(p[5]).includes('falling back'))).toBe(true);
   });
+
+  it('posts to Teams exactly once regardless of recipient count', async () => {
+    const { sql, inserts } = makeSql({
+      cloud: 'commercial', emailCap: 'requires_validation', teamsCap: 'supported',
+      recipients: [{ user_id: 'u1', email: 'a@x.gov' }, { user_id: 'u2', email: 'b@x.gov' }, { user_id: 'u3', email: 'c@x.gov' }],
+    });
+    const adapter = adapterStub();
+    await dispatch(sql, 'org-1', evt('sla.breached'), adapter);
+    expect(adapter.sendTeams).toHaveBeenCalledTimes(1);
+    expect(adapter.sendEmail).not.toHaveBeenCalled();
+    const teamsRows = inserts.filter((p) => p[2] === 'teams');
+    expect(teamsRows).toHaveLength(1);
+    expect(teamsRows[0][3]).toBeNull(); // recipient column is null for channel posts
+  });
+
+  it('records a skipped row for every eligible channel when there are no recipients', async () => {
+    const { sql, inserts } = makeSql({
+      cloud: 'commercial', emailCap: 'supported', teamsCap: 'supported', recipients: [],
+    });
+    const adapter = adapterStub();
+    await dispatch(sql, 'org-1', evt('sla.breached'), adapter);
+    const skipped = inserts.filter((p) => p[4] === 'skipped');
+    expect(skipped.length).toBe(2); // teams + email both skipped, chain not short-circuited
+  });
 });

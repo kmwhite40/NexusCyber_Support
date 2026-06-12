@@ -49,7 +49,12 @@ async function buildGraphClient(): Promise<GraphClient | null> {
 
 /** The Graph client, or null when M365 is not configured (used by ingest/health). */
 export function getGraphClient(): Promise<GraphClient | null> {
-  if (!graphClientPromise) graphClientPromise = buildGraphClient();
+  if (!graphClientPromise) {
+    graphClientPromise = buildGraphClient().catch((err) => {
+      graphClientPromise = null; // don't poison the runtime: allow a retry
+      throw err;
+    });
+  }
   return graphClientPromise;
 }
 
@@ -64,7 +69,10 @@ export function getNotificationAdapter(): Promise<NotificationAdapter> {
         serviceMailbox: config.m365.serviceMailbox,
         teamsEnabled: config.m365.teamsEnabled,
       });
-    })();
+    })().catch((err) => {
+      adapterPromise = null; // don't poison the runtime: allow a retry
+      throw err;
+    });
   }
   return adapterPromise;
 }

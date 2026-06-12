@@ -86,14 +86,19 @@ export async function dispatch(
     }
     if (recipients.length === 0) {
       await record(sql, orgId, evt.type, channel, null, 'skipped', 'no recipients');
-      return; // channel is available; nobody to notify beyond the portal floor
+      continue; // channel is available; record skipped, but let later channels record too
     }
+    if (channel === 'teams') {
+      // Teams is a single channel post (no per-person addressing): send ONCE.
+      const result = await adapter.sendTeams({ summary: tpl.subject, text: tpl.text });
+      await record(sql, orgId, evt.type, channel, null, result.status, result.error ?? null, result.providerMessageId);
+      if (result.status === 'sent') return; // posted; stop the chain
+      continue; // send failed -> fall through to the next channel
+    }
+    // email: per-recipient addressing
     let anySent = false;
     for (const r of recipients) {
-      const result =
-        channel === 'email'
-          ? await adapter.sendEmail({ to: r.email, subject: tpl.subject, html: tpl.html, text: tpl.text })
-          : await adapter.sendTeams({ summary: tpl.subject, text: tpl.text });
+      const result = await adapter.sendEmail({ to: r.email, subject: tpl.subject, html: tpl.html, text: tpl.text });
       await record(sql, orgId, evt.type, channel, r.email, result.status, result.error ?? null, result.providerMessageId);
       if (result.status === 'sent') anySent = true;
     }
