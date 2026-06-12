@@ -221,7 +221,7 @@ export async function provisionUser(
 export async function getOrganization(actor: Principal, id: string) {
   authorize(actor, 'org.read', { organizationId: id });
   return withOrgContext(orgContextFor(actor), async (sql) => {
-    const org = (await sql.query('SELECT * FROM organizations WHERE id=$1', [id])).rows[0];
+    const org = (await sql.query('SELECT id, name, cloud, status, data_boundary, created_at FROM organizations WHERE id=$1', [id])).rows[0];
     if (!org) throw Errors.notFound('organization not found');
     const userCount = (await sql.query('SELECT count(*)::int AS n FROM users WHERE organization_id=$1', [id])).rows[0].n;
     const openTickets = (await sql.query(`SELECT count(*)::int AS n FROM tickets WHERE organization_id=$1 AND status NOT IN ('closed','resolved')`, [id])).rows[0].n;
@@ -237,15 +237,16 @@ export async function listOrganizationUsers(actor: Principal, id: string) {
   });
 }
 
-export interface UpdateOrgInput { name?: string; cloud?: string; dataBoundary?: string; }
+export interface UpdateOrgInput { name?: string; cloud?: 'commercial' | 'gcc' | 'gcchigh' | 'azgov'; dataBoundary?: string; }
 
 export async function updateOrganization(actor: Principal, id: string, input: UpdateOrgInput) {
   authorize(actor, 'org.manage', { organizationId: id });
   return withOrgContext(orgContextFor(actor), async (sql) => {
-    const cur = (await sql.query('SELECT * FROM organizations WHERE id=$1', [id])).rows[0];
+    const cur = (await sql.query('SELECT id, name, cloud, status, data_boundary, created_at FROM organizations WHERE id=$1', [id])).rows[0];
     if (!cur) throw Errors.notFound('organization not found');
     const { rows } = await sql.query(
-      `UPDATE organizations SET name=$1, cloud=$2, data_boundary=$3 WHERE id=$4 RETURNING *`,
+      `UPDATE organizations SET name=$1, cloud=$2, data_boundary=$3 WHERE id=$4
+       RETURNING id, name, cloud, status, data_boundary, created_at`,
       [input.name ?? cur.name, input.cloud ?? cur.cloud, input.dataBoundary ?? cur.data_boundary, id],
     );
     await audit(actor, { action: 'org.update', organizationId: id, resourceType: 'organization', resourceId: id });

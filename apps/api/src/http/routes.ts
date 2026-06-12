@@ -174,7 +174,7 @@ export async function registerRoutes(app: FastifyInstance) {
   app.patch('/api/v1/organizations/:id', async (req) => {
     const p = await requirePrincipal(req);
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
-    const body = z.object({ name: z.string().optional(), cloud: z.string().optional(), dataBoundary: z.string().optional() }).parse(req.body);
+    const body = z.object({ name: z.string().optional(), cloud: z.enum(['commercial', 'gcc', 'gcchigh', 'azgov']).optional(), dataBoundary: z.string().max(100).optional() }).parse(req.body);
     return accounts.updateOrganization(p, id, body);
   });
 
