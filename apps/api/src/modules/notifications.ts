@@ -150,7 +150,7 @@ export async function listDeliveries(actor: Principal, filter: DeliveryFilter = 
     if (filter.channel) { params.push(filter.channel); where.push(`channel = $${params.length}`); }
     if (filter.status) { params.push(filter.status); where.push(`status = $${params.length}`); }
     if (filter.eventType) { params.push(filter.eventType); where.push(`event_type = $${params.length}`); }
-    params.push(Math.min(Number(filter.limit) || 200, 500));
+    params.push(Math.min(Math.max(1, Number(filter.limit) || 200), 500));
     const { rows } = await sql.query(
       `SELECT id, event_type, channel, recipient, status, substitution_reason, provider_message_id, created_at
          FROM notification_deliveries ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY created_at DESC LIMIT $${params.length}`,

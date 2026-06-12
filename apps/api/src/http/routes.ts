@@ -981,6 +981,12 @@ export async function registerRoutes(app: FastifyInstance) {
   // ---------------- Notification delivery log ----------------
   app.get('/api/v1/notifications/deliveries', async (req) => {
     const p = await requirePrincipal(req);
-    return { data: await notifications.listDeliveries(p, req.query as any) };
+    const q = z.object({
+      channel: z.string().optional(),
+      status: z.string().optional(),
+      eventType: z.string().optional(),
+      limit: z.coerce.number().int().min(1).max(500).optional(),
+    }).parse(req.query);
+    return { data: await notifications.listDeliveries(p, q) };
   });
 }
