@@ -3,8 +3,9 @@
 // requests (docs/nexus/workflows/service-desk-workflows.md).
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { api, catalog, type CatalogItem, type Ticket, ApiError } from '@/lib/api';
+import { api, catalog, users, attachmentsApi, type CatalogItem, type Ticket, type CatalogForm, type FormFieldDef, ApiError } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
+import { UserPicker } from '@/components/user-picker';
 import { Card, CardBody, CardHeader, CardTitle, Button, Badge, Input, Textarea, Field, Select } from '@/components/ui/primitives';
 import { Skeleton } from '@/components/ui/data';
 
@@ -87,11 +88,7 @@ export default function CatalogPage() {
 }
 
 function RequestModal({
-  item,
-  orgs,
-  isAgent,
-  onClose,
-  onCreated,
+  item, orgs, isAgent, onClose, onCreated,
 }: {
   item: CatalogItem;
   orgs: Array<{ id: string; name: string }>;
@@ -99,18 +96,34 @@ function RequestModal({
   onClose: () => void;
   onCreated: (t: Ticket) => void;
 }) {
+  const { me } = useAuth();
+  const [form, setForm] = React.useState<CatalogForm | null>(null);
+  const [loaded, setLoaded] = React.useState(false);
+  const [orgId, setOrgId] = React.useState(orgs[0]?.id ?? '');
+  const [answers, setAnswers] = React.useState<Record<string, unknown>>({});
+  const [file, setFile] = React.useState<File | null>(null);
   const [subject, setSubject] = React.useState(item.name);
   const [description, setDescription] = React.useState('');
-  const [orgId, setOrgId] = React.useState(orgs[0]?.id ?? '');
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    catalog.form(item.key).then((r) => setForm(r.form)).catch(() => setForm(null)).finally(() => setLoaded(true));
+  }, [item.key]);
+
+  const searchOrg = isAgent ? orgId : me?.organization_id ?? undefined;
+  const set = (key: string, v: unknown) => setAnswers((a) => ({ ...a, [key]: v }));
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      const t = await catalog.request(item.key, { subject, description, organizationId: isAgent ? orgId : undefined });
+      const body = form
+        ? { organizationId: isAgent ? orgId : undefined, answers }
+        : { subject, description, organizationId: isAgent ? orgId : undefined };
+      const t = await catalog.request(item.key, body);
+      if (file) await attachmentsApi.upload(t.id, file);
       onCreated(t);
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : 'Could not submit request');
@@ -121,16 +134,10 @@ function RequestModal({
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onClick={onClose}>
-      <Card className="w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
+      <Card className="w-full max-w-lg max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <CardHeader><CardTitle>{item.name}</CardTitle></CardHeader>
         <CardBody>
-          <div className="mb-4 rounded-md border border-border bg-surface-2/50 p-3 text-xs text-muted">
-            <div className="mb-1 flex flex-wrap gap-2">
-              <Badge tone="brand">{item.owning_tier}</Badge>
-              {item.requires_approval && <Badge tone="warning">needs {item.approver_hint ?? 'approval'}</Badge>}
-            </div>
-            Workflow: {item.fulfillment_steps.map((s) => s.label).join(' → ')}
-          </div>
+          {form && <p className="mb-4 text-xs text-muted">Required fields are marked with an asterisk<span className="text-danger">*</span></p>}
           <form onSubmit={submit}>
             {isAgent && (
               <Field label="Customer organization">
@@ -139,15 +146,53 @@ function RequestModal({
                 </Select>
               </Field>
             )}
-            <Field label="Subject">
-              <Input value={subject} onChange={(e) => setSubject(e.target.value)} required minLength={3} />
-            </Field>
-            <Field label="Details">
-              <Textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Anything the fulfilling tier should know…" />
-            </Field>
+
+            {!loaded && <p className="text-xs text-muted">Loading…</p>}
+
+            {loaded && form && form.fields.map((f: FormFieldDef) => (
+              <Field key={f.key} label={f.required ? `${f.label} *` : f.label}>
+                {f.data_type === 'textarea' ? (
+                  <Textarea value={(answers[f.key] as string) ?? ''} onChange={(e) => set(f.key, e.target.value)} />
+                ) : f.data_type === 'select' ? (
+                  <Select value={(answers[f.key] as string) ?? ''} onChange={(e) => set(f.key, e.target.value)}>
+                    <option value="" disabled>Select…</option>
+                    {f.options.map((o) => <option key={o} value={o}>{o}</option>)}
+                  </Select>
+                ) : f.data_type === 'checkbox' ? (
+                  <input type="checkbox" checked={!!answers[f.key]} onChange={(e) => set(f.key, e.target.checked)} />
+                ) : f.data_type === 'user' ? (
+                  <UserPicker value={(answers[f.key] as string) ?? null} onChange={(v) => set(f.key, v)} organizationId={searchOrg} />
+                ) : f.data_type === 'user_multi' ? (
+                  <UserPicker value={(answers[f.key] as string[]) ?? []} onChange={(v) => set(f.key, v)} organizationId={searchOrg} multiple />
+                ) : f.data_type === 'attachment' ? (
+                  <div className="rounded-md border border-dashed border-border p-3 text-xs text-muted">
+                    <input type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+                    {file && <span className="ml-2 text-fg">{file.name}</span>}
+                  </div>
+                ) : (
+                  <Input
+                    value={(answers[f.key] as string) ?? ''}
+                    placeholder={f.key === 'summary' ? 'e.g. Create an account on Jira' : undefined}
+                    onChange={(e) => set(f.key, e.target.value)}
+                  />
+                )}
+              </Field>
+            ))}
+
+            {loaded && !form && (
+              <>
+                <Field label="Subject">
+                  <Input value={subject} onChange={(e) => setSubject(e.target.value)} required minLength={3} />
+                </Field>
+                <Field label="Details">
+                  <Textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Anything the fulfilling tier should know…" />
+                </Field>
+              </>
+            )}
+
             {error && <p className="mb-3 text-xs text-danger">{error}</p>}
             <div className="flex gap-3">
-              <Button type="submit" disabled={busy}>{busy ? 'Submitting…' : 'Submit request'}</Button>
+              <Button type="submit" disabled={busy}>{busy ? 'Sending…' : 'Send'}</Button>
               <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
             </div>
           </form>
