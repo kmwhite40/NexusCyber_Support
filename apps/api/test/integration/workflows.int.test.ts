@@ -34,11 +34,13 @@ describeDb('configurable workflows (integration)', () => {
   });
 
   it('an org-specific workflow overrides the default and is enforced', async () => {
+    // Unique per run so the test is idempotent (workflows are unique by org + ticket_type).
+    const customType = `wf_test_${Date.now()}`;
     // Create a restrictive org workflow for a custom type that only allows triage->resolved.
-    const wf = await createWorkflow(manager, { ticketType: 'wf_test_type', name: 'Restrictive', organizationId: acmeId });
+    const wf = await createWorkflow(manager, { ticketType: customType, name: 'Restrictive', organizationId: acmeId });
     await addTransition(manager, wf.id, 'triage', 'resolved');
 
-    const t = await createTicket(agent, { type: 'wf_test_type', subject: 'Custom WF', organizationId: acmeId, impact: 3, urgency: 3 });
+    const t = await createTicket(agent, { type: customType, subject: 'Custom WF', organizationId: acmeId, impact: 3, urgency: 3 });
     // 'assigned' is NOT in the custom workflow -> rejected.
     await expect(transition(agent, t.id, 'assigned')).rejects.toThrow(/illegal transition/i);
     // 'resolved' IS allowed by the custom workflow.

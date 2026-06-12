@@ -26,6 +26,10 @@ export function derivePriority(impact: number, urgency: number): string {
 }
 
 async function nextTicketNumber(sql: Sql, orgId: string): Promise<string> {
+  // Serialize per-org number allocation: MAX(number)+1 otherwise races under concurrent
+  // creates and collides on the (organization_id, ticket_number) unique key. The lock is
+  // transaction-scoped (createTicket runs inside withOrgContext's transaction).
+  await sql.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [orgId]);
   const { rows } = await sql.query(
     `SELECT COALESCE(MAX((regexp_replace(ticket_number, '\\D','','g'))::int), 0) + 1 AS n
        FROM tickets WHERE organization_id = $1`,
