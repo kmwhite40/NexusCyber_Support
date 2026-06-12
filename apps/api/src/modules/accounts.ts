@@ -285,7 +285,9 @@ export async function loginOrProvisionCustomerOidc(
     const org = (
       await sql.query(`SELECT id FROM organizations WHERE entra_tenant_id = $1`, [identity.tid])
     ).rows[0];
-    if (!org) throw Errors.forbidden('organization not onboarded for SSO');
+    if (!org) {
+      throw Errors.forbidden(`organization not onboarded for SSO (tenant ${identity.tid})`);
+    }
 
     // Match by Entra oid, then by email within the org; link the oid if found.
     let row = (
