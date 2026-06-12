@@ -161,8 +161,8 @@ export default function LoginPage() {
 
       <p className="text-xs text-muted">
         By continuing, you agree to our{' '}
-        <Link href="#" className="underline underline-offset-4 hover:text-fg">Terms of Service</Link> and{' '}
-        <Link href="#" className="underline underline-offset-4 hover:text-fg">Privacy Policy</Link>.
+        <Link href="/terms" className="underline underline-offset-4 hover:text-fg">Terms of Service</Link> and{' '}
+        <Link href="/privacy" className="underline underline-offset-4 hover:text-fg">Privacy Policy</Link>.
       </p>
     </AuthLayout>
   );
