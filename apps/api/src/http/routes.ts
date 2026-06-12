@@ -22,6 +22,7 @@ import * as changes from '../modules/changes.js';
 import * as problems from '../modules/problems.js';
 import * as csat from '../modules/csat.js';
 import * as queues from '../modules/queues.js';
+import * as integrations from '../modules/integrations.js';
 import { computeScore, grade } from '../modules/posture.js';
 import { audit, verifyChain, formatExport, type ExportableRow } from '../modules/audit.js';
 import { authorize } from '../authz/pdp.js';
@@ -902,5 +903,19 @@ export async function registerRoutes(app: FastifyInstance) {
       );
       return verifyChain(rows as Parameters<typeof verifyChain>[0]);
     });
+  });
+
+  // ---------------- Integrations (M365 GCC) ----------------
+  app.get('/api/v1/integrations/m365/health', async (req) => {
+    const p = await requirePrincipal(req);
+    authorize(p, 'integration.manage'); // nexus platform admins (admin.superuser holds it)
+    return integrations.getHealth();
+  });
+
+  app.post('/api/v1/integrations/m365/test', async (req) => {
+    const p = await requirePrincipal(req);
+    authorize(p, 'integration.manage');
+    const body = z.object({ sendTo: z.string().email().optional() }).parse(req.body ?? {});
+    return integrations.runTest({ sendTo: body.sendTo });
   });
 }
