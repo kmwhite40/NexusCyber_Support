@@ -13,6 +13,8 @@ import { registerAutomationHandlers } from './modules/automation.js';
 import { registerCsatHandlers } from './modules/csat.js';
 import { startSlaSweeper } from './jobs/sla-sweeper.js';
 import { startConMonScheduler } from './modules/conmon.js';
+import { subscribe } from './events/bus.js';
+import { incCounter, renderMetrics, statusClass } from './metrics.js';
 import { startMailIngest } from './jobs/mail-ingest.js';
 
 async function main() {
@@ -44,6 +46,19 @@ async function main() {
   await app.register(cors, {
     origin: config.webOrigin,
     credentials: true,
+  });
+
+  // Observability: count every HTTP response by status class, and expose Prometheus metrics.
+  app.addHook('onResponse', async (req, reply) => {
+    incCounter('http_requests_total', { status: statusClass(reply.statusCode) }, 1, 'Total HTTP responses by status class');
+    if (reply.statusCode >= 500) incCounter('http_errors_total', {}, 1, 'Total HTTP 5xx responses');
+  });
+  // Count domain events flowing through the bus (sla.breached, oncall.page, change.*, etc.).
+  subscribe('*', (evt) => incCounter('domain_events_total', { type: evt.type }, 1, 'Domain events published'));
+  incCounter('nexus_build_info', { enclave: config.enclave }, 1, 'Build/enclave info (always 1)');
+
+  app.get('/metrics', async (_req, reply) => {
+    reply.type('text/plain; version=0.0.4').send(renderMetrics());
   });
 
   // Liveness + readiness probes (Kubernetes/Front Door health checks).

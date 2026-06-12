@@ -102,6 +102,17 @@ npm run bootstrap                  # install + db up + migrate + seed (one shot)
   resolved via the system context so NULL-org rows aren't blocked by tenant policies.
 - **On-call/paging engine**: deterministic weekly rotation, current-responder resolution,
   page → acknowledge → escalate (single-owner reassignment).
+- **Observability**: `GET /metrics` (Prometheus text) — HTTP responses by status class,
+  5xx errors, and domain events (`sla.breached`, `oncall.page`, `change.*`, …) counted in-process.
+- **ITSM service-management parity** (Jira Service Management-class): **ticket linking & merge**
+  (duplicate/caused-by/blocks/child-of + incident→problem→change association), **Problem
+  management** (root cause, known-error workarounds, recurring-incident clustering), **Change
+  management + CAB** (standard/normal/emergency, multi-step Change Advisory Board approval,
+  scheduling with window-conflict detection, change calendar), **CSAT** satisfaction surveys
+  on resolution, and **saved agent queues** with SLA-aware (soonest-breach-first) sorting.
+- **Knowledge base** (Confluence-style): spaces → hierarchical pages with immutable version
+  history, draft→review→published lifecycle, Postgres full-text search with highlighted
+  snippets, page comments, and ticket-deflection tracking.
 - **Compliance & evidence**: NIST 800-53 control catalog with runtime evidence mappings
   (posture / ConMon / audit), per-control coverage (satisfied / partial / gap), hash-stamped
   evidence-package export, and posture exceptions with separation-of-duties approval.
@@ -116,9 +127,10 @@ npm run bootstrap                  # install + db up + migrate + seed (one shot)
   served.
 - **Adapter seams** (gov-egress-safe): SIEM sink, blob store, and malware scanner are swappable
   interfaces with mock implementations; no third-party runtime fetch.
-- **Tests**: 60 unit + DB-backed integration tests (PDP, SLA math, priority matrix, posture
-  scoring, on-call rotation, compliance coverage, audit chain, elevation SoD, attachments);
-  integration suites auto-skip when no `DATABASE_URL` is configured.
+- **Tests**: 137 unit + DB-backed integration tests (PDP, SLA math, priority matrix, posture
+  scoring, on-call rotation, compliance coverage, audit-chain integrity, elevation SoD,
+  attachments, KB lifecycle, ticket links/merge, change/CAB, problem clustering, CSAT,
+  queues, metrics); integration suites auto-skip when no `DATABASE_URL` is configured.
 - **CI** ([.github/workflows/ci.yml](.github/workflows/ci.yml)): typecheck → migrate/seed →
   test (with a Postgres service) → build, plus `npm audit` (high+), secret scan, **CodeQL**
   SAST, **CycloneDX SBOM**, and dependency review.
