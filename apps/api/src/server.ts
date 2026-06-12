@@ -7,6 +7,7 @@ import { config } from './config.js';
 import { logger } from './logger.js';
 import { pool } from './db/pool.js';
 import { registerRoutes } from './http/routes.js';
+import { registerExtraRoutes } from './http/routes-extra.js';
 import { registerIdempotency, IdempotencyStore } from './http/idempotency.js';
 import { registerNotificationHandlers } from './modules/notifications.js';
 import { registerAutomationHandlers } from './modules/automation.js';
@@ -82,6 +83,7 @@ async function main() {
   registerIdempotency(app, new IdempotencyStore());
 
   await registerRoutes(app);
+  await registerExtraRoutes(app);
 
   // Wire event consumers (notification dispatcher + automation engine).
   registerNotificationHandlers();
