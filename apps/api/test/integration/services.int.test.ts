@@ -30,7 +30,9 @@ describeDb('services/CMDB (integration)', () => {
     expect(ci.id).toBeTruthy();
     const services = await listServices(manager);
     expect(services.some((s: any) => s.id === svc.id)).toBe(true);
-    expect(services.find((s: any) => s.id === svc.id)).toHaveProperty('ticket_count');
+    const found = services.find((s: any) => s.id === svc.id);
+    expect(typeof found.ticket_count).toBe('number');
+    expect(found.ticket_count).toBeGreaterThanOrEqual(0);
     const cis = await listConfigurationItems(manager, {});
     expect(cis.some((c: any) => c.id === ci.id)).toBe(true);
   });
