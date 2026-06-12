@@ -2,7 +2,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { auth, setToken, ApiError } from '@/lib/api';
+import { auth, setToken, homePath, ApiError } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
 import { Button, Card, CardBody, Input, Field, Select, Badge } from '@/components/ui/primitives';
 
@@ -28,10 +28,10 @@ export default function SignupPage() {
     setBusy(true);
     setError(null);
     try {
-      const { token } = await auth.register(form);
+      const { token, principal } = await auth.register(form);
       setToken(token);
       await refresh();
-      router.push('/dashboard');
+      router.push(homePath(principal.plane));
     } catch (e) {
       setError(e instanceof ApiError ? e.detail : 'Could not create account');
     } finally {

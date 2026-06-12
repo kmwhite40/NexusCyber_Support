@@ -3,19 +3,26 @@
 @tailwind utilities;
 
 :root {
-  /* Dark, modern control-plane palette (state-of-the-art design tokens). */
-  --bg: 222 47% 6%;
-  --surface: 222 40% 9%;
-  --surface-2: 222 36% 12%;
-  --border: 222 25% 18%;
-  --muted: 220 14% 60%;
-  --fg: 210 40% 98%;
-  --brand: 199 89% 52%;       /* cyan/azure */
-  --brand-fg: 222 47% 8%;
-  --accent: 262 83% 66%;      /* violet */
-  --success: 152 60% 45%;
+  /* Neutral-dark surfaces + blue accents (provided design tokens), expressed as HSL
+     channels so Tailwind opacity modifiers and inline hsl(var(--x)) keep working. */
+  --bg: 0 0% 4%;              /* #0a0a0a background */
+  --surface: 0 0% 7%;        /* card — slightly elevated for legibility */
+  --surface-2: 0 0% 15%;     /* #262626 secondary/muted surface */
+  --border: 0 0% 16%;        /* #262626 */
+  --muted: 0 0% 63%;         /* #a1a1a1 muted text */
+  --fg: 0 0% 98%;            /* #fafafa foreground */
+  --brand: 222 86% 54%;      /* #2563ef (chart-3) blue accent */
+  --brand-fg: 0 0% 100%;
+  --accent: 217 91% 60%;     /* #3a81f6 (chart-2) */
+  --success: 152 50% 45%;
   --warning: 38 92% 55%;
-  --danger: 0 72% 58%;
+  --danger: 357 100% 45%;    /* #e7000b destructive */
+  --ring: 0 0% 32%;          /* #525252 */
+  --chart-1: 212 100% 78%;   /* #91c5ff */
+  --chart-2: 217 91% 60%;    /* #3a81f6 */
+  --chart-3: 222 86% 54%;    /* #2563ef */
+  --chart-4: 224 79% 48%;    /* #1a4eda */
+  --chart-5: 227 70% 40%;    /* #1f3fad */
   --font-sans: 'Inter';
 }
 
@@ -45,6 +52,7 @@ body {
 
 .glass {
   background: linear-gradient(180deg, hsl(var(--surface) / 0.9), hsl(var(--surface) / 0.7));
+  -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
 }
 

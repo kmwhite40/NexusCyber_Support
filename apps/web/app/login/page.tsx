@@ -2,7 +2,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { auth, setToken, ApiError } from '@/lib/api';
+import { auth, setToken, homePath, ApiError } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
 import { Button, Card, Input, Field, Badge } from '@/components/ui/primitives';
 
@@ -19,14 +19,14 @@ export default function LoginPage() {
     auth.devUsers().then((r) => setDemos(r.users)).catch(() => {});
   }, []);
 
-  async function finish(p: Promise<{ token: string }>) {
+  async function finish(p: Promise<{ token: string; principal: { plane: 'nexus' | 'customer' } }>) {
     setBusy(true);
     setError(null);
     try {
-      const { token } = await p;
+      const { token, principal } = await p;
       setToken(token);
       await refresh();
-      router.push('/dashboard');
+      router.push(homePath(principal.plane));
     } catch (e) {
       setError(e instanceof ApiError ? e.detail : 'Sign-in failed');
     } finally {

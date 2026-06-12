@@ -7,7 +7,10 @@ import { useAuth } from './auth-context';
 import { Badge } from './ui/primitives';
 import { Avatar, AvatarFallback } from './ui/avatar';
 
-const NAV: Array<{ href: string; label: string; icon: React.ReactNode; anyPerm?: string[] }> = [
+type NavItem = { href: string; label: string; icon: React.ReactNode; anyPerm?: string[] };
+
+// Agents get the operational control plane; customers get a focused support experience.
+const NEXUS_NAV: NavItem[] = [
   { href: '/dashboard', label: 'Dashboard', icon: <IconGrid /> },
   { href: '/catalog', label: 'Service catalog', icon: <IconCatalog /> },
   { href: '/tickets', label: 'Tickets', icon: <IconTicket /> },
@@ -15,6 +18,14 @@ const NAV: Array<{ href: string; label: string; icon: React.ReactNode; anyPerm?:
   { href: '/oncall', label: 'On-call', icon: <IconPager />, anyPerm: ['oncall.acknowledge', 'oncall.manage', 'oncall.page'] },
   { href: '/posture', label: 'Posture', icon: <IconShield />, anyPerm: ['posture.read'] },
   { href: '/audit', label: 'Audit log', icon: <IconScroll />, anyPerm: ['audit.read'] },
+];
+
+const CUSTOMER_NAV: NavItem[] = [
+  { href: '/portal', label: 'Get help', icon: <IconHelp /> },
+  { href: '/tickets', label: 'My requests', icon: <IconTicket /> },
+  { href: '/catalog', label: 'Service catalog', icon: <IconCatalog /> },
+  { href: '/posture', label: 'Security posture', icon: <IconShield />, anyPerm: ['posture.read'] },
+  { href: '/analytics', label: 'Reports', icon: <IconChart />, anyPerm: ['report.read.customer'] },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -30,7 +41,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return <div className="grid min-h-screen place-items-center text-muted">Loading…</div>;
   }
 
-  const items = NAV.filter((n) => !n.anyPerm || n.anyPerm.some((p) => can(p)));
+  const isCustomer = me.plane === 'customer';
+  const items = (isCustomer ? CUSTOMER_NAV : NEXUS_NAV).filter((n) => !n.anyPerm || n.anyPerm.some((p) => can(p)));
 
   return (
     <div className="flex min-h-screen">
@@ -42,7 +54,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
           <div>
             <div className="text-sm font-semibold leading-none text-fg">Nexus Cyber</div>
-            <div className="text-[10px] uppercase tracking-widest text-muted">Control Plane</div>
+            <div className="text-[10px] uppercase tracking-widest text-muted">{isCustomer ? 'Support' : 'Control Plane'}</div>
           </div>
         </Link>
 
@@ -101,6 +113,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 }
 
 function titleFor(path: string): string {
+  if (path.startsWith('/portal')) return 'Help center';
   if (path.startsWith('/tickets/new')) return 'Submit a ticket';
   if (path.startsWith('/tickets/')) return 'Ticket';
   if (path.startsWith('/tickets')) return 'Tickets';
@@ -121,3 +134,4 @@ function IconBolt() { return <svg width="18" height="18" viewBox="0 0 24 24" fil
 function IconChart() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 3v18h18"/><rect x="7" y="11" width="3" height="6" rx="1"/><rect x="12" y="7" width="3" height="10" rx="1"/><rect x="17" y="13" width="3" height="4" rx="1"/></svg>; }
 function IconCatalog() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 17.5h7M17.5 14v7"/></svg>; }
 function IconPager() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>; }
+function IconHelp() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3 2.5c-.7.3-1 .8-1 1.5v.5"/><circle cx="12" cy="17" r="0.6" fill="currentColor"/></svg>; }

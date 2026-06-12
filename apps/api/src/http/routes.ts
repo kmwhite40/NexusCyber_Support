@@ -336,6 +336,38 @@ export async function registerRoutes(app: FastifyInstance) {
     return { data: await oncall.listPages(p) };
   });
 
+  app.get('/api/v1/oncall/responders', async (req) => {
+    const p = await requirePrincipal(req);
+    return { data: await oncall.listResponders(p) };
+  });
+
+  app.post('/api/v1/oncall/schedules', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const body = z
+      .object({ team: z.string().min(2), tz: z.string().optional(), coverage: z.string().optional(), lengthDays: z.number().int().min(1).max(90).optional(), participantIds: z.array(z.string().uuid()).min(1) })
+      .parse(req.body);
+    const r = await oncall.createSchedule(p, body);
+    reply.status(201);
+    return r;
+  });
+
+  app.patch('/api/v1/oncall/schedules/:id', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ lengthDays: z.number().int().min(1).max(90).optional(), participantIds: z.array(z.string().uuid()).min(1) }).parse(req.body);
+    return oncall.updateRotation(p, id, body);
+  });
+
+  app.post('/api/v1/oncall/overrides', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const body = z
+      .object({ scheduleId: z.string().uuid(), userId: z.string().uuid(), startsAt: z.string(), endsAt: z.string(), reason: z.string().optional() })
+      .parse(req.body);
+    const r = await oncall.createOverride(p, body);
+    reply.status(201);
+    return r;
+  });
+
   app.post('/api/v1/oncall/pages', async (req, reply) => {
     const p = await requirePrincipal(req);
     const body = z

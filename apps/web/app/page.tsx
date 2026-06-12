@@ -16,6 +16,7 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { useAuth } from '@/components/auth-context';
+import { homePath } from '@/lib/api';
 import { GLSLHills } from '@/components/ui/glsl-hills';
 import DisplayCards from '@/components/ui/display-cards';
 import { Navbar1 } from '@/components/ui/navbar1';
@@ -82,7 +83,7 @@ export default function Landing() {
   const router = useRouter();
 
   useEffect(() => {
-    if (!loading && me) router.replace('/dashboard');
+    if (!loading && me) router.replace(homePath(me.plane));
   }, [me, loading, router]);
 
   return (
@@ -207,23 +208,59 @@ export default function Landing() {
       </section>
 
       {/* ---------- Footer ---------- */}
-      <footer className="relative z-10 border-t border-border">
-        <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-6 py-8 sm:flex-row">
-          <div className="flex items-center gap-2.5">
-            <div className="grid h-8 w-8 place-items-center rounded-lg bg-brand text-brand-fg">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L4.5 13.5H11l-1 8.5L19.5 10H13l0-8z" /></svg>
+      <footer className="relative z-10 border-t border-border bg-surface">
+        <div className="mx-auto max-w-6xl px-6 py-14">
+          <div className="grid gap-10 md:grid-cols-[1.5fr_1fr_1fr_1fr]">
+            {/* Brand */}
+            <div>
+              <div className="flex items-center gap-2.5">
+                <div className="grid h-9 w-9 place-items-center rounded-lg bg-brand text-brand-fg">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L4.5 13.5H11l-1 8.5L19.5 10H13l0-8z" /></svg>
+                </div>
+                <span className="text-base font-semibold text-fg">Nexus Cyber</span>
+              </div>
+              <p className="mt-4 max-w-xs text-sm leading-relaxed text-muted">
+                The cyber operations control plane — ITSM, on-call, and security posture, isolated
+                per customer and ready for Commercial and Government clouds.
+              </p>
+              <div className="mt-5 flex flex-wrap gap-2">
+                <Badge tone="neutral">Commercial</Badge>
+                <Badge tone="neutral">GCC High</Badge>
+                <Badge tone="neutral">Azure Government</Badge>
+              </div>
             </div>
-            <span className="text-sm font-semibold">Nexus Cyber</span>
+
+            {/* Link columns */}
+            <FooterCol title="Platform" links={[['ITSM & ITIL', '/login'], ['On-call', '/login'], ['Security posture', '/login'], ['CMDB', '/login']]} />
+            <FooterCol title="Solutions" links={[['MSP / CSP', '/signup'], ['Government cloud', '/signup'], ['Compliance', '/signup'], ['Microsoft 365', '/signup']]} />
+            <FooterCol title="Company" links={[['Sign in', '/login'], ['Get started', '/signup'], ['Security', '#'], ['Status', '#']]} />
           </div>
-          <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1 text-[11px] text-fg/40">
-            <span>Commercial &amp; Azure Government</span>
-            <span>·</span>
-            <span>Microsoft 365 &amp; Graph</span>
-            <span>·</span>
-            <span>© Nexus Cyber — reference implementation</span>
+
+          <div className="mt-12 flex flex-col items-center justify-between gap-3 border-t border-border pt-6 text-xs text-muted sm:flex-row">
+            <span>© {`Nexus Cyber`} — reference implementation</span>
+            <div className="flex items-center gap-5">
+              <Link href="#" className="hover:text-fg">Privacy</Link>
+              <Link href="#" className="hover:text-fg">Terms</Link>
+              <Link href="#" className="hover:text-fg">NIST · CMMC · FedRAMP</Link>
+            </div>
           </div>
         </div>
       </footer>
+    </div>
+  );
+}
+
+function FooterCol({ title, links }: { title: string; links: Array<[string, string]> }) {
+  return (
+    <div>
+      <h4 className="text-xs font-semibold uppercase tracking-wider text-fg">{title}</h4>
+      <ul className="mt-4 space-y-2.5">
+        {links.map(([label, href]) => (
+          <li key={label}>
+            <Link href={href} className="text-sm text-muted transition-colors hover:text-fg">{label}</Link>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

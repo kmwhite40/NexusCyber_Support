@@ -48,6 +48,11 @@ export const api = {
 };
 
 // ---- Typed helpers ----
+/** Landing route after auth: customers get the support portal, agents the control plane. */
+export function homePath(plane: 'nexus' | 'customer' | undefined): string {
+  return plane === 'customer' ? '/portal' : '/dashboard';
+}
+
 export interface Me {
   id: string;
   plane: 'nexus' | 'customer';
@@ -125,7 +130,12 @@ export interface OnCallSchedule {
   coverage: string;
   rotationLengthDays: number | null;
   current: { name: string; via: string } | null;
-  participants: Array<{ position: number; name: string }>;
+  participants: Array<{ user_id: string; position: number; name: string }>;
+}
+export interface Responder {
+  id: string;
+  name: string;
+  email: string;
 }
 export interface OnCallPage {
   id: string;
@@ -142,9 +152,16 @@ export interface OnCallPage {
 export const oncall = {
   schedules: () => api.get<{ data: OnCallSchedule[] }>('/oncall/schedules'),
   pages: () => api.get<{ data: OnCallPage[] }>('/oncall/pages'),
+  responders: () => api.get<{ data: Responder[] }>('/oncall/responders'),
   createPage: (body: { severity?: string; ticketId?: string; organizationId?: string }) => api.post<OnCallPage>('/oncall/pages', body),
   ack: (id: string) => api.post<{ state: string }>(`/oncall/pages/${id}/ack`),
   escalatePage: (id: string) => api.post<{ state: string; responder?: string }>(`/oncall/pages/${id}/escalate`),
+  createSchedule: (body: { team: string; lengthDays?: number; participantIds: string[]; tz?: string; coverage?: string }) =>
+    api.post<{ id: string }>('/oncall/schedules', body),
+  updateRotation: (id: string, body: { lengthDays?: number; participantIds: string[] }) =>
+    api.patch<{ ok: boolean }>(`/oncall/schedules/${id}`, body),
+  createOverride: (body: { scheduleId: string; userId: string; startsAt: string; endsAt: string; reason?: string }) =>
+    api.post<{ ok: boolean }>('/oncall/overrides', body),
 };
 
 // Tier groups available as escalation targets (mirrors seeded assignment_groups).

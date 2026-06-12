@@ -82,6 +82,75 @@ async function resolveCurrent(scheduleId: string, atIndexOffset = 0): Promise<Re
   return { userId: p.user_id, name: p.name, position: p.position, via: 'rotation' };
 }
 
+// Stable rotation anchor (a Monday 09:00) so handoffs line up week-to-week.
+const HANDOFF_ANCHOR = '2026-01-05T09:00:00Z';
+
+/** Candidate responders = Nexus employees. */
+export async function listResponders(actor: Principal) {
+  requireOnCallAccess(actor);
+  return (await q("SELECT id, display_name AS name, email FROM users WHERE plane='nexus' AND status='active' ORDER BY display_name")).rows;
+}
+
+/** Create a schedule with a primary rotation and an ordered roster. */
+export async function createSchedule(
+  actor: Principal,
+  input: { team: string; tz?: string; coverage?: string; lengthDays?: number; participantIds: string[] },
+) {
+  authorize(actor, 'oncall.manage');
+  if (!input.team?.trim()) throw Errors.badRequest('team name required');
+  if (!input.participantIds?.length) throw Errors.badRequest('at least one responder required');
+
+  const dup = (await q('SELECT 1 FROM oncall_schedules WHERE team=$1', [input.team])).rows[0];
+  if (dup) throw Errors.conflict('a schedule with this team name already exists');
+
+  const sched = (
+    await q('INSERT INTO oncall_schedules (team, tz, coverage) VALUES ($1,$2,$3) RETURNING *', [
+      input.team,
+      input.tz ?? 'America/New_York',
+      input.coverage ?? '24x7',
+    ])
+  ).rows[0];
+  const rot = (
+    await q("INSERT INTO oncall_rotations (schedule_id, role, length_days, handoff_epoch) VALUES ($1,'primary',$2,$3) RETURNING id", [
+      sched.id,
+      input.lengthDays ?? 7,
+      HANDOFF_ANCHOR,
+    ])
+  ).rows[0];
+  for (let i = 0; i < input.participantIds.length; i++) {
+    await q('INSERT INTO oncall_participants (rotation_id, user_id, position) VALUES ($1,$2,$3)', [rot.id, input.participantIds[i], i]);
+  }
+  await audit(actor, { action: 'oncall.schedule_created', resourceType: 'oncall_schedule', resourceId: sched.id, detail: { team: input.team, responders: input.participantIds.length } });
+  return { id: sched.id };
+}
+
+/** Replace a schedule's rotation length and roster. */
+export async function updateRotation(actor: Principal, scheduleId: string, input: { lengthDays?: number; participantIds: string[] }) {
+  authorize(actor, 'oncall.manage');
+  const rot = (await q("SELECT id FROM oncall_rotations WHERE schedule_id=$1 AND role='primary' LIMIT 1", [scheduleId])).rows[0];
+  if (!rot) throw Errors.notFound('rotation not found');
+  if (input.lengthDays) await q('UPDATE oncall_rotations SET length_days=$1 WHERE id=$2', [input.lengthDays, rot.id]);
+  if (input.participantIds) {
+    await q('DELETE FROM oncall_participants WHERE rotation_id=$1', [rot.id]);
+    for (let i = 0; i < input.participantIds.length; i++) {
+      await q('INSERT INTO oncall_participants (rotation_id, user_id, position) VALUES ($1,$2,$3)', [rot.id, input.participantIds[i], i]);
+    }
+  }
+  await audit(actor, { action: 'oncall.rotation_updated', resourceType: 'oncall_schedule', resourceId: scheduleId, detail: { responders: input.participantIds?.length } });
+  return { ok: true };
+}
+
+/** Add a coverage override (PTO / swap). */
+export async function createOverride(actor: Principal, input: { scheduleId: string; userId: string; startsAt: string; endsAt: string; reason?: string }) {
+  authorize(actor, 'oncall.manage');
+  await q(
+    'INSERT INTO oncall_overrides (schedule_id, user_id, starts_at, ends_at, reason) VALUES ($1,$2,$3,$4,$5)',
+    [input.scheduleId, input.userId, input.startsAt, input.endsAt, input.reason ?? null],
+  );
+  await audit(actor, { action: 'oncall.override_created', resourceType: 'oncall_schedule', resourceId: input.scheduleId, detail: { userId: input.userId } });
+  return { ok: true };
+}
+
 export async function listSchedules(actor: Principal) {
   requireOnCallAccess(actor);
   const schedules = (await q('SELECT * FROM oncall_schedules ORDER BY team')).rows;
@@ -90,7 +159,7 @@ export async function listSchedules(actor: Principal) {
     const current = await resolveCurrent(s.id);
     const rot = (await q("SELECT * FROM oncall_rotations WHERE schedule_id=$1 AND role='primary' LIMIT 1", [s.id])).rows[0];
     const participants = rot
-      ? (await q('SELECT p.position, u.display_name AS name FROM oncall_participants p JOIN users u ON u.id=p.user_id WHERE p.rotation_id=$1 ORDER BY p.position', [rot.id])).rows
+      ? (await q('SELECT p.user_id, p.position, u.display_name AS name FROM oncall_participants p JOIN users u ON u.id=p.user_id WHERE p.rotation_id=$1 ORDER BY p.position', [rot.id])).rows
       : [];
     out.push({ id: s.id, team: s.team, tz: s.tz, coverage: s.coverage, current, rotationLengthDays: rot?.length_days ?? null, participants });
   }
