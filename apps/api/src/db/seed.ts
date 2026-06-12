@@ -704,6 +704,16 @@ async function run() {
         await sql.query(`INSERT INTO posture_profiles (organization_id, scope_type) VALUES ($1,'org')`, [demoOrgId]);
       }
 
+      // Default dashboard per org (authoritative seed; migration 0025's INSERT is a no-op on a
+      // fresh bootstrap because orgs don't exist yet at migration time).
+      await sql.query(
+        `INSERT INTO dashboards (organization_id, owner_user_id, name, layout, is_default)
+         SELECT o.id, NULL, 'Operations overview',
+           '[{"type":"kpis"},{"type":"ticket_volume"},{"type":"posture_gauge"},{"type":"top_findings"}]'::jsonb, true
+         FROM organizations o
+         WHERE NOT EXISTS (SELECT 1 FROM dashboards d WHERE d.organization_id = o.id AND d.is_default)`,
+      );
+
       // Nexus operators (no password -> dev login).
       await upsertUser('nexus', 'agent@nexus.example.com', 'Avery Agent (Tier 2)', null, 'Tier2');
       await upsertUser('nexus', 'manager@nexus.example.com', 'Morgan Manager', null, 'ServiceDeskManager');
