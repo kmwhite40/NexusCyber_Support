@@ -64,10 +64,17 @@ describe('PDP — RBAC + ABAC (deny-by-default)', () => {
     expect(can(agent(), 'ticket.read.all_assigned_customers', { organizationId: 'org-zzz' })).toBe(false);
   });
 
-  it('admin.superuser bypasses RBAC but still respects org scope', () => {
-    const su = agent({ permissions: ['admin.superuser'] });
+  it('admin.superuser bypasses RBAC and is cross-org (platform admin)', () => {
+    // A platform SuperAdmin (admin.superuser) is a true cross-tenant operator: it holds
+    // every verb AND every org scope. RLS mirrors this via the app.superuser GUC (0031).
+    const su = agent({ permissions: ['admin.superuser'], assignedOrgs: [] });
     expect(can(su, 'anything.at.all', { organizationId: 'org-acme' })).toBe(true);
-    expect(can(su, 'anything.at.all', { organizationId: 'org-zzz' })).toBe(false);
+    expect(can(su, 'anything.at.all', { organizationId: 'org-zzz' })).toBe(true); // any org
+  });
+
+  it('a non-superuser nexus agent is still confined to assigned orgs', () => {
+    expect(can(agent(), 'ticket.read.all_assigned_customers', { organizationId: 'org-acme' })).toBe(true);
+    expect(can(agent(), 'ticket.read.all_assigned_customers', { organizationId: 'org-zzz' })).toBe(false);
   });
 
   it('security-tagged resources require a security-capable role', () => {

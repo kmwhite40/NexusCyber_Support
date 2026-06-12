@@ -61,5 +61,7 @@ export function orgContextFor(principal: Principal): OrgContext {
     orgId: principal.plane === 'customer' ? principal.organizationId : null,
     assignedOrgs: principal.plane === 'nexus' ? principal.assignedOrgs : [],
     elevated: principal.elevated,
+    // A platform superuser is cross-org at the DB layer too (matches the PDP rule).
+    superuser: principal.permissions.includes('admin.superuser'),
   };
 }
