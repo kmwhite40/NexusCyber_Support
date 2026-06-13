@@ -14,16 +14,59 @@ interface Page {
 }
 interface Hit { id: string; title: string; snippet: string }
 
-// Minimal, dependency-free markdown-ish rendering (headings, bullets, paragraphs).
+// Inline formatting: **bold**, `code`, and [text](url) links. Splitting on the
+// markers keeps the rest of the text intact so nothing renders the markers literally.
+function inline(text: string): React.ReactNode {
+  const nodes: React.ReactNode[] = [];
+  const re = /\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
+  let last = 0;
+  let k = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    if (m.index > last) nodes.push(text.slice(last, m.index));
+    if (m[1] !== undefined) {
+      nodes.push(<strong key={k++} className="font-semibold text-fg">{m[1]}</strong>);
+    } else if (m[2] !== undefined) {
+      nodes.push(<code key={k++} className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[0.85em] text-fg">{m[2]}</code>);
+    } else {
+      nodes.push(<a key={k++} href={m[4]} target="_blank" rel="noreferrer" className="text-brand underline underline-offset-2 hover:opacity-80">{m[3]}</a>);
+    }
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) nodes.push(text.slice(last));
+  return nodes;
+}
+
+// Minimal, dependency-free markdown-ish rendering: headings, bullets, numbered
+// lists, blockquotes, fenced code blocks, and the inline formatting above.
 function renderBody(body: string): React.ReactNode {
-  return body.split('\n').map((line, i) => {
-    if (line.startsWith('# ')) return <h2 key={i} className="mt-4 text-xl font-semibold text-fg">{line.slice(2)}</h2>;
-    if (line.startsWith('## ')) return <h3 key={i} className="mt-3 text-lg font-semibold text-fg">{line.slice(3)}</h3>;
-    if (/^\d+\.\s/.test(line)) return <li key={i} className="ml-5 list-decimal text-sm text-fg/90">{line.replace(/^\d+\.\s/, '')}</li>;
-    if (line.startsWith('- ')) return <li key={i} className="ml-5 list-disc text-sm text-fg/90">{line.slice(2)}</li>;
-    if (!line.trim()) return <div key={i} className="h-2" />;
-    return <p key={i} className="text-sm leading-relaxed text-fg/90">{line}</p>;
-  });
+  const lines = body.split('\n');
+  const out: React.ReactNode[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (line.trim().startsWith('```')) {
+      const buf: string[] = [];
+      i++;
+      while (i < lines.length && !lines[i].trim().startsWith('```')) buf.push(lines[i++]);
+      i++; // skip the closing fence
+      out.push(
+        <pre key={out.length} className="mt-2 overflow-x-auto rounded-md border border-border bg-surface-2 p-3 font-mono text-xs text-fg/90">
+          <code>{buf.join('\n')}</code>
+        </pre>,
+      );
+      continue;
+    }
+    if (line.startsWith('# ')) out.push(<h2 key={out.length} className="mt-4 text-xl font-semibold text-fg">{inline(line.slice(2))}</h2>);
+    else if (line.startsWith('## ')) out.push(<h3 key={out.length} className="mt-3 text-lg font-semibold text-fg">{inline(line.slice(3))}</h3>);
+    else if (/^\d+\.\s/.test(line)) out.push(<li key={out.length} className="ml-5 list-decimal text-sm text-fg/90">{inline(line.replace(/^\d+\.\s/, ''))}</li>);
+    else if (line.startsWith('- ')) out.push(<li key={out.length} className="ml-5 list-disc text-sm text-fg/90">{inline(line.slice(2))}</li>);
+    else if (line.startsWith('> ')) out.push(<blockquote key={out.length} className="mt-1 border-l-2 border-border pl-3 text-sm italic text-muted">{inline(line.slice(2))}</blockquote>);
+    else if (!line.trim()) out.push(<div key={out.length} className="h-2" />);
+    else out.push(<p key={out.length} className="text-sm leading-relaxed text-fg/90">{inline(line)}</p>);
+    i++;
+  }
+  return out;
 }
 
 export default function KbPage() {
