@@ -6,6 +6,7 @@ import { logger } from '../../logger.js';
 import type { Sql } from '../../db/pool.js';
 import type { GraphClient } from './graph-client.js';
 import { publish } from '../../events/bus.js';
+import { derivePriority } from '../../modules/tickets.js';
 
 const INTEGRATION = 'm365';
 const DELTA_KEY = 'inbox_delta';
@@ -14,6 +15,7 @@ export interface InboundMessage {
   id: string;
   internetMessageId: string;
   fromAddress: string;
+  fromName: string;
   subject: string;
   bodyPreview: string;
 }
@@ -61,6 +63,7 @@ export async function fetchNewMessages(
           id: m.id,
           internetMessageId: m.internetMessageId ?? m.id,
           fromAddress: m.from?.emailAddress?.address ?? '',
+          fromName: m.from?.emailAddress?.name ?? '',
           subject: m.subject ?? '(no subject)',
           bodyPreview: m.bodyPreview ?? '',
         });
@@ -113,19 +116,30 @@ export async function ingestMessage(
   // ticket and can see it in the portal. The acknowledgment below still reaches the
   // raw address even when the sender has no account.
   const { rows: uRows } = await sql.query(
-    'SELECT id FROM users WHERE organization_id = $1 AND lower(email) = lower($2) LIMIT 1',
+    'SELECT id, display_name FROM users WHERE organization_id = $1 AND lower(email) = lower($2) LIMIT 1',
     [orgId, msg.fromAddress],
   );
   const requesterId = (uRows[0]?.id as string | undefined) ?? null;
+  // Greeting name: linked user's name, else the sender's display name from the
+  // email header, else the local-part of the address, else a neutral fallback.
+  const customerName =
+    (uRows[0]?.display_name as string | undefined) ||
+    msg.fromName ||
+    msg.fromAddress.split('@')[0] ||
+    'there';
 
+  // Email tickets default to a normal-priority assessment (impact/urgency 3) like
+  // portal-created tickets, so triage + the acknowledgment show a real priority.
+  const priority = derivePriority(3, 3);
   const { rows: tRows } = await sql.query(
     `INSERT INTO tickets
-       (organization_id, ticket_number, type, requester_id, source_channel, subject, description, status)
-     VALUES ($1,$2,'incident',$3,'email',$4,$5,'new')
-     RETURNING id`,
-    [orgId, ticketNumber, requesterId, msg.subject, msg.bodyPreview],
+       (organization_id, ticket_number, type, requester_id, source_channel, subject, description, status, impact, urgency, priority)
+     VALUES ($1,$2,'incident',$3,'email',$4,$5,'new',3,3,$6)
+     RETURNING id, created_at, priority`,
+    [orgId, ticketNumber, requesterId, msg.subject, msg.bodyPreview, priority],
   );
   const ticketId = tRows[0].id as string;
+  const submittedAt = new Date(tRows[0].created_at).toISOString();
 
   await setState(sql, seenKey, true);
   logger.info({ ticketId, from: msg.fromAddress }, 'inbound mail -> ticket created');
@@ -158,6 +172,9 @@ export async function ingestMessage(
       ticket_number: ticketNumber,
       subject: msg.subject,
       recipient_email: msg.fromAddress,
+      customer_name: customerName,
+      submitted_at: submittedAt,
+      priority,
     },
     { idempotencyKey: `ticket.acknowledged:${msg.internetMessageId}` },
   );

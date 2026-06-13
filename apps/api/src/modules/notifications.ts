@@ -77,6 +77,9 @@ export async function dispatch(
     subject: (evt.data as any).subject,
     metric: (evt.data as any).metric,
     severity: (evt.data as any).severity,
+    customerName: (evt.data as any).customer_name,
+    submittedAt: (evt.data as any).submitted_at,
+    priority: (evt.data as any).priority,
   });
 
   // The inbound-email acknowledgment goes to an external customer, so it must be

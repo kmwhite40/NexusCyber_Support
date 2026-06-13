@@ -20,6 +20,7 @@ const msg = {
   id: 'm1',
   internetMessageId: '<abc@x>',
   fromAddress: 'sender@acme.gov',
+  fromName: '',
   subject: 'Help please',
   bodyPreview: 'My laptop is broken',
 };
@@ -31,7 +32,7 @@ describe('ingest', () => {
       'FROM organization_domains': { rows: [{ organization_id: 'org-acme' }] },
       'SELECT COALESCE(MAX': { rows: [{ n: 5 }] },
       'left(upper(name)': { rows: [{ p: 'ACME' }] },
-      'INSERT INTO tickets': { rows: [{ id: 't-new' }] },
+      'INSERT INTO tickets': { rows: [{ id: 't-new', created_at: '2026-06-13T14:30:00.000Z', priority: 'P3' }] },
     });
     const out = await ingestMessage(sql, msg);
     expect(out.created).toBe(true);
@@ -106,13 +107,13 @@ describe('ingest', () => {
       'FROM organization_domains': { rows: [{ organization_id: 'org-acme' }] },
       'SELECT COALESCE(MAX': { rows: [{ n: 5 }] },
       'left(upper(name)': { rows: [{ p: 'ACME' }] },
-      'FROM users WHERE organization_id': { rows: [{ id: 'user-sender' }] }, // sender has an account
-      'INSERT INTO tickets': { rows: [{ id: 't-new' }] },
+      'FROM users WHERE organization_id': { rows: [{ id: 'user-sender', display_name: 'Sam Sender' }] }, // sender has an account
+      'INSERT INTO tickets': { rows: [{ id: 't-new', created_at: '2026-06-13T14:30:00.000Z', priority: 'P3' }] },
     });
 
     // Unique internetMessageId so the bus idempotency keys don't collide with the
     // other tests in this file (which reuse `msg`).
-    const out = await ingestMessage(sql, { ...msg, internetMessageId: '<publish-test@x>' });
+    const out = await ingestMessage(sql, { ...msg, fromName: 'Sam Sender', internetMessageId: '<publish-test@x>' });
     expect(out.created).toBe(true);
     await flush(); // let async bus handlers run
 
@@ -123,10 +124,14 @@ describe('ingest', () => {
     expect(got['ticket.created'].data.requester_id).toBe('user-sender');
     expect(got['ticket.created'].data.ticket_number).toBe('ACME-000005');
 
-    // Customer auto-acknowledgment addressed to the inbound sender (works even with no user account).
+    // Customer auto-acknowledgment addressed to the inbound sender (works even with no user account),
+    // carrying the details the template renders (name, ticket id, summary, submitted time, priority).
     expect(got['ticket.acknowledged']).toBeTruthy();
     expect(got['ticket.acknowledged'].data.recipient_email).toBe('sender@acme.gov');
     expect(got['ticket.acknowledged'].data.ticket_number).toBe('ACME-000005');
     expect(got['ticket.acknowledged'].data.subject).toBe('Help please');
+    expect(got['ticket.acknowledged'].data.customer_name).toBe('Sam Sender'); // linked user's display name
+    expect(got['ticket.acknowledged'].data.submitted_at).toBe('2026-06-13T14:30:00.000Z');
+    expect(got['ticket.acknowledged'].data.priority).toBeTruthy();
   });
 });
