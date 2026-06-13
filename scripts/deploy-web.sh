@@ -26,6 +26,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WEB="$ROOT/apps/web"
 PKG="$WEB/.deploy"
 ZIP="$WEB/deploy.zip"
+# Build into an ISOLATED output dir so a deploy never clobbers a running `next dev`'s .next
+# cache (next.config.mjs honours NEXT_DIST_DIR; the standalone server bakes this distDir in).
+DIST="${NEXT_DIST_DIR:-.next-deploy}"
 
 echo "▶ Deploying apps/web -> Azure Gov app '$APP' (rg=$RG)"
 echo "  API base baked into bundle: $API_BASE"
@@ -40,12 +43,12 @@ cloud="$(az cloud show --query name -o tsv)"
 
 # 1) Build the standalone bundle with the production API base.
 echo "▶ Building (next build, output: standalone)…"
-( cd "$WEB" && rm -rf .next && NEXT_PUBLIC_API_BASE="$API_BASE" npx next build >/tmp/deploy-web-build.log 2>&1 ) \
+( cd "$WEB" && rm -rf "$DIST" && NEXT_DIST_DIR="$DIST" NEXT_PUBLIC_API_BASE="$API_BASE" npx next build >/tmp/deploy-web-build.log 2>&1 ) \
   || { echo "✗ build failed — see /tmp/deploy-web-build.log"; tail -20 /tmp/deploy-web-build.log; exit 1; }
 
 # Guardrail: the prod API base must be baked in and localhost must NOT leak into the client.
-grep -rlq "${API_BASE#https://}" "$WEB/.next/static" || { echo "✗ API base not found in client bundle" >&2; exit 1; }
-if grep -rlq "localhost:4000" "$WEB/.next/static" 2>/dev/null; then
+grep -rlq "${API_BASE#https://}" "$WEB/$DIST/static" || { echo "✗ API base not found in client bundle" >&2; exit 1; }
+if grep -rlq "localhost:4000" "$WEB/$DIST/static" 2>/dev/null; then
   echo "✗ localhost:4000 leaked into the client bundle — aborting" >&2; exit 1
 fi
 
@@ -55,11 +58,12 @@ fi
 echo "▶ Packaging standalone bundle…"
 rm -rf "$PKG" "$ZIP"
 mkdir -p "$PKG"
-cp -a "$WEB/.next/standalone/apps/web/." "$PKG/"
-cp -a "$WEB/.next/standalone/node_modules" "$PKG/node_modules"
-mkdir -p "$PKG/.next/static" && cp -a "$WEB/.next/static/." "$PKG/.next/static/"
+cp -a "$WEB/$DIST/standalone/apps/web/." "$PKG/"
+cp -a "$WEB/$DIST/standalone/node_modules" "$PKG/node_modules"
+# Static must live under the same distDir the standalone server.js baked in (./$DIST/static).
+mkdir -p "$PKG/$DIST/static" && cp -a "$WEB/$DIST/static/." "$PKG/$DIST/static/"
 [ -d "$WEB/public" ] && cp -a "$WEB/public" "$PKG/public"
-cp -a "$WEB/.next/standalone/package.json" "$PKG/package.json" 2>/dev/null || cp -a "$WEB/package.json" "$PKG/package.json"
+cp -a "$WEB/$DIST/standalone/package.json" "$PKG/package.json" 2>/dev/null || cp -a "$WEB/package.json" "$PKG/package.json"
 [ -f "$PKG/server.js" ] || { echo "✗ server.js missing from package root" >&2; exit 1; }
 ( cd "$PKG" && zip -qr "$ZIP" . )
 echo "  package: $(du -h "$ZIP" | cut -f1)"
@@ -77,6 +81,6 @@ code="$(curl -s -o /dev/null -w '%{http_code}' "https://$host/")"
 echo "  homepage: HTTP $code"
 [ "$code" = "200" ] || { echo "✗ site did not return 200" >&2; exit 1; }
 
-# 5) Clean up local build artifacts.
-rm -rf "$PKG" "$ZIP"
+# 5) Clean up local build artifacts (including the isolated build dir — never the dev .next).
+rm -rf "$PKG" "$ZIP" "$WEB/$DIST"
 echo "✓ Deployed apps/web to https://$host"

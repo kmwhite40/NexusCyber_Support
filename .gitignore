@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .next/
+.next-deploy/
 .env
 *.log
 .DS_Store
