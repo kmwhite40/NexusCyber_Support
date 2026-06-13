@@ -4,6 +4,8 @@ import animate from 'tailwindcss-animate';
 // Design tokens drive per-tenant branding (docs/nexus/10 §V.2) — CSS variables in
 // globals.css are themeable per organization.
 const config: Config = {
+  // Class strategy: a `.dark` class on <html> selects the dark palette (see globals.css).
+  darkMode: 'class',
   content: ['./app/**/*.{ts,tsx}', './components/**/*.{ts,tsx}'],
   theme: {
     container: {

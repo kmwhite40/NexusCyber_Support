@@ -7,6 +7,7 @@ import { useAuth } from './auth-context';
 import { Badge } from './ui/primitives';
 import { Avatar, AvatarFallback } from './ui/avatar';
 import { BrandMark } from './ui/brand';
+import { ThemeToggle } from './theme-toggle';
 
 type NavItem = { href: string; label: string; icon: React.ReactNode; anyPerm?: string[]; section?: string };
 
@@ -139,6 +140,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-3">
             <Badge tone="brand">{me.roles[0] ?? 'user'}</Badge>
             <Badge tone="neutral">{me.plane}</Badge>
+            <ThemeToggle />
           </div>
         </header>
         <main className="flex-1 px-5 py-6 lg:px-8">{children}</main>

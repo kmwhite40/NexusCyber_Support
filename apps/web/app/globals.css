@@ -2,9 +2,35 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Design tokens are HSL channels so Tailwind opacity modifiers and inline
+   hsl(var(--x)) keep working. The default :root is the LIGHT theme; a `.dark`
+   class on <html> swaps to the dark surfaces. The theme class is applied before
+   first paint by the no-FOUC script in app/layout.tsx (default: dark). */
 :root {
-  /* Neutral-dark surfaces + blue accents (provided design tokens), expressed as HSL
-     channels so Tailwind opacity modifiers and inline hsl(var(--x)) keep working. */
+  /* Light theme — neutral slate surfaces + the same blue accents. */
+  --bg: 210 20% 98%;         /* near-white app background */
+  --surface: 0 0% 100%;      /* cards */
+  --surface-2: 210 17% 95%;  /* secondary/muted surface */
+  --border: 214 19% 88%;
+  --muted: 215 16% 42%;      /* readable muted text on light */
+  --fg: 222 47% 11%;         /* slate-900 foreground */
+  --brand: 222 86% 54%;      /* #2563ef blue accent */
+  --brand-fg: 0 0% 100%;
+  --accent: 217 91% 60%;     /* #3a81f6 */
+  --success: 152 55% 38%;
+  --warning: 32 95% 44%;
+  --danger: 357 78% 47%;
+  --ring: 214 25% 70%;
+  --chart-1: 222 86% 54%;
+  --chart-2: 217 91% 60%;
+  --chart-3: 212 90% 66%;
+  --chart-4: 224 79% 48%;
+  --chart-5: 227 70% 40%;
+  --font-sans: 'Inter';
+}
+
+.dark {
+  /* Dark theme — original #0a0a0a surfaces + blue accents. */
   --bg: 0 0% 4%;              /* #0a0a0a background */
   --surface: 0 0% 7%;        /* card — slightly elevated for legibility */
   --surface-2: 0 0% 15%;     /* #262626 secondary/muted surface */
@@ -23,10 +49,12 @@
   --chart-3: 222 86% 54%;    /* #2563ef */
   --chart-4: 224 79% 48%;    /* #1a4eda */
   --chart-5: 227 70% 40%;    /* #1f3fad */
-  --font-sans: 'Inter';
 }
 
-/* Optional per-tenant light brand override could redefine these on a wrapper. */
+/* Match native form controls/scrollbars to the active theme + smooth the swap. */
+html { color-scheme: light; }
+html.dark { color-scheme: dark; }
+html, body { transition: background-color .2s ease, color .2s ease; }
 
 * {
   border-color: hsl(var(--border));
