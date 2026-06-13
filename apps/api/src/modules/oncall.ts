@@ -40,8 +40,14 @@ function requireOnCallAccess(actor: Principal) {
 interface Responder {
   userId: string;
   name: string;
+  phone: string | null;
   position: number;
   via: 'rotation' | 'override';
+}
+
+/** Re-sequence participant ids to contiguous positions 0..n-1, preserving order. Pure. */
+export function repackPositions<T>(ordered: T[]): Array<{ item: T; position: number }> {
+  return ordered.map((item, position) => ({ item, position }));
 }
 
 /** Resolve the current responder for a schedule's primary rotation. */
@@ -56,7 +62,7 @@ async function resolveCurrent(scheduleId: string, atIndexOffset = 0): Promise<Re
 
   const participants = (
     await q(
-      `SELECT p.user_id, p.position, u.display_name AS name
+      `SELECT p.user_id, p.position, u.display_name AS name, u.phone
          FROM oncall_participants p JOIN users u ON u.id = p.user_id
         WHERE p.rotation_id=$1 ORDER BY p.position`,
       [rot.id],
@@ -68,18 +74,18 @@ async function resolveCurrent(scheduleId: string, atIndexOffset = 0): Promise<Re
   const now = new Date();
   const override = (
     await q(
-      'SELECT o.user_id, u.display_name AS name FROM oncall_overrides o JOIN users u ON u.id=o.user_id WHERE o.schedule_id=$1 AND o.starts_at<=$2 AND o.ends_at>$2 LIMIT 1',
+      'SELECT o.user_id, u.display_name AS name, u.phone FROM oncall_overrides o JOIN users u ON u.id=o.user_id WHERE o.schedule_id=$1 AND o.starts_at<=$2 AND o.ends_at>$2 LIMIT 1',
       [scheduleId, now],
     )
   ).rows[0];
   if (override && atIndexOffset === 0) {
-    return { userId: override.user_id, name: override.name, position: -1, via: 'override' };
+    return { userId: override.user_id, name: override.name, phone: override.phone ?? null, position: -1, via: 'override' };
   }
 
   const baseIdx = currentResponderIndex(participants.length, rot.length_days, new Date(rot.handoff_epoch).getTime(), now.getTime());
   const idx = (baseIdx + atIndexOffset) % participants.length;
   const p = participants[idx];
-  return { userId: p.user_id, name: p.name, position: p.position, via: 'rotation' };
+  return { userId: p.user_id, name: p.name, phone: p.phone ?? null, position: p.position, via: 'rotation' };
 }
 
 // Stable rotation anchor (a Monday 09:00) so handoffs line up week-to-week.
@@ -88,7 +94,7 @@ const HANDOFF_ANCHOR = '2026-01-05T09:00:00Z';
 /** Candidate responders = Nexus employees. */
 export async function listResponders(actor: Principal) {
   requireOnCallAccess(actor);
-  return (await q("SELECT id, display_name AS name, email FROM users WHERE plane='nexus' AND status='active' ORDER BY display_name")).rows;
+  return (await q("SELECT id, display_name AS name, email, phone FROM users WHERE plane='nexus' AND status='active' ORDER BY display_name")).rows;
 }
 
 /** Create a schedule with a primary rotation and an ordered roster. */
@@ -159,7 +165,7 @@ export async function listSchedules(actor: Principal) {
     const current = await resolveCurrent(s.id);
     const rot = (await q("SELECT * FROM oncall_rotations WHERE schedule_id=$1 AND role='primary' LIMIT 1", [s.id])).rows[0];
     const participants = rot
-      ? (await q('SELECT p.user_id, p.position, u.display_name AS name FROM oncall_participants p JOIN users u ON u.id=p.user_id WHERE p.rotation_id=$1 ORDER BY p.position', [rot.id])).rows
+      ? (await q('SELECT p.user_id, p.position, u.display_name AS name, u.phone FROM oncall_participants p JOIN users u ON u.id=p.user_id WHERE p.rotation_id=$1 ORDER BY p.position', [rot.id])).rows
       : [];
     out.push({ id: s.id, team: s.team, tz: s.tz, coverage: s.coverage, current, rotationLengthDays: rot?.length_days ?? null, participants });
   }
@@ -226,4 +232,52 @@ export async function escalatePage(actor: Principal, pageId: string) {
   await audit(actor, { action: 'oncall.escalated', organizationId: page.organization_id, resourceType: 'oncall_page', resourceId: pageId, detail: { to: next?.name } });
   publish('oncall.escalated', page.organization_id, { page_id: pageId, to_responder: next?.userId });
   return { state: 'escalated', responder: next?.name };
+}
+
+/** Delete a schedule (and its rotations/participants/overrides + closed pages). Blocked
+ *  while any page is still OPEN so an active incident is never silently dropped. */
+export async function deleteSchedule(actor: Principal, scheduleId: string) {
+  authorize(actor, 'oncall.manage');
+  const sched = (await q('SELECT id, team FROM oncall_schedules WHERE id=$1', [scheduleId])).rows[0];
+  if (!sched) throw Errors.notFound('schedule not found');
+  const open = (
+    await q("SELECT count(*)::int AS n FROM oncall_pages WHERE schedule_id=$1 AND state IN ('created','notified','escalated')", [scheduleId])
+  ).rows[0].n;
+  if (open > 0) throw Errors.conflict(`cannot delete: ${open} open page(s) on this schedule — resolve them first`);
+  await q('DELETE FROM oncall_schedules WHERE id=$1', [scheduleId]); // cascades rotations/participants/overrides/closed pages
+  await audit(actor, { action: 'oncall.schedule_deleted', resourceType: 'oncall_schedule', resourceId: scheduleId, detail: { team: sched.team } });
+  return { ok: true };
+}
+
+/** Remove a responder from a schedule's primary rotation and re-pack the order. A rotation
+ *  must keep at least one responder (delete the schedule instead to retire it). */
+export async function removeParticipant(actor: Principal, scheduleId: string, userId: string) {
+  authorize(actor, 'oncall.manage');
+  const rot = (await q("SELECT id FROM oncall_rotations WHERE schedule_id=$1 AND role='primary' LIMIT 1", [scheduleId])).rows[0];
+  if (!rot) throw Errors.notFound('rotation not found');
+  const current = (await q('SELECT user_id FROM oncall_participants WHERE rotation_id=$1 ORDER BY position', [rot.id])).rows;
+  if (!current.some((r) => r.user_id === userId)) throw Errors.notFound('responder is not in this rotation');
+  if (current.length <= 1) throw Errors.conflict('cannot remove the last responder — delete the schedule instead');
+
+  await q('DELETE FROM oncall_participants WHERE rotation_id=$1 AND user_id=$2', [rot.id, userId]);
+  // Re-pack remaining responders to contiguous positions (keeps rotation math + the
+  // UNIQUE(rotation_id, position) constraint clean). Use a temp offset to avoid collisions.
+  const remaining = current.filter((r) => r.user_id !== userId).map((r) => r.user_id);
+  await q('UPDATE oncall_participants SET position = position + 1000 WHERE rotation_id=$1', [rot.id]);
+  for (const { item, position } of repackPositions(remaining)) {
+    await q('UPDATE oncall_participants SET position=$1 WHERE rotation_id=$2 AND user_id=$3', [position, rot.id, item]);
+  }
+  await audit(actor, { action: 'oncall.participant_removed', resourceType: 'oncall_schedule', resourceId: scheduleId, detail: { userId } });
+  return { ok: true, remaining: remaining.length };
+}
+
+/** Set (or clear) a responder's cell number used for on-call paging. */
+export async function setResponderPhone(actor: Principal, userId: string, phone: string | null) {
+  authorize(actor, 'oncall.manage');
+  const u = (await q("SELECT id FROM users WHERE id=$1 AND plane='nexus'", [userId])).rows[0];
+  if (!u) throw Errors.notFound('responder not found');
+  const normalized = phone && phone.trim() ? phone.trim() : null;
+  await q('UPDATE users SET phone=$1, updated_at=now() WHERE id=$2', [normalized, userId]);
+  await audit(actor, { action: 'oncall.responder_phone_set', resourceType: 'user', resourceId: userId, detail: { has_phone: !!normalized } });
+  return { ok: true, phone: normalized };
 }

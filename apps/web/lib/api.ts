@@ -223,13 +223,14 @@ export interface OnCallSchedule {
   tz: string;
   coverage: string;
   rotationLengthDays: number | null;
-  current: { name: string; via: string } | null;
-  participants: Array<{ user_id: string; position: number; name: string }>;
+  current: { name: string; via: string; phone?: string | null } | null;
+  participants: Array<{ user_id: string; position: number; name: string; phone: string | null }>;
 }
 export interface Responder {
   id: string;
   name: string;
   email: string;
+  phone?: string | null;
 }
 export interface OnCallPage {
   id: string;
@@ -256,6 +257,9 @@ export const oncall = {
     api.patch<{ ok: boolean }>(`/oncall/schedules/${id}`, body),
   createOverride: (body: { scheduleId: string; userId: string; startsAt: string; endsAt: string; reason?: string }) =>
     api.post<{ ok: boolean }>('/oncall/overrides', body),
+  deleteSchedule: (id: string) => api.del<{ ok: boolean }>(`/oncall/schedules/${id}`),
+  removeParticipant: (id: string, userId: string) => api.del<{ ok: boolean; remaining: number }>(`/oncall/schedules/${id}/participants/${userId}`),
+  setResponderPhone: (userId: string, phone: string | null) => api.patch<{ ok: boolean; phone: string | null }>(`/oncall/responders/${userId}`, { phone }),
 };
 
 // Tier groups available as escalation targets (mirrors seeded assignment_groups).

@@ -76,6 +76,18 @@ export default function OnCallPage() {
                     <>
                       <Button size="sm" variant="ghost" onClick={() => setConfig({ mode: 'edit', schedule: s })}>Edit</Button>
                       <Button size="sm" variant="ghost" onClick={() => setConfig({ mode: 'override', schedule: s })}>Override</Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={busy}
+                        onClick={() => {
+                          if (window.confirm(`Delete schedule "${s.team}"? This removes its rotation and responders. Blocked if any page is still open.`)) {
+                            act(() => oncall.deleteSchedule(s.id)).catch((e) => window.alert(e instanceof ApiError ? e.detail : 'Delete failed'));
+                          }
+                        }}
+                      >
+                        Delete
+                      </Button>
                     </>
                   )}
                   <Badge tone="neutral">{s.coverage}</Badge>
@@ -88,7 +100,10 @@ export default function OnCallPage() {
                   </div>
                   <div>
                     <div className="text-sm font-semibold text-fg">{s.current?.name ?? 'Unassigned'}</div>
-                    <div className="text-[11px] text-muted">On call now {s.current?.via === 'override' ? '(override)' : `· ${s.rotationLengthDays}-day rotation`}</div>
+                    <div className="text-[11px] text-muted">
+                      On call now {s.current?.via === 'override' ? '(override)' : `· ${s.rotationLengthDays}-day rotation`}
+                      {s.current?.phone ? ` · ${s.current.phone}` : ''}
+                    </div>
                   </div>
                 </div>
                 <div className="text-xs font-medium text-muted">Rotation</div>
@@ -98,6 +113,42 @@ export default function OnCallPage() {
                       <span className="grid h-5 w-5 place-items-center rounded-full border border-border text-[10px] text-muted">{p.position + 1}</span>
                       <span className={s.current?.name === p.name ? 'font-medium text-brand' : 'text-fg'}>{p.name}</span>
                       {s.current?.name === p.name && <Badge tone="brand">current</Badge>}
+                      <span className="ml-auto flex items-center gap-2">
+                        {p.phone ? (
+                          <span className="tabular-nums text-muted">{p.phone}</span>
+                        ) : (
+                          <span className="italic text-muted/50">no cell</span>
+                        )}
+                        {canManage && (
+                          <>
+                            <button
+                              type="button"
+                              title="Set cell number"
+                              className="text-muted hover:text-fg"
+                              disabled={busy}
+                              onClick={() => {
+                                const v = window.prompt(`Cell number for ${p.name} (paging contact)`, p.phone ?? '');
+                                if (v !== null) act(() => oncall.setResponderPhone(p.user_id, v.trim() || null));
+                              }}
+                            >
+                              ✎
+                            </button>
+                            <button
+                              type="button"
+                              title="Remove from rotation"
+                              className="text-muted hover:text-danger"
+                              disabled={busy}
+                              onClick={() => {
+                                if (window.confirm(`Remove ${p.name} from "${s.team}"?`)) {
+                                  act(() => oncall.removeParticipant(s.id, p.user_id)).catch((e) => window.alert(e instanceof ApiError ? e.detail : 'Remove failed'));
+                                }
+                              }}
+                            >
+                              ✕
+                            </button>
+                          </>
+                        )}
+                      </span>
                     </li>
                   ))}
                 </ol>

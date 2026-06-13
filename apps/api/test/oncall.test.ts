@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { currentResponderIndex } from '../src/modules/oncall.js';
+import { currentResponderIndex, repackPositions } from '../src/modules/oncall.js';
 
 const MON = Date.UTC(2026, 0, 5, 9, 0, 0); // anchor Monday 09:00
 const day = (n: number) => MON + n * 86_400_000;
@@ -24,5 +24,18 @@ describe('On-call rotation math', () => {
     const idx = currentResponderIndex(5, 7, MON, day(-7));
     expect(idx).toBeGreaterThanOrEqual(0);
     expect(idx).toBeLessThan(5);
+  });
+});
+
+describe('repackPositions (re-sequence after a removal)', () => {
+  it('assigns contiguous 0-based positions preserving order', () => {
+    expect(repackPositions(['a', 'c', 'd'])).toEqual([
+      { item: 'a', position: 0 },
+      { item: 'c', position: 1 },
+      { item: 'd', position: 2 },
+    ]);
+  });
+  it('handles an empty roster', () => {
+    expect(repackPositions([])).toEqual([]);
   });
 });

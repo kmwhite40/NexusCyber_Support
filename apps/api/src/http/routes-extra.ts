@@ -13,8 +13,29 @@ import * as workflows from '../modules/workflows.js';
 import * as forms from '../modules/forms.js';
 import * as announcements from '../modules/announcements.js';
 import * as demo from '../modules/demo.js';
+import * as oncall from '../modules/oncall.js';
 
 export async function registerExtraRoutes(app: FastifyInstance): Promise<void> {
+  // ---------------- On-call management: delete schedule, remove responder, set cell ----------------
+  app.delete('/api/v1/oncall/schedules/:id', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return oncall.deleteSchedule(p, id);
+  });
+
+  app.delete('/api/v1/oncall/schedules/:id/participants/:userId', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id, userId } = z.object({ id: z.string().uuid(), userId: z.string().uuid() }).parse(req.params);
+    return oncall.removeParticipant(p, id, userId);
+  });
+
+  app.patch('/api/v1/oncall/responders/:id', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ phone: z.string().max(40).nullable() }).parse(req.body);
+    return oncall.setResponderPhone(p, id, body.phone);
+  });
+
   // ---------------- Demo account view toggle (admin <-> customer) ----------------
   app.get('/api/v1/auth/demo/status', async (req) => {
     const p = await requirePrincipal(req);

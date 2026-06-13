@@ -984,8 +984,9 @@ async function run() {
 
       // ---- On-call schedule (weekly primary rotation over desk agents) ----
       const schedExists = await sql.query("SELECT id FROM oncall_schedules WHERE team=$1", ['Service Desk On-Call']);
-      if (!schedExists.rows[0] && agentIds.length >= 5) {
-        const scheduleId = (
+      let scheduleId: string | undefined = schedExists.rows[0]?.id;
+      if (!scheduleId && agentIds.length >= 5) {
+        scheduleId = (
           await sql.query("INSERT INTO oncall_schedules (team, tz, coverage) VALUES ('Service Desk On-Call','America/New_York','24x7') RETURNING id")
         ).rows[0].id;
         const rot = (
@@ -994,6 +995,58 @@ async function run() {
         const responders = agentIds.slice(0, 5);
         for (let i = 0; i < responders.length; i++) {
           await sql.query('INSERT INTO oncall_participants (rotation_id, user_id, position) VALUES ($1,$2,$3)', [rot, responders[i], i]);
+        }
+      }
+
+      // ---- Cell numbers for on-call responders (paging contact; only sets if unset) ----
+      const allAgentIds = [
+        ...agentIds,
+        ...(await sql.query("SELECT id FROM users WHERE email IN ('manager@nexus.example.com','analyst@nexus.example.com','agent@nexus.example.com')")).rows.map((r) => r.id),
+      ];
+      for (let i = 0; i < allAgentIds.length; i++) {
+        const phone = `+1 (202) 555-${String(1000 + i).slice(1).padStart(4, '0')}`;
+        await sql.query('UPDATE users SET phone=$1 WHERE id=$2 AND phone IS NULL', [phone, allAgentIds[i]]);
+      }
+
+      // ---- Sample escalation policies (Demo Corp): ordered steps -> next responder on no-ack ----
+      // Seeded per-name (idempotent) so leftover test policies don't suppress the samples.
+      if (scheduleId) {
+        const mgrId = (await sql.query("SELECT id FROM users WHERE email='manager@nexus.example.com'")).rows[0]?.id ?? null;
+        const analystId = (await sql.query("SELECT id FROM users WHERE email='analyst@nexus.example.com'")).rows[0]?.id ?? null;
+        const policies: Array<{ name: string; steps: Array<Record<string, unknown>> }> = [
+          {
+            name: 'Sev1 — 24×7 critical',
+            steps: [
+              { order: 0, targetType: 'schedule', targetId: scheduleId, delayMinutes: 0 },
+              { order: 1, targetType: 'user', targetId: mgrId, delayMinutes: 5 },
+              { order: 2, targetType: 'user', targetId: analystId, delayMinutes: 15 },
+            ],
+          },
+          {
+            name: 'Sev2 — standard',
+            steps: [
+              { order: 0, targetType: 'schedule', targetId: scheduleId, delayMinutes: 0 },
+              { order: 1, targetType: 'user', targetId: mgrId, delayMinutes: 30 },
+            ],
+          },
+          {
+            name: 'Security incident',
+            steps: [
+              { order: 0, targetType: 'user', targetId: analystId, delayMinutes: 0 },
+              { order: 1, targetType: 'schedule', targetId: scheduleId, delayMinutes: 10 },
+              { order: 2, targetType: 'user', targetId: mgrId, delayMinutes: 20 },
+            ],
+          },
+        ];
+        for (const pol of policies) {
+          const exists = await sql.query('SELECT 1 FROM escalation_policies WHERE organization_id=$1 AND name=$2', [demoOrgId, pol.name]);
+          if (exists.rows[0]) continue;
+          // Drop steps whose target user is missing so a partial seed never references a null id.
+          const steps = pol.steps.filter((s) => s.targetType !== 'user' || s.targetId);
+          await sql.query(
+            'INSERT INTO escalation_policies (organization_id, name, steps, created_by) VALUES ($1,$2,$3,$4)',
+            [demoOrgId, pol.name, JSON.stringify(steps), mgrId],
+          );
         }
       }
 
