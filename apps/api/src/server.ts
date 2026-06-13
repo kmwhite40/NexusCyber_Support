@@ -32,18 +32,14 @@ async function main() {
   });
 
   // Tolerate empty-body requests that still carry Content-Type: application/json — browsers
-  // send this on DELETE and bodyless POSTs. Without this Fastify throws
-  // FST_ERR_CTP_EMPTY_JSON_BODY, which the generic handler turns into a confusing 500.
-  app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
-    if (body === undefined || body === null || body === '') {
-      done(null, undefined);
-      return;
-    }
-    try {
-      done(null, JSON.parse(body as string));
-    } catch (err) {
-      (err as { statusCode?: number }).statusCode = 400;
-      done(err as Error, undefined);
+  // send this on DELETE and bodyless POSTs. Fastify would otherwise throw
+  // FST_ERR_CTP_EMPTY_JSON_BODY (a confusing 500). Strip the content-type when there is no
+  // body so Fastify skips body parsing entirely.
+  app.addHook('onRequest', async (req) => {
+    const len = req.headers['content-length'];
+    const ct = req.headers['content-type'];
+    if ((len === undefined || len === '0') && typeof ct === 'string' && ct.includes('application/json')) {
+      delete req.headers['content-type'];
     }
   });
 
