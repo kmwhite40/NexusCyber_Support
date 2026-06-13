@@ -1,6 +1,6 @@
 // Escalation policies (PagerDuty/Opsgenie-style). Ordered steps route to the next responder
 // after a delay. Pure step logic is unit-tested; CRUD + resolve use org context.
-import { withOrgContext } from '../db/pool.js';
+import { withOrgContext, withSystemContext } from '../db/pool.js';
 import { orgContextFor } from '../auth/principal.js';
 import { authorize } from '../authz/pdp.js';
 import { audit } from './audit.js';
@@ -87,7 +87,9 @@ export async function resolveStepTarget(actor: Principal, id: string, stepOrder:
     const step = (pol.steps as Step[]).find((s) => s.order === stepOrder);
     if (!step) throw Errors.badRequest('step not found');
     if (step.targetType === 'user') {
-      const u = (await sql.query('SELECT id, email, display_name FROM users WHERE id=$1', [step.targetId])).rows[0];
+      // User lookup uses withSystemContext because nexus-plane users have organization_id=NULL
+      // and are invisible under the org-scoped RLS on the users table (same pattern as oncall.ts).
+      const u = (await withSystemContext((sys) => sys.query('SELECT id, email, display_name FROM users WHERE id=$1', [step.targetId]))).rows[0];
       return { step: step.order, targetType: 'user', responder: u ?? null };
     }
     const schedules = await oncall.listSchedules(actor);
