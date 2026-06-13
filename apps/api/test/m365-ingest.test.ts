@@ -58,21 +58,42 @@ describe('ingest', () => {
     expect(calls.some((c) => c.text.includes('INSERT INTO tickets'))).toBe(false);
   });
 
-  it('fetchNewMessages reads the delta page and stores the deltaLink', async () => {
+  it('fetchNewMessages primes the delta cursor on first run without ingesting the existing inbox', async () => {
     const graphClient = {
       get: vi.fn(async () => ({
         value: [
           { id: 'm1', internetMessageId: '<a@x>', subject: 'S', bodyPreview: 'b',
             from: { emailAddress: { address: 'p@acme.gov' } } },
         ],
-        '@odata.deltaLink': 'https://graph.microsoft.com/v1.0/delta?token=NEXT',
+        '@odata.deltaLink': 'https://graph.microsoft.us/v1.0/delta?token=NEXT',
       })),
       post: vi.fn(),
     } as any;
-    const { sql } = makeSql({ 'FROM integration_state': { rows: [] } });
+    // No stored cursor -> prime only; the pre-existing inbox is NOT ticketed.
+    const { sql, calls } = makeSql({ 'FROM integration_state': { rows: [] } });
+    const out = await fetchNewMessages(sql, graphClient, 'svc@agency.gov');
+    expect(out).toHaveLength(0); // backlog skipped
+    expect(calls.some((c) => c.text.includes('INSERT INTO integration_state'))).toBe(true); // cursor stored
+  });
+
+  it('fetchNewMessages returns new messages once the delta cursor is established', async () => {
+    const graphClient = {
+      get: vi.fn(async () => ({
+        value: [
+          { id: 'm2', internetMessageId: '<b@x>', subject: 'S2', bodyPreview: 'b2',
+            from: { emailAddress: { address: 'q@acme.gov' } } },
+        ],
+        '@odata.deltaLink': 'https://graph.microsoft.us/v1.0/delta?token=NEXT2',
+      })),
+      post: vi.fn(),
+    } as any;
+    // A stored cursor exists -> normal incremental ingest of new mail.
+    const { sql } = makeSql({
+      'FROM integration_state': { rows: [{ value: { deltaLink: 'https://graph.microsoft.us/v1.0/delta?token=PREV' } }] },
+    });
     const out = await fetchNewMessages(sql, graphClient, 'svc@agency.gov');
     expect(out).toHaveLength(1);
-    expect(out[0].fromAddress).toBe('p@acme.gov');
+    expect(out[0].fromAddress).toBe('q@acme.gov');
   });
 
   it('publishes ticket.created (desk) and ticket.acknowledged (customer no-reply) after creating a ticket', async () => {

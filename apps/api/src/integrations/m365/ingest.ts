@@ -42,6 +42,11 @@ export async function fetchNewMessages(
   mailbox: string,
 ): Promise<InboundMessage[]> {
   const stored = await getState(sql, DELTA_KEY);
+  // First run (no cursor yet): establish the delta cursor against the CURRENT inbox
+  // but do NOT ingest the existing backlog. Otherwise enabling ingestion would turn
+  // every pre-existing email into a ticket and fire a no-reply acknowledgment to each
+  // sender. Only mail that arrives after go-live is ingested on subsequent polls.
+  const priming = !stored?.deltaLink;
   let url: string =
     stored?.deltaLink ??
     `/users/${mailbox}/mailFolders/inbox/messages/delta?$select=id,internetMessageId,subject,bodyPreview,from`;
@@ -50,14 +55,16 @@ export async function fetchNewMessages(
   // Follow nextLink pages until we reach the deltaLink.
   for (;;) {
     const page = await graphClient.get(url);
-    for (const m of page.value ?? []) {
-      messages.push({
-        id: m.id,
-        internetMessageId: m.internetMessageId ?? m.id,
-        fromAddress: m.from?.emailAddress?.address ?? '',
-        subject: m.subject ?? '(no subject)',
-        bodyPreview: m.bodyPreview ?? '',
-      });
+    if (!priming) {
+      for (const m of page.value ?? []) {
+        messages.push({
+          id: m.id,
+          internetMessageId: m.internetMessageId ?? m.id,
+          fromAddress: m.from?.emailAddress?.address ?? '',
+          subject: m.subject ?? '(no subject)',
+          bodyPreview: m.bodyPreview ?? '',
+        });
+      }
     }
     if (page['@odata.nextLink']) {
       url = page['@odata.nextLink'];
@@ -66,6 +73,7 @@ export async function fetchNewMessages(
     if (page['@odata.deltaLink']) await setState(sql, DELTA_KEY, { deltaLink: page['@odata.deltaLink'] });
     break;
   }
+  if (priming) logger.info({ mailbox }, 'mail ingest: primed delta cursor; existing inbox skipped (only new mail is ticketed)');
   return messages;
 }
 
