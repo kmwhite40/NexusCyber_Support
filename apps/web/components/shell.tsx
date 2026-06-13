@@ -25,6 +25,7 @@ const NEXUS_NAV: NavItem[] = [
   { href: '/archived', label: 'Archived', icon: <IconArchive />, section: 'Work' },
   // Operations
   { href: '/oncall', label: 'On-call', icon: <IconPager />, anyPerm: ['oncall.acknowledge', 'oncall.manage', 'oncall.page'], section: 'Operations' },
+  { href: '/escalation-policies', label: 'Escalation', icon: <IconPager />, anyPerm: ['escalation.read', 'escalation.manage'], section: 'Operations' },
   { href: '/alerts', label: 'Alerts', icon: <IconBell />, anyPerm: ['alert.read'], section: 'Operations' },
   { href: '/services', label: 'Services', icon: <IconServer />, anyPerm: ['service.read', 'service.manage'], section: 'Operations' },
   { href: '/customers', label: 'Customers', icon: <IconUsers />, anyPerm: ['org.read', 'org.manage'], section: 'Operations' },
@@ -170,6 +171,7 @@ function titleFor(path: string): string {
   if (path.startsWith('/email-logs')) return 'Email logs';
   if (path.startsWith('/alerts')) return 'Alerts';
   if (path.startsWith('/channels')) return 'Channels';
+  if (path.startsWith('/escalation-policies')) return 'Escalation policies';
   if (path.startsWith('/dashboards')) return 'Dashboards';
   return 'Dashboard';
 }

@@ -31,6 +31,7 @@ import * as alerts from '../modules/alerts.js';
 import * as channels from '../modules/channels.js';
 import * as dashboards from '../modules/dashboards.js';
 import * as forms from '../modules/forms.js';
+import * as escalationPolicies from '../modules/escalation-policies.js';
 import { computeScore, grade } from '../modules/posture.js';
 import { audit, verifyChain, formatExport, type ExportableRow } from '../modules/audit.js';
 import { authorize, can } from '../authz/pdp.js';
@@ -1193,4 +1194,11 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post('/api/v1/dashboards', async (req, reply) => { const p = await requirePrincipal(req); const b = z.object({ name: z.string().min(1), layout: z.array(z.object({ type: z.string() })).optional(), organizationId: z.string().uuid().optional() }).parse(req.body); reply.code(201); return dashboards.createDashboard(p, b); });
   app.patch('/api/v1/dashboards/:id', async (req) => { const p = await requirePrincipal(req); const { id } = z.object({ id: z.string().uuid() }).parse(req.params); const b = z.object({ name: z.string().optional(), layout: z.array(z.object({ type: z.string() })).optional() }).parse(req.body); return dashboards.updateDashboard(p, id, b); });
   app.delete('/api/v1/dashboards/:id', async (req) => { const p = await requirePrincipal(req); const { id } = z.object({ id: z.string().uuid() }).parse(req.params); return dashboards.deleteDashboard(p, id); });
+
+  // ---------------- Escalation policies ----------------
+  app.get('/api/v1/escalation-policies', async (req) => { const p = await requirePrincipal(req); return { data: await escalationPolicies.listPolicies(p) }; });
+  app.post('/api/v1/escalation-policies', async (req, reply) => { const p = await requirePrincipal(req); const b = z.object({ name: z.string().min(1), steps: z.array(z.object({ targetType: z.enum(['schedule','user']), targetId: z.string().min(1), delayMinutes: z.number().min(0) })).min(1), organizationId: z.string().uuid().optional() }).parse(req.body); reply.code(201); return escalationPolicies.createPolicy(p, b); });
+  app.patch('/api/v1/escalation-policies/:id', async (req) => { const p = await requirePrincipal(req); const { id } = z.object({ id: z.string().uuid() }).parse(req.params); const b = z.object({ name: z.string().optional(), steps: z.array(z.object({ targetType: z.enum(['schedule','user']), targetId: z.string().min(1), delayMinutes: z.number().min(0) })).optional() }).parse(req.body); return escalationPolicies.updatePolicy(p, id, b as any); });
+  app.delete('/api/v1/escalation-policies/:id', async (req) => { const p = await requirePrincipal(req); const { id } = z.object({ id: z.string().uuid() }).parse(req.params); return escalationPolicies.deletePolicy(p, id); });
+  app.get('/api/v1/escalation-policies/:id/resolve', async (req) => { const p = await requirePrincipal(req); const { id } = z.object({ id: z.string().uuid() }).parse(req.params); const { step } = z.object({ step: z.coerce.number().int().min(1) }).parse(req.query); return escalationPolicies.resolveStepTarget(p, id, step); });
 }

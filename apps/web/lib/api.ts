@@ -405,3 +405,12 @@ export const dashboardsApi = {
   update: (id: string, b: { name?: string; layout?: { type: string }[] }) => api.patch<Dashboard>(`/dashboards/${id}`, b),
   remove: (id: string) => api.del<{ ok: true }>(`/dashboards/${id}`),
 };
+
+export interface EscalationStep { order: number; targetType: 'schedule' | 'user'; targetId: string; delayMinutes: number; }
+export interface EscalationPolicy { id: string; organization_id: string; name: string; steps: EscalationStep[]; created_at: string; }
+export const escalationApi = {
+  list: () => api.get<{ data: EscalationPolicy[] }>('/escalation-policies').then((r) => r.data),
+  create: (b: { name: string; steps: { targetType: string; targetId: string; delayMinutes: number }[]; organizationId?: string }) => api.post<EscalationPolicy>('/escalation-policies', b),
+  update: (id: string, b: { name?: string; steps?: { targetType: string; targetId: string; delayMinutes: number }[] }) => api.patch<EscalationPolicy>(`/escalation-policies/${id}`, b),
+  remove: (id: string) => api.del<{ ok: true }>(`/escalation-policies/${id}`),
+};
