@@ -122,12 +122,26 @@ function OrgDetailModal({ id, admin, onClose, onChanged }: { id: string; admin: 
     } catch (e) { setErr(e instanceof ApiError ? e.detail : 'Save failed'); }
     finally { setBusy(false); }
   }
-  async function removeOrg() {
-    if (!window.confirm(`Delete organization "${detail?.name}"? This cannot be undone.`)) return;
+  async function removeOrg(force = false) {
+    if (!force && !window.confirm(`Delete organization "${detail?.name}"? This cannot be undone.`)) return;
     setBusy(true); setErr(null);
-    try { await customersApi.remove(id); onChanged(); onClose(); }
-    catch (e) { setErr(e instanceof ApiError ? e.detail : 'Delete failed'); }
-    finally { setBusy(false); }
+    try {
+      await customersApi.remove(id, force);
+      onChanged(); onClose();
+    } catch (e) {
+      const msg = e instanceof ApiError ? e.detail : 'Delete failed';
+      // Org still has users — offer to remove them too.
+      if (!force && /user\(s\)/i.test(msg)) {
+        if (window.confirm(`${msg}\n\nDelete "${detail?.name}" AND its ${detail?.user_count ?? ''} user(s)? This cannot be undone.`)) {
+          await removeOrg(true);
+          return;
+        }
+      } else {
+        setErr(msg);
+      }
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -150,7 +164,7 @@ function OrgDetailModal({ id, admin, onClose, onChanged }: { id: string; admin: 
                 <div><label className="text-xs text-muted">Entra tenant (SSO)</label><Input value={tenant} onChange={(e) => setTenant(e.target.value)} placeholder="none" /></div>
               </div>
               <div className="flex justify-between pt-1">
-                <Button variant="danger" onClick={removeOrg} disabled={busy}>Delete org</Button>
+                <Button variant="danger" onClick={() => removeOrg()} disabled={busy}>Delete org</Button>
                 <Button onClick={saveOrg} disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
               </div>
             </div>

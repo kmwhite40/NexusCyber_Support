@@ -29,7 +29,10 @@ export class ApiError extends Error {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const headers: Record<string, string> = {};
+  // Only declare a JSON content-type when we actually send a body — a Content-Type
+  // with an empty body makes the server's JSON parser reject the request.
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 
@@ -362,7 +365,7 @@ export const customersApi = {
   users: (id: string) => api.get<{ data: OrgUser[] }>(`/organizations/${id}/users`).then((r) => r.data),
   create: (b: { name: string; cloud?: Cloud; entraTenantId?: string }) => api.post<OrgDetail>('/organizations', b),
   update: (id: string, b: { name?: string; cloud?: Cloud; entraTenantId?: string | null; status?: string }) => api.patch<OrgDetail>(`/organizations/${id}`, b),
-  remove: (id: string) => api.del<{ deleted: boolean }>(`/organizations/${id}`),
+  remove: (id: string, force?: boolean) => api.del<{ deleted: boolean }>(`/organizations/${id}${force ? '?force=true' : ''}`),
   addUser: (orgId: string, b: { email: string; displayName?: string; roleKey?: string; password?: string }) => api.post<{ id: string }>(`/organizations/${orgId}/users`, b),
   updateUser: (orgId: string, userId: string, b: { status?: 'active' | 'suspended'; roleKey?: string }) => api.patch<{ id: string }>(`/organizations/${orgId}/users/${userId}`, b),
   removeUser: (orgId: string, userId: string) => api.del<{ id: string }>(`/organizations/${orgId}/users/${userId}`),

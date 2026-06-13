@@ -31,6 +31,22 @@ async function main() {
     trustProxy: true,
   });
 
+  // Tolerate empty-body requests that still carry Content-Type: application/json — browsers
+  // send this on DELETE and bodyless POSTs. Without this Fastify throws
+  // FST_ERR_CTP_EMPTY_JSON_BODY, which the generic handler turns into a confusing 500.
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
+    if (body === undefined || body === null || body === '') {
+      done(null, undefined);
+      return;
+    }
+    try {
+      done(null, JSON.parse(body as string));
+    } catch (err) {
+      (err as { statusCode?: number }).statusCode = 400;
+      done(err as Error, undefined);
+    }
+  });
+
   // Security headers (HSTS, X-Content-Type-Options, frame-deny, etc.). CSP is owned by
   // the web app; this is a JSON API so we disable helmet's CSP here.
   await app.register(helmet, { contentSecurityPolicy: false, crossOriginResourcePolicy: false });
