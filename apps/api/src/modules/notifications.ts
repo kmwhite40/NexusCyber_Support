@@ -13,6 +13,21 @@ import { resolveRecipients } from './notifications-recipients.js';
 import { renderTemplate } from './notifications-templates.js';
 import { getNotificationAdapter } from '../integrations/m365/runtime.js';
 import type { NotificationAdapter } from '../integrations/m365/adapter.js';
+import { config } from '../config.js';
+
+/** Ticket fields used to render templates. Events carry only ticket_id, so the
+ *  dispatcher looks the rest up once and merges it into the template context. */
+async function ticketDetails(
+  sql: Sql,
+  ticketId: string | undefined,
+): Promise<{ ticket_number?: string; subject?: string; priority?: string; status?: string }> {
+  if (!ticketId) return {};
+  const { rows } = await sql.query(
+    'SELECT ticket_number, subject, priority, status FROM tickets WHERE id = $1',
+    [ticketId],
+  );
+  return rows[0] ?? {};
+}
 
 type Channel = 'teams' | 'email' | 'portal';
 
@@ -71,20 +86,31 @@ export async function dispatch(
   // Portal floor: always recorded (universal in-app channel, docs/nexus/06 §K.1).
   await record(sql, orgId, evt.type, 'portal', null, 'sent');
 
+  const d = evt.data as any;
+  // Events carry only ticket_id; look up the ticket so every template has real
+  // number/subject/priority/status. Explicit event fields still override.
+  const t = evt.type.startsWith('ticket.') || evt.type.startsWith('csat.') ? await ticketDetails(sql, d.ticket_id) : {};
   const tpl = renderTemplate(evt.type, {
     orgName: await orgName(sql, orgId),
-    ticketNumber: (evt.data as any).ticket_number,
-    subject: (evt.data as any).subject,
-    metric: (evt.data as any).metric,
-    severity: (evt.data as any).severity,
-    customerName: (evt.data as any).customer_name,
-    submittedAt: (evt.data as any).submitted_at,
-    priority: (evt.data as any).priority,
+    ticketId: d.ticket_id,
+    ticketNumber: d.ticket_number ?? t.ticket_number,
+    subject: d.subject ?? t.subject,
+    priority: d.priority ?? t.priority,
+    status: d.status ?? t.status,
+    metric: d.metric,
+    severity: d.severity,
+    customerName: d.customer_name,
+    submittedAt: d.submitted_at,
+    visibility: d.visibility,
+    commentExcerpt: d.comment_excerpt,
+    resolutionCode: d.resolution_code,
+    webOrigin: config.webOrigin[0],
   });
 
-  // The inbound-email acknowledgment goes to an external customer, so it must be
-  // email-only — never posted to the internal Teams channel via the fallback chain.
-  const channelOrder: Channel[] = evt.type === 'ticket.acknowledged' ? ['email'] : ['teams', 'email'];
+  // Purely customer-facing messages must be email-only — never posted to the
+  // internal Teams channel via the fallback chain.
+  const emailOnly = evt.type === 'ticket.acknowledged' || evt.type === 'csat.survey_created';
+  const channelOrder: Channel[] = emailOnly ? ['email'] : ['teams', 'email'];
   for (const channel of channelOrder) {
     const cap = await capability(sql, cloud, channel);
     const adapterCan = channel === 'email' ? adapter.capabilities().email : adapter.capabilities().teams;
@@ -126,6 +152,7 @@ export function registerNotificationHandlers(): void {
     'ticket.status_changed',
     'ticket.escalated',
     'ticket.resolved',
+    'csat.survey_created',
     'sla.warning',
     'sla.breached',
     'posture.finding_created',

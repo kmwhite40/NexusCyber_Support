@@ -94,6 +94,14 @@ export async function resolveRecipients(sql: Sql, evt: DomainEvent): Promise<Rec
     return email ? [{ userId: `requester:${email}`, email }] : [];
   }
 
+  // CSAT survey invite: only the ticket's requester (who can rate it in the portal).
+  if (type === 'csat.survey_created') {
+    const ticketId = data.ticket_id as string | undefined;
+    if (!ticketId) return [];
+    const t = await ticketParties(sql, ticketId);
+    return t?.requester_id ? usersByIds(sql, [t.requester_id]) : [];
+  }
+
   if (type.startsWith('ticket.') || type.startsWith('sla.')) {
     const ticketId = (data.ticket_id ?? data.id ?? data.ticketId) as string | undefined;
     if (!ticketId) return [];

@@ -11,6 +11,12 @@ export interface TemplateContext {
   customerName?: string;
   submittedAt?: string;
   priority?: string;
+  status?: string;
+  visibility?: string;
+  commentExcerpt?: string;
+  resolutionCode?: string;
+  ticketId?: string;
+  webOrigin?: string;
   [k: string]: unknown;
 }
 
@@ -93,6 +99,103 @@ const TEMPLATES: Record<string, Renderer> = {
       `<p>Please keep this ticket number for reference in any future communication about this request.</p>` +
       `<p>Thank you,<br/>${brand}<br/><em>Automated Notification</em></p>`;
     return { subject: `[${c.ticketNumber ?? 'Ticket'}] We received your support request`, html, text };
+  },
+  'ticket.commented': (c) => {
+    const brand = 'Anchor Support';
+    const excerpt = (c.commentExcerpt ?? '').trim();
+    // Internal notes go to agents; public replies go to the requester (+ assignee).
+    if (c.visibility === 'internal') {
+      return wrap(`[${c.ticketNumber}] Internal note added`, [
+        `An internal note was added to ticket ${c.ticketNumber}.`,
+        excerpt ? `Note: ${excerpt}` : '',
+        `Subject: ${c.subject ?? ''}`,
+      ].filter(Boolean));
+    }
+    const text = [
+      `Hello,`,
+      '',
+      `${brand} has responded to your support request (ticket ${c.ticketNumber}).`,
+      '',
+      excerpt ? `Message from our team:` : `Please sign in to view the latest update.`,
+      ...(excerpt ? [excerpt] : []),
+      '',
+      `Subject: ${c.subject ?? ''}`,
+      '',
+      `You can reply to this email or sign in to the support portal to continue the conversation. Please keep ticket ${c.ticketNumber} in the subject for reference.`,
+      '',
+      'Thank you,',
+      brand,
+      'Automated Notification',
+    ].join('\n');
+    const html =
+      `<p>Hello,</p>` +
+      `<p>${brand} has responded to your support request (ticket <strong>${escapeHtml(c.ticketNumber ?? '')}</strong>).</p>` +
+      (excerpt
+        ? `<p><strong>Message from our team:</strong></p><blockquote>${escapeHtml(excerpt)}</blockquote>`
+        : `<p>Please sign in to the support portal to view the latest update.</p>`) +
+      `<p><strong>Subject:</strong> ${escapeHtml(c.subject ?? '')}</p>` +
+      `<p>You can reply to this email or sign in to continue the conversation. Please keep ticket ${escapeHtml(c.ticketNumber ?? '')} referenced.</p>` +
+      `<p>Thank you,<br/>${brand}<br/><em>Automated Notification</em></p>`;
+    return { subject: `[${c.ticketNumber}] New reply from ${brand}`, html, text };
+  },
+  'ticket.resolved': (c) => {
+    const brand = 'Anchor Support';
+    const text = [
+      `Hello,`,
+      '',
+      `Good news — your support request has been resolved.`,
+      '',
+      'Ticket Details:',
+      `Ticket ID: ${c.ticketNumber ?? ''}`,
+      `Issue Summary: ${c.subject ?? ''}`,
+      c.resolutionCode ? `Resolution: ${c.resolutionCode}` : '',
+      '',
+      `If your issue is fully addressed, no action is needed. If you still need help, reply to this email (keep ticket ${c.ticketNumber} in the subject) or sign in to the portal to reopen the request.`,
+      '',
+      'Thank you for letting us help,',
+      brand,
+      'Automated Notification',
+    ].filter((l) => l !== '').join('\n');
+    const html =
+      `<p>Hello,</p>` +
+      `<p>Good news — your support request has been <strong>resolved</strong>.</p>` +
+      `<p><strong>Ticket Details:</strong></p>` +
+      `<ul>` +
+      `<li><strong>Ticket ID:</strong> ${escapeHtml(c.ticketNumber ?? '')}</li>` +
+      `<li><strong>Issue Summary:</strong> ${escapeHtml(c.subject ?? '')}</li>` +
+      (c.resolutionCode ? `<li><strong>Resolution:</strong> ${escapeHtml(c.resolutionCode)}</li>` : '') +
+      `</ul>` +
+      `<p>If your issue is fully addressed, no action is needed. If you still need help, reply to this email (keep ticket ${escapeHtml(c.ticketNumber ?? '')} in the subject) or sign in to the portal to reopen the request.</p>` +
+      `<p>Thank you for letting us help,<br/>${brand}<br/><em>Automated Notification</em></p>`;
+    return { subject: `[${c.ticketNumber}] Your request has been resolved`, html, text };
+  },
+  'csat.survey_created': (c) => {
+    const brand = 'Anchor Support';
+    const link = c.webOrigin && c.ticketId ? `${c.webOrigin}/tickets/${c.ticketId}` : '';
+    const text = [
+      `Hello,`,
+      '',
+      `Your recent support request (ticket ${c.ticketNumber}) has been resolved, and we'd love your feedback.`,
+      '',
+      `How would you rate your experience? It takes just a moment:`,
+      link ? link : `Sign in to the support portal and open ticket ${c.ticketNumber} to rate it.`,
+      '',
+      `Subject: ${c.subject ?? ''}`,
+      '',
+      'Thank you,',
+      brand,
+      'Automated Notification',
+    ].join('\n');
+    const html =
+      `<p>Hello,</p>` +
+      `<p>Your recent support request (ticket <strong>${escapeHtml(c.ticketNumber ?? '')}</strong>) has been resolved, and we'd love your feedback.</p>` +
+      `<p><strong>How would you rate your experience?</strong> It takes just a moment.</p>` +
+      (link
+        ? `<p><a href="${escapeHtml(link)}">Rate your experience &rarr;</a></p>`
+        : `<p>Sign in to the support portal and open ticket ${escapeHtml(c.ticketNumber ?? '')} to rate it.</p>`) +
+      `<p><strong>Subject:</strong> ${escapeHtml(c.subject ?? '')}</p>` +
+      `<p>Thank you,<br/>${brand}<br/><em>Automated Notification</em></p>`;
+    return { subject: `[${c.ticketNumber}] How did we do?`, html, text };
   },
   'ticket.assigned': (c) =>
     wrap(`[${c.ticketNumber}] Ticket assigned`, [

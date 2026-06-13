@@ -15,13 +15,19 @@ export function isValidScore(n: unknown): n is number {
 
 /** Idempotently create a survey for a resolved ticket (called by the event handler). */
 export async function createSurveyForTicket(orgId: string, ticketId: string): Promise<void> {
-  await withSystemContext(async (sql) => {
-    await sql.query(
+  const surveyId = await withSystemContext(async (sql) => {
+    const { rows } = await sql.query(
       `INSERT INTO csat_surveys (organization_id, ticket_id, token) VALUES ($1,$2,$3)
-       ON CONFLICT (ticket_id) DO NOTHING`,
+       ON CONFLICT (ticket_id) DO NOTHING RETURNING id`,
       [orgId, ticketId, randomUUID()],
     );
+    return rows[0]?.id as string | undefined;
   });
+  // Email the requester an invite only on first creation, so repeated
+  // ticket.resolved events never re-send the survey.
+  if (surveyId) {
+    publish('csat.survey_created', orgId, { ticket_id: ticketId, org_id: orgId, survey_id: surveyId });
+  }
 }
 
 let registered = false;

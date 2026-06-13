@@ -66,6 +66,21 @@ describe('resolveRecipients — event-aware routing', () => {
     expect(out).toEqual([]);
   });
 
+  it('csat.survey_created notifies only the ticket requester', async () => {
+    const { sql } = makeSql({
+      ticket: { requester_id: 'cust-1', assigned_agent_id: 'ag9', organization_id: 'org-1' },
+      users: { 'cust-1': 'cust@acme', ag9: 'ag9@nexus' },
+    });
+    const out = await resolveRecipients(sql, evt('csat.survey_created', { ticket_id: 't1' }));
+    expect(emails(out)).toEqual(['cust@acme']); // requester only, not the agent
+  });
+
+  it('csat.survey_created with no requester resolves to nobody', async () => {
+    const { sql } = makeSql({ ticket: { requester_id: null, assigned_agent_id: 'ag9', organization_id: 'org-1' } });
+    const out = await resolveRecipients(sql, evt('csat.survey_created', { ticket_id: 't1' }));
+    expect(out).toEqual([]);
+  });
+
   it('ticket.created (already assigned) notifies just the assignee', async () => {
     const { sql } = makeSql({
       ticket: { requester_id: 'cust-1', assigned_agent_id: 'ag9', organization_id: 'org-1' },

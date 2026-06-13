@@ -59,4 +59,36 @@ describe('renderTemplate', () => {
     expect(out.text).toContain('Hello there,');
     expect(out.text).toContain('Priority: To be assigned');
   });
+
+  it('public comment renders a customer-facing "new reply" with the excerpt', () => {
+    const out = renderTemplate('ticket.commented', {
+      ticketNumber: 'ACME-1', subject: 'VPN', visibility: 'public', commentExcerpt: 'We pushed a fix, please retry.',
+    });
+    expect(out.subject).toContain('New reply');
+    expect(out.text).toContain('has responded to your support request');
+    expect(out.text).toContain('We pushed a fix, please retry.');
+  });
+
+  it('internal comment renders an agent-facing internal note (not customer wording)', () => {
+    const out = renderTemplate('ticket.commented', {
+      ticketNumber: 'ACME-1', subject: 'VPN', visibility: 'internal', commentExcerpt: 'check the firewall',
+    });
+    expect(out.subject).toContain('Internal note');
+    expect(out.text).not.toContain('has responded to your support request');
+  });
+
+  it('resolved renders a resolution notice with reopen guidance', () => {
+    const out = renderTemplate('ticket.resolved', { ticketNumber: 'ACME-9', subject: 'Laptop', resolutionCode: 'fixed' });
+    expect(out.subject.toLowerCase()).toContain('resolved');
+    expect(out.text).toContain('Ticket ID: ACME-9');
+    expect(out.text.toLowerCase()).toContain('reopen');
+  });
+
+  it('csat survey renders a rating link to the ticket page', () => {
+    const out = renderTemplate('csat.survey_created', {
+      ticketNumber: 'ACME-9', subject: 'Laptop', ticketId: 't-123', webOrigin: 'https://anchor.azurewebsites.us',
+    });
+    expect(out.subject.toLowerCase()).toContain('how did we do');
+    expect(out.html).toContain('https://anchor.azurewebsites.us/tickets/t-123');
+  });
 });

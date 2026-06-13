@@ -256,7 +256,12 @@ export async function addComment(
       [t.organization_id, id, actor.id, { visibility }],
     );
     await audit(actor, { action: 'ticket.comment', organizationId: t.organization_id, resourceType: 'ticket', resourceId: id, detail: { visibility } });
-    publish('ticket.commented', t.organization_id, { ticket_id: id, org_id: t.organization_id, visibility });
+    publish('ticket.commented', t.organization_id, {
+      ticket_id: id,
+      org_id: t.organization_id,
+      visibility,
+      comment_excerpt: String(body).slice(0, 600),
+    });
     return rows[0];
   });
 }
