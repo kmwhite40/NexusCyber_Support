@@ -333,6 +333,12 @@ export async function transition(actor: Principal, id: string, to: string, opts:
     await audit(actor, { action: 'ticket.update', organizationId: t.organization_id, resourceType: 'ticket', resourceId: id, detail: { to } });
     publish('ticket.status_changed', t.organization_id, { ticket_id: id, org_id: t.organization_id, from: t.status, to });
     if (to === 'resolved') publish('ticket.resolved', t.organization_id, { ticket_id: id, org_id: t.organization_id, resolution_code: opts.resolutionCode });
+    if (to === 'closed') publish('ticket.closed', t.organization_id, { ticket_id: id, org_id: t.organization_id });
+    // Reopen = leaving a terminal state (resolved/closed) back into active work.
+    const TERMINAL = new Set(['resolved', 'closed']);
+    if (TERMINAL.has(t.status) && !TERMINAL.has(to)) {
+      publish('ticket.reopened', t.organization_id, { ticket_id: id, org_id: t.organization_id, from: t.status, to });
+    }
     return rows[0];
   });
 }

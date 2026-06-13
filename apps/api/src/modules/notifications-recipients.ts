@@ -102,6 +102,14 @@ export async function resolveRecipients(sql: Sql, evt: DomainEvent): Promise<Rec
     return t?.requester_id ? usersByIds(sql, [t.requester_id]) : [];
   }
 
+  // Catalog-request approval lifecycle: keep the requester informed of the outcome.
+  if (type === 'approval.requested' || type === 'approval.approved' || type === 'approval.rejected') {
+    const ticketId = (data.subject_id ?? data.ticket_id) as string | undefined;
+    if (!ticketId) return [];
+    const t = await ticketParties(sql, ticketId);
+    return t?.requester_id ? usersByIds(sql, [t.requester_id]) : [];
+  }
+
   if (type.startsWith('ticket.') || type.startsWith('sla.')) {
     const ticketId = (data.ticket_id ?? data.id ?? data.ticketId) as string | undefined;
     if (!ticketId) return [];
@@ -117,11 +125,11 @@ export async function resolveRecipients(sql: Sql, evt: DomainEvent): Promise<Rec
       return desk ? [{ userId: `desk:${desk}`, email: desk }] : [];
     }
 
-    // Assignment -> the newly assigned agent only (customer is not notified on
-    // assignment, only on the updates below).
+    // Assignment -> the newly assigned agent, plus the requester so the customer
+    // knows a specialist is now working on their ticket.
     if (type === 'ticket.assigned') {
       const agentId = (data.agent_id as string | undefined) ?? t.assigned_agent_id;
-      return usersByIds(sql, [agentId]);
+      return usersByIds(sql, [agentId, t.requester_id]);
     }
 
     // Comments -> internal notes stay with the agents; customer-visible replies
@@ -141,8 +149,17 @@ export async function resolveRecipients(sql: Sql, evt: DomainEvent): Promise<Rec
       return coveringAgents(sql, t.organization_id);
     }
 
-    // Customer-facing updates -> the requester (customer) plus the assignee.
-    if (type === 'ticket.status_changed' || type === 'ticket.resolved') {
+    // Resolution / closure / reopen milestones -> requester + assignee.
+    if (type === 'ticket.resolved' || type === 'ticket.closed' || type === 'ticket.reopened') {
+      return usersByIds(sql, [t.requester_id, t.assigned_agent_id]);
+    }
+
+    // Generic status updates -> requester + assignee, EXCEPT transitions already
+    // covered by a dedicated milestone above (avoid double emails on
+    // resolve / close / reopen).
+    if (type === 'ticket.status_changed') {
+      const TERMINAL = new Set(['resolved', 'closed']);
+      if (TERMINAL.has(String(data.to)) || TERMINAL.has(String(data.from))) return [];
       return usersByIds(sql, [t.requester_id, t.assigned_agent_id]);
     }
 

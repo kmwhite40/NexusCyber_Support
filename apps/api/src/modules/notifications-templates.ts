@@ -198,9 +198,41 @@ const TEMPLATES: Record<string, Renderer> = {
     return { subject: `[${c.ticketNumber}] How did we do?`, html, text };
   },
   'ticket.assigned': (c) =>
-    wrap(`[${c.ticketNumber}] Ticket assigned`, [
-      `Ticket ${c.ticketNumber} was assigned.`,
+    wrap(`[${c.ticketNumber}] Your ticket is now in progress`, [
+      `Ticket ${c.ticketNumber} has been assigned to a support specialist and is now being worked on.`,
       `Subject: ${c.subject ?? ''}`,
+      `We'll follow up here with any updates. — Anchor Support`,
+    ]),
+  'ticket.closed': (c) =>
+    wrap(`[${c.ticketNumber}] Your ticket has been closed`, [
+      `Ticket ${c.ticketNumber} has been closed.`,
+      `Subject: ${c.subject ?? ''}`,
+      `If you still need help, reply to this email (keep ${c.ticketNumber} in the subject) or open a new request and we'll be glad to assist.`,
+      `Thank you, — Anchor Support`,
+    ]),
+  'ticket.reopened': (c) =>
+    wrap(`[${c.ticketNumber}] Your ticket has been reopened`, [
+      `Ticket ${c.ticketNumber} has been reopened and our team will continue working on it.`,
+      `Subject: ${c.subject ?? ''}`,
+      `No action is needed from you right now — we'll follow up with next steps. — Anchor Support`,
+    ]),
+  'approval.requested': (c) =>
+    wrap(`[${c.ticketNumber}] Your request is pending approval`, [
+      `Thank you — your request (${c.ticketNumber}) has been submitted and is awaiting approval.`,
+      `Item: ${c.subject ?? ''}`,
+      `We'll email you as soon as it's approved, or if more information is needed. — Anchor Support`,
+    ]),
+  'approval.approved': (c) =>
+    wrap(`[${c.ticketNumber}] Your request has been approved`, [
+      `Good news — your request (${c.ticketNumber}) has been approved and is now being fulfilled.`,
+      `Item: ${c.subject ?? ''}`,
+      `We'll follow up with next steps. — Anchor Support`,
+    ]),
+  'approval.rejected': (c) =>
+    wrap(`[${c.ticketNumber}] Update on your request`, [
+      `Your request (${c.ticketNumber}) was not approved at this time.`,
+      `Item: ${c.subject ?? ''}`,
+      `If you have questions or believe this was in error, reply to this email and our team will follow up. — Anchor Support`,
     ]),
   'ticket.status_changed': (c) =>
     wrap(`[${c.ticketNumber}] Status changed`, [

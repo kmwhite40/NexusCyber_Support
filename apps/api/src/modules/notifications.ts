@@ -87,12 +87,16 @@ export async function dispatch(
   await record(sql, orgId, evt.type, 'portal', null, 'sent');
 
   const d = evt.data as any;
-  // Events carry only ticket_id; look up the ticket so every template has real
-  // number/subject/priority/status. Explicit event fields still override.
-  const t = evt.type.startsWith('ticket.') || evt.type.startsWith('csat.') ? await ticketDetails(sql, d.ticket_id) : {};
+  // Events carry only an id reference (ticket_id, or subject_id for approvals);
+  // look up the ticket so every template has real number/subject/priority/status.
+  // Explicit event fields still override.
+  const ref = d.ticket_id ?? d.subject_id;
+  const t = evt.type.startsWith('ticket.') || evt.type.startsWith('csat.') || evt.type.startsWith('approval.')
+    ? await ticketDetails(sql, ref)
+    : {};
   const tpl = renderTemplate(evt.type, {
     orgName: await orgName(sql, orgId),
-    ticketId: d.ticket_id,
+    ticketId: ref,
     ticketNumber: d.ticket_number ?? t.ticket_number,
     subject: d.subject ?? t.subject,
     priority: d.priority ?? t.priority,
@@ -109,7 +113,8 @@ export async function dispatch(
 
   // Purely customer-facing messages must be email-only — never posted to the
   // internal Teams channel via the fallback chain.
-  const emailOnly = evt.type === 'ticket.acknowledged' || evt.type === 'csat.survey_created';
+  const emailOnly =
+    evt.type === 'ticket.acknowledged' || evt.type === 'csat.survey_created' || evt.type.startsWith('approval.');
   const channelOrder: Channel[] = emailOnly ? ['email'] : ['teams', 'email'];
   for (const channel of channelOrder) {
     const cap = await capability(sql, cloud, channel);
@@ -152,7 +157,12 @@ export function registerNotificationHandlers(): void {
     'ticket.status_changed',
     'ticket.escalated',
     'ticket.resolved',
+    'ticket.closed',
+    'ticket.reopened',
     'csat.survey_created',
+    'approval.requested',
+    'approval.approved',
+    'approval.rejected',
     'sla.warning',
     'sla.breached',
     'posture.finding_created',

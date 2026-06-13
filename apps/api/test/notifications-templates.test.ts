@@ -91,4 +91,23 @@ describe('renderTemplate', () => {
     expect(out.subject.toLowerCase()).toContain('how did we do');
     expect(out.html).toContain('https://anchor.azurewebsites.us/tickets/t-123');
   });
+
+  it('assigned reads as "in progress" for the customer', () => {
+    const out = renderTemplate('ticket.assigned', { ticketNumber: 'ACME-2', subject: 'VPN' });
+    expect(out.subject.toLowerCase()).toContain('in progress');
+    expect(out.text.toLowerCase()).toContain('being worked on');
+  });
+
+  it('closed and reopened render their respective notices', () => {
+    const closed = renderTemplate('ticket.closed', { ticketNumber: 'ACME-3', subject: 'VPN' });
+    expect(closed.subject.toLowerCase()).toContain('closed');
+    const reopened = renderTemplate('ticket.reopened', { ticketNumber: 'ACME-3', subject: 'VPN' });
+    expect(reopened.subject.toLowerCase()).toContain('reopened');
+  });
+
+  it('approval outcomes render requester-facing messages', () => {
+    expect(renderTemplate('approval.requested', { ticketNumber: 'REQ-1', subject: 'New laptop' }).subject.toLowerCase()).toContain('pending approval');
+    expect(renderTemplate('approval.approved', { ticketNumber: 'REQ-1', subject: 'New laptop' }).text.toLowerCase()).toContain('approved');
+    expect(renderTemplate('approval.rejected', { ticketNumber: 'REQ-1', subject: 'New laptop' }).text.toLowerCase()).toContain('not approved');
+  });
 });

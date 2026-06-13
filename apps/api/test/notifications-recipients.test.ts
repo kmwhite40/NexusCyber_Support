@@ -90,13 +90,34 @@ describe('resolveRecipients — event-aware routing', () => {
     expect(emails(out)).toEqual(['ag9@nexus']);
   });
 
-  it('ticket.assigned notifies the newly assigned agent, not the customer', async () => {
+  it('ticket.assigned notifies the newly assigned agent AND the requester (now in progress)', async () => {
     const { sql } = makeSql({
       ticket: { requester_id: 'cust-1', assigned_agent_id: 'old', organization_id: 'org-1' },
       users: { agNew: 'new@nexus', 'cust-1': 'cust@acme', old: 'old@nexus' },
     });
     const out = await resolveRecipients(sql, evt('ticket.assigned', { ticket_id: 't1', agent_id: 'agNew' }));
-    expect(emails(out)).toEqual(['new@nexus']);
+    expect(emails(out)).toEqual(['cust@acme', 'new@nexus']);
+  });
+
+  it('ticket.status_changed to a terminal state is suppressed (dedicated resolved/closed handles it)', async () => {
+    const { sql } = makeSql({ ticket: { requester_id: 'cust-1', assigned_agent_id: 'ag1', organization_id: 'org-1' }, users: { 'cust-1': 'cust@acme', ag1: 'a1@nexus' } });
+    expect(await resolveRecipients(sql, evt('ticket.status_changed', { ticket_id: 't1', to: 'resolved' }))).toEqual([]);
+    expect(await resolveRecipients(sql, evt('ticket.status_changed', { ticket_id: 't1', to: 'closed' }))).toEqual([]);
+    // reopen (leaving a terminal state) is also suppressed — ticket.reopened handles it
+    expect(await resolveRecipients(sql, evt('ticket.status_changed', { ticket_id: 't1', from: 'resolved', to: 'in_progress' }))).toEqual([]);
+  });
+
+  it('ticket.closed and ticket.reopened notify the requester + assignee', async () => {
+    const { sql } = makeSql({ ticket: { requester_id: 'cust-1', assigned_agent_id: 'ag1', organization_id: 'org-1' }, users: { 'cust-1': 'cust@acme', ag1: 'a1@nexus' } });
+    expect(emails(await resolveRecipients(sql, evt('ticket.closed', { ticket_id: 't1' })))).toEqual(['a1@nexus', 'cust@acme']);
+    expect(emails(await resolveRecipients(sql, evt('ticket.reopened', { ticket_id: 't1' })))).toEqual(['a1@nexus', 'cust@acme']);
+  });
+
+  it('approval outcomes notify the request requester (via subject_id)', async () => {
+    const { sql } = makeSql({ ticket: { requester_id: 'cust-1', assigned_agent_id: 'ag1', organization_id: 'org-1' }, users: { 'cust-1': 'cust@acme', ag1: 'a1@nexus' } });
+    for (const type of ['approval.requested', 'approval.approved', 'approval.rejected']) {
+      expect(emails(await resolveRecipients(sql, evt(type, { subject_id: 't1' })))).toEqual(['cust@acme']);
+    }
   });
 
   it('ticket.status_changed notifies the requester (customer) + assignee', async () => {
