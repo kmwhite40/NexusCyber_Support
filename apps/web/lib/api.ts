@@ -155,7 +155,41 @@ export const users = {
     ),
 };
 
+export interface Attachment {
+  id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  scan_status: string;
+  created_at: string;
+}
+
 export const attachmentsApi = {
+  list: (ticketId: string) => api.get<{ data: Attachment[] }>(`/tickets/${ticketId}/attachments`),
+
+  /** Stream a clean attachment to the browser as a download (carries the session auth). */
+  download: async (id: string, filename: string): Promise<void> => {
+    const token = getToken();
+    const res = await fetch(`${BASE}/attachments/${id}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      let detail = res.statusText;
+      try { detail = JSON.parse(text)?.detail ?? detail; } catch { /* ignore */ }
+      throw new ApiError(res.status, detail);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
+
   /** Multipart upload — the attachments route reads a single file field. */
   upload: async (ticketId: string, file: File): Promise<void> => {
     const form = new FormData();

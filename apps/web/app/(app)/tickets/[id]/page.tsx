@@ -6,6 +6,7 @@ import { useAuth } from '@/components/auth-context';
 import { Card, CardHeader, CardTitle, CardBody, Button, Textarea, Badge, Select } from '@/components/ui/primitives';
 import { Skeleton } from '@/components/ui/data';
 import { PriorityBadge, StatusBadge, SlaBadge } from '@/components/ui/badges';
+import { TicketAttachments } from '@/components/ticket-attachments';
 
 export default function TicketDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -218,6 +219,8 @@ export default function TicketDetailPage() {
             <CardHeader><CardTitle>Description</CardTitle></CardHeader>
             <CardBody><p className="whitespace-pre-wrap text-sm text-fg/90">{ticket.description || 'No description provided.'}</p></CardBody>
           </Card>
+
+          <TicketAttachments ticketId={id} />
 
           <Card>
             <CardHeader><CardTitle>Conversation</CardTitle></CardHeader>
