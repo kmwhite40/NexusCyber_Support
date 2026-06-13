@@ -32,4 +32,16 @@ describe('renderTemplate', () => {
     // the plaintext alternative keeps the raw value
     expect(out.text).toContain('<img src=x onerror=alert(1)>');
   });
+
+  it('renders a customer acknowledgment that references the ticket and reads as no-reply', () => {
+    const out = renderTemplate('ticket.acknowledged', {
+      orgName: 'Acme',
+      ticketNumber: 'ACME-000005',
+      subject: 'Laptop is broken',
+    });
+    expect(out.subject).toContain('ACME-000005');
+    expect(out.text).toContain('ACME-000005');
+    expect(out.text).toContain('Laptop is broken');
+    expect(out.text.toLowerCase()).toContain('do not reply');
+  });
 });

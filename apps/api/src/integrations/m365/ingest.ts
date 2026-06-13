@@ -5,6 +5,7 @@
 import { logger } from '../../logger.js';
 import type { Sql } from '../../db/pool.js';
 import type { GraphClient } from './graph-client.js';
+import { publish } from '../../events/bus.js';
 
 const INTEGRATION = 'm365';
 const DELTA_KEY = 'inbox_delta';
@@ -100,15 +101,58 @@ export async function ingestMessage(
   );
   const ticketNumber = `${pRows[0].p}-${String(nRows[0].n).padStart(6, '0')}`;
 
+  // Link the sender to an existing user in the org (best-effort) so they own the
+  // ticket and can see it in the portal. The acknowledgment below still reaches the
+  // raw address even when the sender has no account.
+  const { rows: uRows } = await sql.query(
+    'SELECT id FROM users WHERE organization_id = $1 AND lower(email) = lower($2) LIMIT 1',
+    [orgId, msg.fromAddress],
+  );
+  const requesterId = (uRows[0]?.id as string | undefined) ?? null;
+
   const { rows: tRows } = await sql.query(
     `INSERT INTO tickets
-       (organization_id, ticket_number, type, source_channel, subject, description, status)
-     VALUES ($1,$2,'incident','email',$3,$4,'new')
+       (organization_id, ticket_number, type, requester_id, source_channel, subject, description, status)
+     VALUES ($1,$2,'incident',$3,'email',$4,$5,'new')
      RETURNING id`,
-    [orgId, ticketNumber, msg.subject, msg.bodyPreview],
+    [orgId, ticketNumber, requesterId, msg.subject, msg.bodyPreview],
   );
+  const ticketId = tRows[0].id as string;
 
   await setState(sql, seenKey, true);
-  logger.info({ ticketId: tRows[0].id, from: msg.fromAddress }, 'inbound mail -> ticket created');
-  return { created: true, ticketId: tRows[0].id };
+  logger.info({ ticketId, from: msg.fromAddress }, 'inbound mail -> ticket created');
+
+  // Drive the standard notification pipeline — this path previously did a raw INSERT
+  // and published nothing, so emailed tickets generated no notifications at all:
+  //   ticket.created      -> service-desk "new ticket" email (from the no-reply mailbox)
+  //   ticket.acknowledged -> automated confirmation to the customer who emailed in
+  // Idempotency keys are derived from the message id so a re-poll never double-sends.
+  publish(
+    'ticket.created',
+    orgId,
+    {
+      ticket_id: ticketId,
+      org_id: orgId,
+      type: 'incident',
+      ticket_number: ticketNumber,
+      subject: msg.subject,
+      requester_id: requesterId,
+      channel: 'email',
+    },
+    { idempotencyKey: `ticket.created:${msg.internetMessageId}` },
+  );
+  publish(
+    'ticket.acknowledged',
+    orgId,
+    {
+      ticket_id: ticketId,
+      org_id: orgId,
+      ticket_number: ticketNumber,
+      subject: msg.subject,
+      recipient_email: msg.fromAddress,
+    },
+    { idempotencyKey: `ticket.acknowledged:${msg.internetMessageId}` },
+  );
+
+  return { created: true, ticketId };
 }

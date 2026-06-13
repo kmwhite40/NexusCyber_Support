@@ -53,6 +53,19 @@ describe('resolveRecipients — event-aware routing', () => {
     expect(out).toEqual([{ userId: 'desk:service-desk@nexus.example.com', email: 'service-desk@nexus.example.com' }]);
   });
 
+  it('ticket.acknowledged addresses the inbound sender directly (no user account required)', async () => {
+    const { sql, calls } = makeSql({});
+    const out = await resolveRecipients(sql, evt('ticket.acknowledged', { ticket_id: 't1', recipient_email: 'caller@acme.gov' }));
+    expect(out).toEqual([{ userId: 'requester:caller@acme.gov', email: 'caller@acme.gov' }]);
+    expect(calls.some((c) => c.text.includes('FROM tickets'))).toBe(false); // resolved from event data
+  });
+
+  it('ticket.acknowledged with no recipient email resolves to nobody', async () => {
+    const { sql } = makeSql({});
+    const out = await resolveRecipients(sql, evt('ticket.acknowledged', { ticket_id: 't1' }));
+    expect(out).toEqual([]);
+  });
+
   it('ticket.created (already assigned) notifies just the assignee', async () => {
     const { sql } = makeSql({
       ticket: { requester_id: 'cust-1', assigned_agent_id: 'ag9', organization_id: 'org-1' },

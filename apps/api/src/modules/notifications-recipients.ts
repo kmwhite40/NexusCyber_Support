@@ -87,6 +87,13 @@ export async function resolveRecipients(sql: Sql, evt: DomainEvent): Promise<Rec
   const data = evt.data as Record<string, unknown>;
   const type = evt.type;
 
+  // Inbound-email acknowledgment: addressed to the literal sender, who may have no
+  // user account — so it bypasses the ticket-party resolution below.
+  if (type === 'ticket.acknowledged') {
+    const email = (data.recipient_email as string | undefined)?.trim();
+    return email ? [{ userId: `requester:${email}`, email }] : [];
+  }
+
   if (type.startsWith('ticket.') || type.startsWith('sla.')) {
     const ticketId = (data.ticket_id ?? data.id ?? data.ticketId) as string | undefined;
     if (!ticketId) return [];

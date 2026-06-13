@@ -42,6 +42,12 @@ const TEMPLATES: Record<string, Renderer> = {
       `A new ticket was created for ${c.orgName ?? 'your organization'}.`,
       `Subject: ${c.subject ?? ''}`,
     ]),
+  'ticket.acknowledged': (c) =>
+    wrap(`[${c.ticketNumber}] We received your request`, [
+      `Thanks for contacting ${c.orgName ?? 'support'}. Your request has been logged as ticket ${c.ticketNumber} and our team will follow up.`,
+      `Subject: ${c.subject ?? ''}`,
+      `This is an automated message from an unmonitored mailbox — please do not reply directly. We will respond to your original email.`,
+    ]),
   'ticket.assigned': (c) =>
     wrap(`[${c.ticketNumber}] Ticket assigned`, [
       `Ticket ${c.ticketNumber} was assigned.`,

@@ -79,7 +79,10 @@ export async function dispatch(
     severity: (evt.data as any).severity,
   });
 
-  for (const channel of ['teams', 'email'] as Channel[]) {
+  // The inbound-email acknowledgment goes to an external customer, so it must be
+  // email-only — never posted to the internal Teams channel via the fallback chain.
+  const channelOrder: Channel[] = evt.type === 'ticket.acknowledged' ? ['email'] : ['teams', 'email'];
+  for (const channel of channelOrder) {
     const cap = await capability(sql, cloud, channel);
     const adapterCan = channel === 'email' ? adapter.capabilities().email : adapter.capabilities().teams;
     if (cap !== 'supported' || !adapterCan) {
@@ -114,6 +117,7 @@ export async function dispatch(
 export function registerNotificationHandlers(): void {
   const notifying = [
     'ticket.created',
+    'ticket.acknowledged',
     'ticket.assigned',
     'ticket.commented',
     'ticket.status_changed',

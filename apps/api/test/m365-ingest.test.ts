@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { fetchNewMessages, ingestMessage } from '../src/integrations/m365/ingest.js';
+import { subscribe } from '../src/events/bus.js';
+
+const flush = () => new Promise((r) => setTimeout(r, 0));
 
 function makeSql(handlers: Record<string, any>) {
   const calls: any[] = [];
@@ -70,5 +73,39 @@ describe('ingest', () => {
     const out = await fetchNewMessages(sql, graphClient, 'svc@agency.gov');
     expect(out).toHaveLength(1);
     expect(out[0].fromAddress).toBe('p@acme.gov');
+  });
+
+  it('publishes ticket.created (desk) and ticket.acknowledged (customer no-reply) after creating a ticket', async () => {
+    const got: Record<string, any> = {};
+    subscribe('ticket.created', (e) => { got['ticket.created'] = e; });
+    subscribe('ticket.acknowledged', (e) => { got['ticket.acknowledged'] = e; });
+
+    const { sql } = makeSql({
+      'FROM integration_state': { rows: [] },
+      'FROM organization_domains': { rows: [{ organization_id: 'org-acme' }] },
+      'SELECT COALESCE(MAX': { rows: [{ n: 5 }] },
+      'left(upper(name)': { rows: [{ p: 'ACME' }] },
+      'FROM users WHERE organization_id': { rows: [{ id: 'user-sender' }] }, // sender has an account
+      'INSERT INTO tickets': { rows: [{ id: 't-new' }] },
+    });
+
+    // Unique internetMessageId so the bus idempotency keys don't collide with the
+    // other tests in this file (which reuse `msg`).
+    const out = await ingestMessage(sql, { ...msg, internetMessageId: '<publish-test@x>' });
+    expect(out.created).toBe(true);
+    await flush(); // let async bus handlers run
+
+    // Desk notification — same pipeline as portal/agent tickets, with email channel + linked requester.
+    expect(got['ticket.created']).toBeTruthy();
+    expect(got['ticket.created'].data.ticket_id).toBe('t-new');
+    expect(got['ticket.created'].data.channel).toBe('email');
+    expect(got['ticket.created'].data.requester_id).toBe('user-sender');
+    expect(got['ticket.created'].data.ticket_number).toBe('ACME-000005');
+
+    // Customer auto-acknowledgment addressed to the inbound sender (works even with no user account).
+    expect(got['ticket.acknowledged']).toBeTruthy();
+    expect(got['ticket.acknowledged'].data.recipient_email).toBe('sender@acme.gov');
+    expect(got['ticket.acknowledged'].data.ticket_number).toBe('ACME-000005');
+    expect(got['ticket.acknowledged'].data.subject).toBe('Help please');
   });
 });
