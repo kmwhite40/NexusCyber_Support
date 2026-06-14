@@ -16,6 +16,7 @@ import * as demo from '../modules/demo.js';
 import * as oncall from '../modules/oncall.js';
 import * as csat from '../modules/csat.js';
 import * as analytics from '../modules/analytics.js';
+import * as notifications from '../modules/notifications.js';
 
 export async function registerExtraRoutes(app: FastifyInstance): Promise<void> {
   // ---------------- Operational KPIs for the enterprise dashboards ----------------
@@ -41,6 +42,12 @@ export async function registerExtraRoutes(app: FastifyInstance): Promise<void> {
     const p = await requirePrincipal(req);
     const q = z.object({ organizationId: z.string().uuid().optional() }).parse(req.query ?? {});
     return analytics.opsSummary(p, q.organizationId);
+  });
+
+  app.get('/api/v1/notifications/health', async (req) => {
+    const p = await requirePrincipal(req);
+    const q = z.object({ days: z.coerce.number().int().optional() }).parse(req.query ?? {});
+    return notifications.deliveryHealth(p, q.days);
   });
 
   // ---------------- CSAT: rate-by-ticket (in-ticket "rate your experience") ----------------

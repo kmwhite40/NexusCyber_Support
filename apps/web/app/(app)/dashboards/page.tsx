@@ -4,7 +4,7 @@ import Link from 'next/link';
 import {
   api, analytics, dashboardsApi,
   type Dashboard, type AnalyticsOverview, type OperationalKpis,
-  type CustomerPortfolioRow, type PostureCompliance, type OpsSummary,
+  type CustomerPortfolioRow, type PostureCompliance, type OpsSummary, type DeliveryHealth,
 } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
 import { Card, CardBody, CardHeader, CardTitle, Button, Input, Field } from '@/components/ui/primitives';
@@ -12,7 +12,7 @@ import { StatCard, EmptyState, Skeleton } from '@/components/ui/data';
 import { Donut, MiniBars, TrendChart } from '@/components/ui/charts';
 import { DashboardWidget } from '@/components/ui/dashboard-widgets';
 
-type Tab = 'executive' | 'sla' | 'operations' | 'agents' | 'customers' | 'posture' | 'serviceops' | 'custom';
+type Tab = 'executive' | 'sla' | 'operations' | 'agents' | 'customers' | 'posture' | 'serviceops' | 'notifications' | 'custom';
 const ALL_TABS: { id: Tab; label: string; hint: string; agentOnly?: boolean }[] = [
   { id: 'executive', label: 'Executive KPIs', hint: 'Backlog, throughput, MTTR, CSAT' },
   { id: 'sla', label: 'SLA performance', hint: 'Response & resolution attainment' },
@@ -21,6 +21,7 @@ const ALL_TABS: { id: Tab; label: string; hint: string; agentOnly?: boolean }[] 
   { id: 'customers', label: 'Customer portfolio', hint: 'Per-tenant health (MSP)', agentOnly: true },
   { id: 'posture', label: 'Posture & compliance', hint: 'Findings, ConMon, NIST controls' },
   { id: 'serviceops', label: 'On-call & change', hint: 'Paging, MTTA, change pipeline', agentOnly: true },
+  { id: 'notifications', label: 'Notifications', hint: 'Email/notification delivery health', agentOnly: true },
   { id: 'custom', label: 'Custom', hint: 'Your saved dashboards' },
 ];
 const PERIODS = [7, 30, 90];
@@ -98,6 +99,7 @@ export default function DashboardsPage() {
         : tab === 'customers' ? <CustomerPortfolio />
         : tab === 'posture' ? <PostureCompliancePanel orgId={orgId} isAgent={isAgent} />
         : tab === 'serviceops' ? <ServiceOps orgId={orgId} />
+        : tab === 'notifications' ? <NotificationHealth />
         : loading ? <SkeletonGrid />
         : !kpis ? <EmptyState title="No analytics available" description="You may not have reporting permission for this view." />
         : tab === 'executive' ? <Executive kpis={kpis} />
@@ -344,6 +346,53 @@ function ServiceOps({ orgId }: { orgId: string }) {
         </CardBody></Card>
         <Card><CardHeader><CardTitle>Changes by type</CardTitle></CardHeader><CardBody>{d.change.byType.length ? <MiniBars items={d.change.byType.map((c) => ({ label: c.label, value: c.count, color: c.label === 'emergency' ? 'hsl(var(--danger))' : c.label === 'normal' ? 'hsl(var(--brand))' : 'hsl(var(--muted))' }))} /> : <EmptyState title="No changes" />}</CardBody></Card>
       </div>
+    </div>
+  );
+}
+
+function NotificationHealth() {
+  const [d, setD] = React.useState<DeliveryHealth | null>(null);
+  const [loading, setLoading] = React.useState(true);
+  React.useEffect(() => { analytics.notificationHealth(7).then(setD).catch(() => setD(null)).finally(() => setLoading(false)); }, []);
+  if (loading) return <SkeletonGrid />;
+  if (!d) return <EmptyState title="No delivery data" />;
+  const t = d.totals;
+  const deliveredPct = t.total ? Math.round((t.sent / t.total) * 100) : 100;
+  const STATUS_COLOR: Record<string, string> = { sent: 'hsl(var(--success))', substituted: 'hsl(var(--warning))', skipped: 'hsl(var(--muted))', failed: 'hsl(var(--danger))' };
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard label="Deliveries (7d)" value={t.total} tone="brand" />
+        <StatCard label="Sent" value={t.sent} tone="success" delta={{ value: `${deliveredPct}% of total`, positive: deliveredPct >= 90 }} />
+        <StatCard label="Substituted / skipped" value={t.substituted + t.skipped} tone={t.substituted + t.skipped ? 'warning' : 'success'} />
+        <StatCard label="Failed" value={t.failed} tone={t.failed ? 'danger' : 'success'} />
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card><CardHeader><CardTitle>By status</CardTitle></CardHeader><CardBody>{d.byStatus.length ? <MiniBars items={d.byStatus.map((s) => ({ label: s.label, value: s.count, color: STATUS_COLOR[s.label] }))} /> : <EmptyState title="No deliveries" />}</CardBody></Card>
+        <Card><CardHeader><CardTitle>By channel</CardTitle></CardHeader><CardBody>{d.byChannel.length ? <MiniBars items={d.byChannel.map((c) => ({ label: c.label, value: c.count }))} /> : <EmptyState title="No deliveries" />}</CardBody></Card>
+      </div>
+      <Card><CardHeader><CardTitle>Recent issues (substituted / skipped / failed)</CardTitle></CardHeader><CardBody>
+        {d.recentIssues.length ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead><tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted">
+                <th className="py-2 pr-3">When</th><th className="px-3">Event</th><th className="px-3">Channel</th><th className="px-3">Status</th><th className="pl-3">Reason</th>
+              </tr></thead>
+              <tbody>
+                {d.recentIssues.map((r, i) => (
+                  <tr key={i} className="border-b border-border/60">
+                    <td className="py-2 pr-3 whitespace-nowrap text-muted">{r.created_at.slice(5, 16).replace('T', ' ')}</td>
+                    <td className="px-3">{r.event_type}</td>
+                    <td className="px-3">{r.channel}</td>
+                    <td className={`px-3 ${r.status === 'failed' ? 'text-danger' : 'text-warning'}`}>{r.status}</td>
+                    <td className="pl-3 text-muted">{r.substitution_reason ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : <EmptyState title="No delivery issues" description="All notifications in the last 7 days were delivered." />}
+      </CardBody></Card>
     </div>
   );
 }

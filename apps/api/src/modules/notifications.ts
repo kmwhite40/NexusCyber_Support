@@ -192,6 +192,36 @@ export interface DeliveryFilter {
   limit?: number;
 }
 
+/** Delivery-health rollup for observability: totals + breakdowns by status/channel/
+ *  event, and recent non-delivered rows. Surfaces silently-dropped notifications
+ *  (e.g. 'substituted: <channel> requires_validation', 'skipped: no recipients'). */
+export async function deliveryHealth(actor: Principal, days = 7) {
+  authorize(actor, 'notifications.read');
+  const d = Math.min(Math.max(Math.floor(Number(days) || 7), 1), 90);
+  return withOrgContext(orgContextFor(actor), async (sql) => {
+    const since = `now() - interval '${d} days'`;
+    const totals = (await sql.query(
+      `SELECT count(*)::int AS total,
+         count(*) FILTER (WHERE status='sent')::int AS sent,
+         count(*) FILTER (WHERE status='failed')::int AS failed,
+         count(*) FILTER (WHERE status='substituted')::int AS substituted,
+         count(*) FILTER (WHERE status='skipped')::int AS skipped
+       FROM notification_deliveries WHERE created_at >= ${since}`,
+    )).rows[0];
+    const byStatus = (await sql.query(`SELECT status AS label, count(*)::int AS count FROM notification_deliveries WHERE created_at >= ${since} GROUP BY status ORDER BY 2 DESC`)).rows;
+    const byChannel = (await sql.query(`SELECT channel AS label, count(*)::int AS count FROM notification_deliveries WHERE created_at >= ${since} GROUP BY channel ORDER BY 2 DESC`)).rows;
+    const byEvent = (await sql.query(`SELECT event_type AS label, count(*)::int AS count FROM notification_deliveries WHERE created_at >= ${since} GROUP BY event_type ORDER BY 2 DESC LIMIT 12`)).rows;
+    const recentIssues = (await sql.query(
+      `SELECT event_type, channel, recipient, status, substitution_reason, created_at
+         FROM notification_deliveries
+        WHERE created_at >= ${since} AND status IN ('failed','substituted','skipped')
+        ORDER BY created_at DESC LIMIT 25`,
+    )).rows;
+    const emailSent = byChannel.find((r: any) => r.label === 'email')?.count ?? 0;
+    return { days: d, totals, byStatus, byChannel, byEvent, recentIssues, emailSent };
+  });
+}
+
 export async function listDeliveries(actor: Principal, filter: DeliveryFilter = {}) {
   authorize(actor, 'notifications.read');
   return withOrgContext(orgContextFor(actor), async (sql) => {

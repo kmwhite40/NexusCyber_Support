@@ -331,8 +331,19 @@ export interface OpsSummary {
   change: { byType: Array<{ label: string; count: number }>; in_cab: number; approved: number; upcoming: number; rejected: number; closed: number };
 }
 
+export interface DeliveryHealth {
+  days: number;
+  totals: { total: number; sent: number; failed: number; substituted: number; skipped: number };
+  byStatus: Array<{ label: string; count: number }>;
+  byChannel: Array<{ label: string; count: number }>;
+  byEvent: Array<{ label: string; count: number }>;
+  recentIssues: Array<{ event_type: string; channel: string; recipient: string | null; status: string; substitution_reason: string | null; created_at: string }>;
+  emailSent: number;
+}
+
 export const analytics = {
   overview: () => api.get<AnalyticsOverview>('/analytics/overview'),
+  notificationHealth: (days = 7) => api.get<DeliveryHealth>(`/notifications/health?days=${days}`),
   kpis: (days = 30, organizationId?: string) =>
     api.get<OperationalKpis>(`/analytics/kpis?days=${days}${organizationId ? `&organizationId=${organizationId}` : ''}`),
   customerPortfolio: () => api.get<{ data: CustomerPortfolioRow[] }>('/analytics/customer-portfolio').then((r) => r.data),
