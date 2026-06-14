@@ -74,8 +74,6 @@ const Navbar1 = ({
         { title: 'Microsoft 365', description: 'Graph, Teams, and email integrations', icon: <Book className="size-5 shrink-0" />, url: '/signup' },
       ],
     },
-    { title: 'Pricing', url: '#' },
-    { title: 'Docs', url: '#' },
   ],
   mobileExtraLinks = [
     { name: 'Security', url: '#' },
