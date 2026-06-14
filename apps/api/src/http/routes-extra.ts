@@ -25,6 +25,24 @@ export async function registerExtraRoutes(app: FastifyInstance): Promise<void> {
     return analytics.operationalKpis(p, q.organizationId, q.days);
   });
 
+  app.get('/api/v1/analytics/customer-portfolio', async (req) => {
+    const p = await requirePrincipal(req);
+    return { data: await analytics.customerPortfolio(p) };
+  });
+
+  app.get('/api/v1/analytics/posture-compliance', async (req) => {
+    const p = await requirePrincipal(req);
+    const q = z.object({ organizationId: z.string().uuid().optional() }).parse(req.query ?? {});
+    const orgId = q.organizationId ?? p.organizationId ?? '';
+    return analytics.postureCompliance(p, orgId);
+  });
+
+  app.get('/api/v1/analytics/ops-summary', async (req) => {
+    const p = await requirePrincipal(req);
+    const q = z.object({ organizationId: z.string().uuid().optional() }).parse(req.query ?? {});
+    return analytics.opsSummary(p, q.organizationId);
+  });
+
   // ---------------- CSAT: rate-by-ticket (in-ticket "rate your experience") ----------------
   app.get('/api/v1/csat/ticket/:ticketId', async (req) => {
     const p = await requirePrincipal(req);

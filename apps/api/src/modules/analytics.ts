@@ -7,6 +7,7 @@ import { orgContextFor } from '../auth/principal.js';
 import { can } from '../authz/pdp.js';
 import { Errors } from '../errors.js';
 import type { Principal } from '../types.js';
+import { controlCoverage } from './compliance.js';
 
 const SLA_DAYS = 3;
 
@@ -279,5 +280,109 @@ export async function operationalKpis(actor: Principal, orgId?: string, days = 3
        GROUP BY label, ord ORDER BY ord`, p)).rows;
 
     return { days: d, summary, trend, sla, byStatus, byPriority, byAge };
+  });
+}
+
+// ---- MSP customer portfolio: per-org snapshot (agents/operational only) ----
+export async function customerPortfolio(actor: Principal) {
+  if (!can(actor, 'report.read.operational')) throw Errors.forbidden('missing operational reporting permission');
+  return withOrgContext(orgContextFor(actor), async (sql) => {
+    const rows = (await sql.query(
+      `SELECT o.id, o.name,
+         count(t.id) FILTER (WHERE t.status NOT IN ('resolved','closed'))::int AS open,
+         count(t.id) FILTER (WHERE t.status NOT IN ('resolved','closed') AND t.priority='P1')::int AS open_p1,
+         count(t.id) FILTER (WHERE t.created_at >= now()-interval '7 days')::int AS opened_7d,
+         count(t.id) FILTER (WHERE t.resolved_at >= now()-interval '7 days')::int AS closed_7d,
+         coalesce(round(avg(t.satisfaction_score) FILTER (WHERE t.satisfaction_score IS NOT NULL),2),0)::float AS csat
+       FROM organizations o
+       LEFT JOIN tickets t ON t.organization_id = o.id
+       WHERE o.id <> '00000000-0000-0000-0000-000000000000'
+       GROUP BY o.id, o.name ORDER BY open DESC, o.name`,
+    )).rows;
+    const sla = (await sql.query(
+      `SELECT t.organization_id AS org,
+         count(*) FILTER (WHERE i.state='met')::int AS met,
+         count(*) FILTER (WHERE i.state='breached')::int AS breached
+       FROM sla_instances i JOIN tickets t ON t.id=i.ticket_id GROUP BY t.organization_id`,
+    )).rows;
+    const slaMap = new Map(sla.map((r: any) => [r.org, r]));
+    return rows.map((r: any) => {
+      const s: any = slaMap.get(r.id);
+      const met = s?.met ?? 0, br = s?.breached ?? 0;
+      return { ...r, slaAttainmentPct: met + br > 0 ? Math.round((met / (met + br)) * 100) : 100 };
+    });
+  });
+}
+
+// ---- Posture + compliance summary for one org ----
+export async function postureCompliance(actor: Principal, orgId: string) {
+  if (!can(actor, 'posture.read')) throw Errors.forbidden('missing posture permission');
+  const data = await withOrgContext(orgContextFor(actor), async (sql) => {
+    const f = orgId ? 'AND organization_id = $1' : '';
+    const p = orgId ? [orgId] : [];
+    const sev = (await sql.query(
+      `SELECT severity AS label, count(*)::int AS count FROM posture_findings
+        WHERE status NOT IN ('remediated','accepted') ${f} GROUP BY severity`, p)).rows;
+    const totals = (await sql.query(
+      `SELECT
+         count(*) FILTER (WHERE status NOT IN ('remediated','accepted'))::int AS open,
+         count(*) FILTER (WHERE status='remediated')::int AS remediated,
+         count(*) FILTER (WHERE status NOT IN ('remediated','accepted') AND remediation_due_at < now())::int AS overdue,
+         count(*) FILTER (WHERE status NOT IN ('remediated','accepted') AND severity IN ('critical','high'))::int AS open_high
+       FROM posture_findings WHERE 1=1 ${f}`, p)).rows[0];
+    const conmon = (await sql.query(
+      `SELECT result AS label, count(*)::int AS count FROM (
+         SELECT DISTINCT ON (check_key) check_key, result FROM conmon_runs
+          WHERE 1=1 ${f} ORDER BY check_key, ran_at DESC) latest GROUP BY result`, p)).rows;
+    return { sev, totals, conmon };
+  });
+  // Compliance control coverage (reuses the compliance engine), aggregated by family.
+  let compliance: { families: Array<{ family: string; satisfied: number; partial: number; gap: number }>; satisfiedPct: number } = { families: [], satisfiedPct: 0 };
+  if (orgId && can(actor, 'compliance.read')) {
+    const controls = await controlCoverage(actor, orgId);
+    const fam = new Map<string, { family: string; satisfied: number; partial: number; gap: number }>();
+    for (const c of controls) {
+      const e = fam.get(c.family) ?? { family: c.family, satisfied: 0, partial: 0, gap: 0 };
+      e[c.status as 'satisfied' | 'partial' | 'gap'] += 1;
+      fam.set(c.family, e);
+    }
+    const sat = controls.filter((c) => c.status === 'satisfied').length;
+    compliance = {
+      families: [...fam.values()].sort((a, b) => a.family.localeCompare(b.family)),
+      satisfiedPct: controls.length ? Math.round((sat / controls.length) * 100) : 0,
+    };
+  }
+  return { ...data, compliance };
+}
+
+// ---- On-call + change operations summary (agents/operational only) ----
+export async function opsSummary(actor: Principal, orgId?: string) {
+  if (!can(actor, 'report.read.operational')) throw Errors.forbidden('missing operational reporting permission');
+  return withOrgContext(orgContextFor(actor), async (sql) => {
+    const of = orgId ? 'AND p.organization_id = $1' : '';
+    const cp = orgId ? [orgId] : [];
+    const pages = (await sql.query(
+      `SELECT
+         count(*)::int AS total,
+         count(*) FILTER (WHERE p.state='acknowledged')::int AS acknowledged,
+         count(*) FILTER (WHERE p.state='escalated')::int AS escalated,
+         count(*) FILTER (WHERE p.state IN ('created','notified'))::int AS open,
+         count(*) FILTER (WHERE p.created_at >= now()-interval '7 days')::int AS last_7d
+       FROM oncall_pages p WHERE 1=1 ${of}`, cp)).rows[0];
+    const mtta = (await sql.query(
+      `SELECT coalesce(round(avg(EXTRACT(EPOCH FROM (a.acked_at - p.created_at))/60.0)::numeric,1),0)::float AS mtta_min
+         FROM oncall_acknowledgements a JOIN oncall_pages p ON p.id=a.page_id WHERE 1=1 ${of}`, cp)).rows[0];
+    const cf = orgId ? 'AND organization_id = $1' : '';
+    const byType = (await sql.query(
+      `SELECT change_type AS label, count(*)::int AS count FROM changes WHERE 1=1 ${cf} GROUP BY change_type`, cp)).rows;
+    const changeTotals = (await sql.query(
+      `SELECT
+         count(*) FILTER (WHERE status IN ('cab_review'))::int AS in_cab,
+         count(*) FILTER (WHERE status IN ('approved','scheduled'))::int AS approved,
+         count(*) FILTER (WHERE status='scheduled' AND window_start >= now())::int AS upcoming,
+         count(*) FILTER (WHERE status='rejected')::int AS rejected,
+         count(*) FILTER (WHERE status='closed')::int AS closed
+       FROM changes WHERE 1=1 ${cf}`, cp)).rows[0];
+    return { pages: { ...pages, mttaMin: mtta.mtta_min }, change: { byType, ...changeTotals } };
   });
 }

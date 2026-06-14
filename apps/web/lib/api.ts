@@ -317,10 +317,29 @@ export interface OperationalKpis {
   byAge: Array<{ label: string; count: number }>;
 }
 
+export interface CustomerPortfolioRow {
+  id: string; name: string; open: number; open_p1: number; opened_7d: number; closed_7d: number; csat: number; slaAttainmentPct: number;
+}
+export interface PostureCompliance {
+  sev: Array<{ label: string; count: number }>;
+  totals: { open: number; remediated: number; overdue: number; open_high: number };
+  conmon: Array<{ label: string; count: number }>;
+  compliance: { families: Array<{ family: string; satisfied: number; partial: number; gap: number }>; satisfiedPct: number };
+}
+export interface OpsSummary {
+  pages: { total: number; acknowledged: number; escalated: number; open: number; last_7d: number; mttaMin: number };
+  change: { byType: Array<{ label: string; count: number }>; in_cab: number; approved: number; upcoming: number; rejected: number; closed: number };
+}
+
 export const analytics = {
   overview: () => api.get<AnalyticsOverview>('/analytics/overview'),
   kpis: (days = 30, organizationId?: string) =>
     api.get<OperationalKpis>(`/analytics/kpis?days=${days}${organizationId ? `&organizationId=${organizationId}` : ''}`),
+  customerPortfolio: () => api.get<{ data: CustomerPortfolioRow[] }>('/analytics/customer-portfolio').then((r) => r.data),
+  postureCompliance: (organizationId?: string) =>
+    api.get<PostureCompliance>(`/analytics/posture-compliance${organizationId ? `?organizationId=${organizationId}` : ''}`),
+  opsSummary: (organizationId?: string) =>
+    api.get<OpsSummary>(`/analytics/ops-summary${organizationId ? `?organizationId=${organizationId}` : ''}`),
 };
 
 export interface AutomationRule {
