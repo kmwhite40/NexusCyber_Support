@@ -12,7 +12,7 @@ import { logger } from '../logger.js';
 import { resolveRecipients } from './notifications-recipients.js';
 import { renderTemplate } from './notifications-templates.js';
 import { getNotificationAdapter } from '../integrations/m365/runtime.js';
-import type { NotificationAdapter } from '../integrations/m365/adapter.js';
+import type { NotificationAdapter, DeliveryResult } from '../integrations/m365/adapter.js';
 import { config } from '../config.js';
 
 /** Ticket fields used to render templates. Events carry only ticket_id, so the
@@ -64,13 +64,31 @@ async function record(
   status: string,
   substitutionReason?: string | null,
   providerMessageId?: string | null,
+  attempts = 1,
 ): Promise<void> {
   await sql.query(
     `INSERT INTO notification_deliveries
        (organization_id, event_type, channel, recipient, status, substitution_reason, provider_message_id, attempts)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,1)`,
-    [orgId, eventType, channel, recipient, status, substitutionReason ?? null, providerMessageId ?? null],
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [orgId, eventType, channel, recipient, status, substitutionReason ?? null, providerMessageId ?? null, attempts],
   );
+}
+
+// Transient send failures (Graph 429/5xx, blips) are common; retry a couple of times
+// with a short backoff before recording a failure. Background work, so the small
+// delay is acceptable. Overridable for tests via the delays array.
+const SEND_RETRY_DELAYS_MS = [400, 1500];
+async function sendWithRetry(
+  send: () => Promise<DeliveryResult>,
+  delays: number[] = SEND_RETRY_DELAYS_MS,
+): Promise<DeliveryResult & { attempts: number }> {
+  let last: DeliveryResult = { status: 'failed', error: 'not attempted' };
+  for (let i = 0; i <= delays.length; i++) {
+    last = await send();
+    if (last.status === 'sent') return { ...last, attempts: i + 1 };
+    if (i < delays.length) await new Promise((r) => setTimeout(r, delays[i]));
+  }
+  return { ...last, attempts: delays.length + 1 };
 }
 
 /**
@@ -132,17 +150,17 @@ export async function dispatch(
       continue; // channel is available; record skipped, but let later channels record too
     }
     if (channel === 'teams') {
-      // Teams is a single channel post (no per-person addressing): send ONCE.
-      const result = await adapter.sendTeams({ summary: tpl.subject, text: tpl.text });
-      await record(sql, orgId, evt.type, channel, null, result.status, result.error ?? null, result.providerMessageId);
+      // Teams is a single channel post (no per-person addressing): send ONCE (with retry).
+      const result = await sendWithRetry(() => adapter.sendTeams({ summary: tpl.subject, text: tpl.text }));
+      await record(sql, orgId, evt.type, channel, null, result.status, result.error ?? null, result.providerMessageId, result.attempts);
       if (result.status === 'sent') return; // posted; stop the chain
       continue; // send failed -> fall through to the next channel
     }
-    // email: per-recipient addressing
+    // email: per-recipient addressing, each with transient-failure retry.
     let anySent = false;
     for (const r of recipients) {
-      const result = await adapter.sendEmail({ to: r.email, subject: tpl.subject, html: tpl.html, text: tpl.text });
-      await record(sql, orgId, evt.type, channel, r.email, result.status, result.error ?? null, result.providerMessageId);
+      const result = await sendWithRetry(() => adapter.sendEmail({ to: r.email, subject: tpl.subject, html: tpl.html, text: tpl.text }));
+      await record(sql, orgId, evt.type, channel, r.email, result.status, result.error ?? null, result.providerMessageId, result.attempts);
       if (result.status === 'sent') anySent = true;
     }
     if (anySent) return; // delivered on this channel; stop the chain

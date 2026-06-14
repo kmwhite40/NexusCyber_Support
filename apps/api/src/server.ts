@@ -5,6 +5,7 @@ import rateLimit from '@fastify/rate-limit';
 import multipart from '@fastify/multipart';
 import { config } from './config.js';
 import { logger } from './logger.js';
+import { migrate } from './db/migrate.js';
 import { pool } from './db/pool.js';
 import { registerRoutes } from './http/routes.js';
 import { registerExtraRoutes } from './http/routes-extra.js';
@@ -20,6 +21,13 @@ import { startMailIngest } from './jobs/mail-ingest.js';
 import { startRetentionPurge } from './jobs/retention-purge.js';
 
 async function main() {
+  // Optional in-boundary migrations on boot (set RUN_MIGRATIONS_ON_BOOT=true). Runs
+  // against the container's own DB connection — no workstation/firewall path needed.
+  if (process.env.RUN_MIGRATIONS_ON_BOOT === 'true' || process.env.RUN_MIGRATIONS_ON_BOOT === '1') {
+    logger.info('RUN_MIGRATIONS_ON_BOOT set — applying pending migrations before listen');
+    await migrate();
+  }
+
   // Fastify gets a logger config (not a pino instance) to keep its FastifyBaseLogger
   // typing; modules use the standalone `logger` from ./logger for their own output.
   const app = Fastify({

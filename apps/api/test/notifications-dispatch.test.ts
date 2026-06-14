@@ -92,4 +92,21 @@ describe('dispatch', () => {
     const skipped = inserts.filter((p) => p[4] === 'skipped');
     expect(skipped.length).toBe(2); // teams + email both skipped, chain not short-circuited
   });
+
+  it('retries a transient email failure, then records sent with the attempt count', async () => {
+    const { sql, inserts } = makeSql({
+      cloud: 'gcchigh', emailCap: 'supported', teamsCap: 'requires_validation',
+      recipients: [{ user_id: 'u1', email: 'a@x.gov' }],
+    });
+    let n = 0;
+    const adapter = adapterStub({
+      capabilities: () => ({ email: true, teams: false }),
+      sendEmail: vi.fn(async () => (++n < 2 ? { status: 'failed', error: '429 throttled' } : { status: 'sent', providerMessageId: 'ok' })),
+    });
+    await dispatch(sql, 'org-1', evt('sla.breached'), adapter);
+    expect(adapter.sendEmail).toHaveBeenCalledTimes(2); // 1 transient failure + 1 success
+    const email = inserts.find((p) => p[2] === 'email' && p[4] === 'sent');
+    expect(email).toBeTruthy();
+    expect(email[7]).toBe(2); // attempts column reflects the retry
+  });
 });
