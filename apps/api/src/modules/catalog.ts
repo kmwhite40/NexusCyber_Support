@@ -151,6 +151,10 @@ export async function createRequest(actor: Principal, key: string, input: Create
     );
     await audit(actor, { action: 'service_request.create', organizationId: orgId, resourceType: 'ticket', resourceId: ticket.id, detail: { catalog: item.key } });
     publish('ticket.created', orgId, { ticket_id: ticket.id, org_id: orgId, type: item.ticket_type, priority: item.default_priority, channel: 'catalog' });
+    // Acknowledge the requester that their request was received (dispatcher fills details).
+    if (ticket.requester_id) {
+      publish('ticket.acknowledged', orgId, { ticket_id: ticket.id, org_id: orgId }, { idempotencyKey: `ticket.acknowledged:${ticket.id}` });
+    }
 
     return ticket;
   });

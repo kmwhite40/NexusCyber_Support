@@ -32,16 +32,16 @@ function evt(type: string, data: Record<string, unknown>): DomainEvent {
 const emails = (rs: Array<{ email: string }>) => rs.map((r) => r.email).sort();
 
 describe('resolveRecipients — event-aware routing', () => {
-  it('ticket.created (unassigned) notifies the owning team’s shared desk mailbox, not the customer or every agent', async () => {
-    const { sql, calls } = makeSql({
+  it('ticket.created (unassigned) notifies the covering team + the shared desk mailbox (never the customer)', async () => {
+    const { sql } = makeSql({
       ticket: { requester_id: 'cust-1', assigned_agent_id: null, organization_id: 'org-1', desk_email: 'desk@team' },
       covering: [{ user_id: 'ag1', email: 'a1@nexus' }, { user_id: 'ag2', email: 'a2@nexus' }],
       users: { 'cust-1': 'cust@acme' },
     });
     const out = await resolveRecipients(sql, evt('ticket.created', { ticket_id: 't1' }));
-    expect(out).toEqual([{ userId: 'desk:desk@team', email: 'desk@team' }]);
-    // single shared address — does NOT fan out to covering agents
-    expect(calls.some((c) => c.text.includes("u.plane = 'nexus'"))).toBe(false);
+    // real agents are reliably alerted, plus the group desk mailbox — but never the requester
+    expect(emails(out)).toEqual(['a1@nexus', 'a2@nexus', 'desk@team']);
+    expect(emails(out)).not.toContain('cust@acme');
   });
 
   it('ticket.created (unassigned, no group address) falls back to the platform default desk mailbox', async () => {
@@ -64,6 +64,15 @@ describe('resolveRecipients — event-aware routing', () => {
     const { sql } = makeSql({});
     const out = await resolveRecipients(sql, evt('ticket.acknowledged', { ticket_id: 't1' }));
     expect(out).toEqual([]);
+  });
+
+  it('ticket.acknowledged falls back to the ticket requester (portal/agent tickets)', async () => {
+    const { sql } = makeSql({
+      ticket: { requester_id: 'cust-1', assigned_agent_id: 'ag1', organization_id: 'org-1' },
+      users: { 'cust-1': 'cust@acme', ag1: 'a1@nexus' },
+    });
+    const out = await resolveRecipients(sql, evt('ticket.acknowledged', { ticket_id: 't1' }));
+    expect(emails(out)).toEqual(['cust@acme']); // requester only, never the agent
   });
 
   it('csat.survey_created notifies only the ticket requester', async () => {

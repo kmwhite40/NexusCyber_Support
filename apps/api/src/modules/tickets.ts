@@ -118,6 +118,11 @@ export async function createTicket(actor: Principal, input: CreateTicketInput) {
       requester_id: ticket.requester_id,
       channel: ticket.source_channel,
     });
+    // Acknowledge the requester (any channel — portal/agent), mirroring the inbound
+    // email ack. The dispatcher fills number/subject/priority/name/time from the row.
+    if (ticket.requester_id) {
+      publish('ticket.acknowledged', orgId, { ticket_id: ticket.id, org_id: orgId }, { idempotencyKey: `ticket.acknowledged:${ticket.id}` });
+    }
 
     return { ...ticket, response_due_at: due.response_due_at, resolution_due_at: due.resolution_due_at, status: 'triage' };
   });

@@ -20,10 +20,13 @@ import { config } from '../config.js';
 async function ticketDetails(
   sql: Sql,
   ticketId: string | undefined,
-): Promise<{ ticket_number?: string; subject?: string; priority?: string; status?: string }> {
+): Promise<{ ticket_number?: string; subject?: string; priority?: string; status?: string; created_at?: string; customer_name?: string }> {
   if (!ticketId) return {};
   const { rows } = await sql.query(
-    'SELECT ticket_number, subject, priority, status FROM tickets WHERE id = $1',
+    `SELECT t.ticket_number, t.subject, t.priority, t.status, t.created_at,
+            u.display_name AS customer_name
+       FROM tickets t LEFT JOIN users u ON u.id = t.requester_id
+      WHERE t.id = $1`,
     [ticketId],
   );
   return rows[0] ?? {};
@@ -103,8 +106,8 @@ export async function dispatch(
     status: d.status ?? t.status,
     metric: d.metric,
     severity: d.severity,
-    customerName: d.customer_name,
-    submittedAt: d.submitted_at,
+    customerName: d.customer_name ?? t.customer_name,
+    submittedAt: d.submitted_at ?? (t.created_at ? new Date(t.created_at).toISOString() : undefined),
     visibility: d.visibility,
     commentExcerpt: d.comment_excerpt,
     resolutionCode: d.resolution_code,

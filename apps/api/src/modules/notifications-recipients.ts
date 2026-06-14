@@ -91,7 +91,12 @@ export async function resolveRecipients(sql: Sql, evt: DomainEvent): Promise<Rec
   // user account — so it bypasses the ticket-party resolution below.
   if (type === 'ticket.acknowledged') {
     const email = (data.recipient_email as string | undefined)?.trim();
-    return email ? [{ userId: `requester:${email}`, email }] : [];
+    if (email) return [{ userId: `requester:${email}`, email }];
+    // Portal/agent-created tickets ack the requester directly (no literal sender).
+    const ticketId = data.ticket_id as string | undefined;
+    if (!ticketId) return [];
+    const t = await ticketParties(sql, ticketId);
+    return t?.requester_id ? usersByIds(sql, [t.requester_id]) : [];
   }
 
   // CSAT survey invite: only the ticket's requester (who can rate it in the portal).
@@ -121,8 +126,12 @@ export async function resolveRecipients(sql: Sql, evt: DomainEvent): Promise<Rec
     // address, else the platform default). Agents also see it in their queue.
     if (type === 'ticket.created') {
       if (t.assigned_agent_id) return usersByIds(sql, [t.assigned_agent_id]);
+      // Unassigned: notify the covering team (real agents) so the support team is
+      // reliably alerted, PLUS the shared desk mailbox when one is configured. (A
+      // single desk-email env var alone is fragile; covering agents always resolve.)
       const desk = t.desk_email ?? config.notifications.serviceDeskEmail;
-      return desk ? [{ userId: `desk:${desk}`, email: desk }] : [];
+      const deskRecipient: Recipient[] = desk ? [{ userId: `desk:${desk}`, email: desk }] : [];
+      return mergeRecipients(await coveringAgents(sql, t.organization_id), deskRecipient);
     }
 
     // Assignment -> the newly assigned agent, plus the requester so the customer
