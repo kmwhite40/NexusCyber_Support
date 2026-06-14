@@ -198,3 +198,86 @@ export async function overview(actor: Principal, orgId?: string) {
     scatter,
   };
 }
+
+/**
+ * Operational KPI snapshot for the enterprise dashboards: live backlog, opened-vs-
+ * closed time series, SLA attainment (from sla_instances), and backlog breakdowns.
+ * RLS-scoped via withOrgContext; `orgId` narrows to one customer (agents only).
+ * `days` is clamped server-side and inlined into generate_series (safe integer).
+ */
+export async function operationalKpis(actor: Principal, orgId?: string, days = 30) {
+  if (!can(actor, 'report.read.operational') && !can(actor, 'report.read.customer')) {
+    throw Errors.forbidden('missing reporting permission');
+  }
+  const d = Math.min(Math.max(Math.floor(Number(days) || 30), 7), 180);
+  return withOrgContext(orgContextFor(actor), async (sql) => {
+    const p: unknown[] = [];
+    let f = '';
+    if (orgId) { p.push(orgId); f = 'AND t.organization_id = $1'; }
+
+    const summary = (await sql.query(
+      `SELECT
+         count(*) FILTER (WHERE status NOT IN ('resolved','closed'))::int AS open,
+         count(*) FILTER (WHERE status NOT IN ('resolved','closed') AND priority='P1')::int AS open_p1,
+         count(*) FILTER (WHERE created_at >= date_trunc('day', now()))::int AS opened_today,
+         count(*) FILTER (WHERE resolved_at >= date_trunc('day', now()))::int AS closed_today,
+         count(*) FILTER (WHERE created_at >= date_trunc('week', now()))::int AS opened_week,
+         count(*) FILTER (WHERE resolved_at >= date_trunc('week', now()))::int AS closed_week,
+         coalesce(round(avg(EXTRACT(EPOCH FROM (resolved_at - created_at))/86400.0)
+           FILTER (WHERE resolved_at IS NOT NULL), 2), 0)::float AS mttr_days,
+         coalesce(round(avg(satisfaction_score) FILTER (WHERE satisfaction_score IS NOT NULL), 2), 0)::float AS csat
+       FROM tickets t WHERE 1=1 ${f}`,
+      p,
+    )).rows[0];
+
+    const trend = (await sql.query(
+      `WITH days AS (
+         SELECT generate_series(date_trunc('day', now()) - interval '${d - 1} days',
+                                date_trunc('day', now()), interval '1 day') AS d)
+       SELECT to_char(days.d, 'YYYY-MM-DD') AS date,
+         (SELECT count(*) FROM tickets t WHERE date_trunc('day', t.created_at) = days.d ${f})::int AS opened,
+         (SELECT count(*) FROM tickets t WHERE date_trunc('day', t.resolved_at) = days.d ${f})::int AS closed
+       FROM days ORDER BY days.d`,
+      p,
+    )).rows;
+
+    const slaRow = (await sql.query(
+      `SELECT
+         count(*) FILTER (WHERE i.metric='response' AND i.state='met')::int AS resp_met,
+         count(*) FILTER (WHERE i.metric='response' AND i.state='breached')::int AS resp_breached,
+         count(*) FILTER (WHERE i.metric='resolution' AND i.state='met')::int AS resn_met,
+         count(*) FILTER (WHERE i.metric='resolution' AND i.state='breached')::int AS resn_breached
+       FROM sla_instances i JOIN tickets t ON t.id = i.ticket_id WHERE 1=1 ${f}`,
+      p,
+    )).rows[0];
+    const aPct = (met: number, br: number) => (met + br > 0 ? Math.round((met / (met + br)) * 100) : 100);
+    const sla = {
+      responseMet: slaRow.resp_met, responseBreached: slaRow.resp_breached,
+      resolutionMet: slaRow.resn_met, resolutionBreached: slaRow.resn_breached,
+      responseAttainmentPct: aPct(slaRow.resp_met, slaRow.resp_breached),
+      resolutionAttainmentPct: aPct(slaRow.resn_met, slaRow.resn_breached),
+      overallAttainmentPct: aPct(slaRow.resp_met + slaRow.resn_met, slaRow.resp_breached + slaRow.resn_breached),
+    };
+
+    const byStatus = (await sql.query(
+      `SELECT status AS label, count(*)::int AS count FROM tickets t
+        WHERE status NOT IN ('resolved','closed') ${f} GROUP BY status ORDER BY 2 DESC`, p)).rows;
+    const byPriority = (await sql.query(
+      `SELECT priority AS label, count(*)::int AS count FROM tickets t
+        WHERE status NOT IN ('resolved','closed') ${f} GROUP BY priority ORDER BY 1`, p)).rows;
+    const byAge = (await sql.query(
+      `SELECT label, count(*)::int AS count FROM (
+         SELECT CASE
+           WHEN now()-created_at < interval '1 day'  THEN '< 1 day'
+           WHEN now()-created_at < interval '3 days' THEN '1-3 days'
+           WHEN now()-created_at < interval '7 days' THEN '3-7 days'
+           ELSE '> 7 days' END AS label,
+           CASE WHEN now()-created_at < interval '1 day' THEN 1
+                WHEN now()-created_at < interval '3 days' THEN 2
+                WHEN now()-created_at < interval '7 days' THEN 3 ELSE 4 END AS ord
+         FROM tickets t WHERE status NOT IN ('resolved','closed') ${f}) s
+       GROUP BY label, ord ORDER BY ord`, p)).rows;
+
+    return { days: d, summary, trend, sla, byStatus, byPriority, byAge };
+  });
+}

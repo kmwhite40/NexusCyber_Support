@@ -301,8 +301,26 @@ export interface AnalyticsOverview {
   scatter: Array<{ resolutionDays: number; avgRating: number; tickets: number }>;
 }
 
+export interface OperationalKpis {
+  days: number;
+  summary: {
+    open: number; open_p1: number; opened_today: number; closed_today: number;
+    opened_week: number; closed_week: number; mttr_days: number; csat: number;
+  };
+  trend: Array<{ date: string; opened: number; closed: number }>;
+  sla: {
+    responseMet: number; responseBreached: number; resolutionMet: number; resolutionBreached: number;
+    responseAttainmentPct: number; resolutionAttainmentPct: number; overallAttainmentPct: number;
+  };
+  byStatus: Array<{ label: string; count: number }>;
+  byPriority: Array<{ label: string; count: number }>;
+  byAge: Array<{ label: string; count: number }>;
+}
+
 export const analytics = {
   overview: () => api.get<AnalyticsOverview>('/analytics/overview'),
+  kpis: (days = 30, organizationId?: string) =>
+    api.get<OperationalKpis>(`/analytics/kpis?days=${days}${organizationId ? `&organizationId=${organizationId}` : ''}`),
 };
 
 export interface AutomationRule {

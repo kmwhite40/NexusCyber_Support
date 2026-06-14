@@ -168,3 +168,52 @@ export function MiniBars({ items }: { items: Array<{ label: string; value: numbe
     </div>
   );
 }
+
+/** Opened vs. closed time series — dual-line area chart (SVG, no deps). */
+export function TrendChart({
+  data,
+  height = 180,
+}: {
+  data: Array<{ date: string; opened: number; closed: number }>;
+  height?: number;
+}) {
+  if (!data.length) return <div className="grid h-40 place-items-center text-sm text-muted">No data for this period</div>;
+  const w = 760;
+  const h = height;
+  const pad = { l: 28, r: 12, t: 12, b: 22 };
+  const max = Math.max(1, ...data.map((d) => Math.max(d.opened, d.closed)));
+  const n = data.length;
+  const x = (i: number) => pad.l + (i * (w - pad.l - pad.r)) / Math.max(1, n - 1);
+  const y = (v: number) => pad.t + (1 - v / max) * (h - pad.t - pad.b);
+  const path = (key: 'opened' | 'closed') => data.map((d, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(d[key]).toFixed(1)}`).join(' ');
+  const area = (key: 'opened' | 'closed') =>
+    `${path(key)} L${x(n - 1).toFixed(1)},${(h - pad.b).toFixed(1)} L${x(0).toFixed(1)},${(h - pad.b).toFixed(1)} Z`;
+  const ticks = [0, 0.5, 1].map((f) => Math.round(max * f));
+  const labelEvery = Math.ceil(n / 6);
+  return (
+    <div className="w-full">
+      <div className="mb-2 flex items-center gap-4 text-xs">
+        <span className="flex items-center gap-1.5"><span className="h-2 w-3 rounded-sm" style={{ background: 'hsl(var(--brand))' }} /> Opened</span>
+        <span className="flex items-center gap-1.5"><span className="h-2 w-3 rounded-sm" style={{ background: 'hsl(var(--success))' }} /> Closed</span>
+      </div>
+      <svg viewBox={`0 0 ${w} ${h}`} className="w-full" preserveAspectRatio="none" role="img" aria-label="Tickets opened vs closed">
+        {ticks.map((t, i) => (
+          <g key={i}>
+            <line x1={pad.l} x2={w - pad.r} y1={y(t)} y2={y(t)} stroke="hsl(var(--border))" strokeDasharray="3 3" />
+            <text x={4} y={y(t) + 3} className="fill-muted" style={{ fontSize: 9 }}>{t}</text>
+          </g>
+        ))}
+        <path d={area('opened')} fill="hsl(var(--brand) / 0.12)" />
+        <path d={path('opened')} fill="none" stroke="hsl(var(--brand))" strokeWidth={2} />
+        <path d={path('closed')} fill="none" stroke="hsl(var(--success))" strokeWidth={2} />
+        {data.map((d, i) =>
+          i % labelEvery === 0 ? (
+            <text key={i} x={x(i)} y={h - 6} textAnchor="middle" className="fill-muted" style={{ fontSize: 9 }}>
+              {d.date.slice(5)}
+            </text>
+          ) : null,
+        )}
+      </svg>
+    </div>
+  );
+}

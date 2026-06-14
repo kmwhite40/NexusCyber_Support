@@ -15,8 +15,16 @@ import * as announcements from '../modules/announcements.js';
 import * as demo from '../modules/demo.js';
 import * as oncall from '../modules/oncall.js';
 import * as csat from '../modules/csat.js';
+import * as analytics from '../modules/analytics.js';
 
 export async function registerExtraRoutes(app: FastifyInstance): Promise<void> {
+  // ---------------- Operational KPIs for the enterprise dashboards ----------------
+  app.get('/api/v1/analytics/kpis', async (req) => {
+    const p = await requirePrincipal(req);
+    const q = z.object({ days: z.coerce.number().int().optional(), organizationId: z.string().uuid().optional() }).parse(req.query ?? {});
+    return analytics.operationalKpis(p, q.organizationId, q.days);
+  });
+
   // ---------------- CSAT: rate-by-ticket (in-ticket "rate your experience") ----------------
   app.get('/api/v1/csat/ticket/:ticketId', async (req) => {
     const p = await requirePrincipal(req);
