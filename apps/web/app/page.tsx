@@ -17,7 +17,6 @@ const PILLARS = [
 
 const FOOTER_LINKS = [
   { name: 'GitHub', href: 'https://github.com/kmwhite40/NexusCyber_Support' },
-  { name: 'Docs', href: '#' },
   { name: 'Status', href: '#' },
   { name: 'Privacy', href: '#' },
 ];

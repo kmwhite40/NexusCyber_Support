@@ -26,7 +26,7 @@
   --chart-3: 212 90% 66%;
   --chart-4: 224 79% 48%;
   --chart-5: 227 70% 40%;
-  --font-sans: 'Inter';
+  /* --font-sans / --font-mono are injected by next/font (see app/layout.tsx). */
 }
 
 .dark {
@@ -95,4 +95,22 @@ body {
   transform: translateX(-100%);
   background: linear-gradient(90deg, transparent, hsl(var(--fg) / 0.05), transparent);
   animation: shimmer 1.4s infinite;
+}
+
+/* ---- Design-system conventions (Anchor) ----
+   Public Sans for UI, JetBrains Mono for machine data. Headings get tight,
+   confident tracking; numbers in tables/metrics use tabular figures so columns
+   align. Use the `.data` class for ticket IDs, timestamps, counts, and codes. */
+@layer base {
+  h1, h2, h3, h4 { letter-spacing: -0.018em; }
+  /* tabular figures everywhere keeps dashboards + tables from jittering */
+  body { font-variant-numeric: tabular-nums; }
+}
+
+@layer components {
+  .data {
+    font-family: var(--font-mono), ui-monospace, SFMono-Regular, monospace;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
 }
