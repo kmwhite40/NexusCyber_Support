@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { fetchNewMessages, ingestMessage } from '../src/integrations/m365/ingest.js';
+import { fetchNewMessages, ingestMessage, extractTicketNumber } from '../src/integrations/m365/ingest.js';
 import { subscribe } from '../src/events/bus.js';
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -133,5 +133,63 @@ describe('ingest', () => {
     expect(got['ticket.acknowledged'].data.customer_name).toBe('Sam Sender'); // linked user's display name
     expect(got['ticket.acknowledged'].data.submitted_at).toBe('2026-06-13T14:30:00.000Z');
     expect(got['ticket.acknowledged'].data.priority).toBeTruthy();
+  });
+
+  it('threads a reply onto the existing ticket (no new ticket) and reopens it', async () => {
+    const got: Record<string, any> = {};
+    subscribe('ticket.commented', (e) => { got['ticket.commented'] = e; });
+    subscribe('ticket.reopened', (e) => { got['ticket.reopened'] = e; });
+    subscribe('ticket.created', (e) => { got['unexpected.created'] = e; });
+
+    const { sql, calls } = makeSql({
+      'FROM integration_state': { rows: [] },
+      'FROM organization_domains': { rows: [{ organization_id: 'org-acme' }] },
+      'ticket_number=$2': { rows: [{ id: 't-existing', status: 'resolved', assigned_agent_id: 'ag1' }] },
+      'FROM users WHERE organization_id': { rows: [{ id: 'user-sender' }] },
+    });
+
+    const out = await ingestMessage(sql, {
+      ...msg,
+      internetMessageId: '<reply-1@x>',
+      subject: 'RE: [ACME-000005] Help please',
+    });
+    await flush();
+
+    expect(out.created).toBe(false);
+    expect(out.reason).toBe('threaded');
+    expect(out.ticketId).toBe('t-existing');
+    // appended a comment, did NOT open a new ticket
+    expect(calls.some((c) => c.text.includes('INSERT INTO ticket_comments'))).toBe(true);
+    expect(calls.some((c) => c.text.includes('INSERT INTO tickets'))).toBe(false);
+    // resolved -> reopened (had an assignee -> in_progress), and the desk is notified
+    expect(got['ticket.reopened']?.data.to).toBe('in_progress');
+    expect(got['ticket.commented']?.data.ticket_id).toBe('t-existing');
+    expect(got['unexpected.created']).toBeUndefined();
+  });
+
+  it('creates a new ticket when the subject ticket number does not match an existing ticket', async () => {
+    const { sql, calls } = makeSql({
+      'FROM integration_state': { rows: [] },
+      'FROM organization_domains': { rows: [{ organization_id: 'org-acme' }] },
+      'ticket_number=$2': { rows: [] }, // no such ticket -> fall through to create
+      'SELECT COALESCE(MAX': { rows: [{ n: 9 }] },
+      'left(upper(name)': { rows: [{ p: 'ACME' }] },
+      'FROM users WHERE organization_id': { rows: [] },
+      'INSERT INTO tickets': { rows: [{ id: 't-fresh', created_at: '2026-06-13T00:00:00.000Z', priority: 'P3' }] },
+    });
+    const out = await ingestMessage(sql, { ...msg, internetMessageId: '<reply-2@x>', subject: 'RE: [ZZZZ-999999] stale ref' });
+    expect(out.created).toBe(true);
+    expect(calls.some((c) => c.text.includes('INSERT INTO tickets'))).toBe(true);
+  });
+});
+
+describe('extractTicketNumber', () => {
+  it('pulls the number from a quoted reply subject', () => {
+    expect(extractTicketNumber('RE: [ACME-000005] Help please')).toBe('ACME-000005');
+    expect(extractTicketNumber('Fwd: QUAN-000123 — update')).toBe('QUAN-000123');
+  });
+  it('returns null when there is no ticket number', () => {
+    expect(extractTicketNumber('New problem with VPN')).toBeNull();
+    expect(extractTicketNumber('')).toBeNull();
   });
 });

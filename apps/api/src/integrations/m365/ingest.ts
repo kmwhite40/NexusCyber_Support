@@ -80,6 +80,12 @@ export async function fetchNewMessages(
   return messages;
 }
 
+/** Pull a ticket number like ACME-000123 from a reply subject ("RE: [ACME-000123] …"). Pure. */
+export function extractTicketNumber(subject: string): string | null {
+  const m = (subject ?? '').match(/\b([A-Z][A-Z0-9]{1,5}-\d{4,8})\b/);
+  return m ? m[1] : null;
+}
+
 /** Create a ticket from one message. Idempotent by internetMessageId. */
 export async function ingestMessage(
   sql: Sql,
@@ -98,6 +104,51 @@ export async function ingestMessage(
     logger.warn({ from: msg.fromAddress }, 'inbound mail: unmatched sender domain; skipping');
     await setState(sql, seenKey, true); // do not reprocess unmatched mail
     return { created: false, reason: 'unmatched-domain' };
+  }
+
+  // Reply threading: if the subject carries an existing ticket number for this org,
+  // append the message as a customer comment (and reopen if it was closed) instead of
+  // opening a duplicate ticket. Outbound mail puts [TICKET-NUM] in the subject, which
+  // mail clients quote on reply, so this catches the common "RE: [NUM] …" case.
+  const replyNum = extractTicketNumber(msg.subject);
+  if (replyNum) {
+    const { rows: exist } = await sql.query(
+      'SELECT id, status, assigned_agent_id FROM tickets WHERE organization_id=$1 AND ticket_number=$2 LIMIT 1',
+      [orgId, replyNum],
+    );
+    const ticket = exist[0];
+    if (ticket) {
+      const { rows: u } = await sql.query(
+        'SELECT id FROM users WHERE organization_id=$1 AND lower(email)=lower($2) LIMIT 1',
+        [orgId, msg.fromAddress],
+      );
+      const authorId = (u[0]?.id as string | undefined) ?? null;
+      await sql.query(
+        `INSERT INTO ticket_comments (organization_id, ticket_id, author_id, visibility, body)
+         VALUES ($1,$2,$3,'customer',$4)`,
+        [orgId, ticket.id, authorId, msg.bodyPreview || '(no content)'],
+      );
+      await sql.query(
+        `INSERT INTO ticket_events (organization_id, ticket_id, actor_id, event_type, detail)
+         VALUES ($1,$2,$3,'commented',$4)`,
+        [orgId, ticket.id, authorId, { visibility: 'customer', via: 'email' }],
+      );
+      // A customer reply on a resolved/closed ticket reopens it.
+      if (ticket.status === 'resolved' || ticket.status === 'closed') {
+        const to = ticket.assigned_agent_id ? 'in_progress' : 'triage';
+        await sql.query('UPDATE tickets SET status=$1 WHERE id=$2', [to, ticket.id]);
+        publish('ticket.reopened', orgId, { ticket_id: ticket.id, org_id: orgId, from: ticket.status, to });
+      }
+      // Notify the desk/assignee of the reply (NOT a customer first-response — leaves the
+      // response SLA untouched; this is an inbound customer message).
+      publish('ticket.commented', orgId, {
+        ticket_id: ticket.id, org_id: orgId, visibility: 'customer',
+        comment_excerpt: String(msg.bodyPreview ?? '').slice(0, 600),
+      });
+      await setState(sql, seenKey, true);
+      logger.info({ ticketId: ticket.id, num: replyNum, from: msg.fromAddress }, 'inbound mail threaded onto existing ticket');
+      return { created: false, reason: 'threaded', ticketId: ticket.id };
+    }
   }
 
   // Generate a ticket number (mirrors modules/tickets.ts nextTicketNumber).
