@@ -14,8 +14,23 @@ import * as forms from '../modules/forms.js';
 import * as announcements from '../modules/announcements.js';
 import * as demo from '../modules/demo.js';
 import * as oncall from '../modules/oncall.js';
+import * as csat from '../modules/csat.js';
 
 export async function registerExtraRoutes(app: FastifyInstance): Promise<void> {
+  // ---------------- CSAT: rate-by-ticket (in-ticket "rate your experience") ----------------
+  app.get('/api/v1/csat/ticket/:ticketId', async (req) => {
+    const p = await requirePrincipal(req);
+    const { ticketId } = z.object({ ticketId: z.string().uuid() }).parse(req.params);
+    return csat.ticketSurveyState(p, ticketId);
+  });
+
+  app.post('/api/v1/csat/ticket/:ticketId/respond', async (req) => {
+    const p = await requirePrincipal(req);
+    const { ticketId } = z.object({ ticketId: z.string().uuid() }).parse(req.params);
+    const body = z.object({ score: z.number().int().min(1).max(5), comment: z.string().max(2000).optional() }).parse(req.body);
+    return csat.respondByTicket(p, ticketId, body.score, body.comment);
+  });
+
   // ---------------- On-call management: delete schedule, remove responder, set cell ----------------
   app.delete('/api/v1/oncall/schedules/:id', async (req) => {
     const p = await requirePrincipal(req);

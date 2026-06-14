@@ -78,6 +78,49 @@ export async function respond(actor: Principal, surveyId: string, score: number,
   });
 }
 
+/** Whether the actor can rate a ticket, and whether they already did. Drives the
+ *  in-ticket "rate your experience" prompt for resolved/closed tickets. */
+export async function ticketSurveyState(
+  actor: Principal,
+  ticketId: string,
+): Promise<{ ratable: boolean; rated: boolean; score: number | null }> {
+  return withOrgContext(orgContextFor(actor), async (sql) => {
+    const t = (await sql.query('SELECT requester_id, status, satisfaction_score FROM tickets WHERE id=$1', [ticketId])).rows[0];
+    if (!t) return { ratable: false, rated: false, score: null };
+    const isRequester = actor.plane !== 'customer' || !t.requester_id || t.requester_id === actor.id;
+    const resolved = t.status === 'resolved' || t.status === 'closed';
+    const survey = (await sql.query('SELECT score, responded_at FROM csat_surveys WHERE ticket_id=$1', [ticketId])).rows[0];
+    const rated = !!survey?.responded_at || t.satisfaction_score != null;
+    return { ratable: isRequester && resolved, rated, score: survey?.score ?? t.satisfaction_score ?? null };
+  });
+}
+
+/** Rate a ticket directly (find-or-create its survey). Lets the requester rate any
+ *  resolved/closed ticket even if no survey was pre-created at resolve time. */
+export async function respondByTicket(actor: Principal, ticketId: string, score: number, comment?: string) {
+  if (!isValidScore(score)) throw Errors.badRequest('score must be an integer from 1 to 5');
+  // Ensure a survey row exists (system context bypasses RLS for the insert), after
+  // validating the actor may rate this ticket and that it is resolved/closed.
+  const surveyId = await withSystemContext(async (sql) => {
+    const t = (await sql.query('SELECT requester_id, organization_id, status FROM tickets WHERE id=$1', [ticketId])).rows[0];
+    if (!t) throw Errors.notFound('ticket not found');
+    if (actor.plane === 'customer' && t.requester_id && t.requester_id !== actor.id) {
+      throw Errors.forbidden('only the requester can rate this ticket');
+    }
+    if (t.status !== 'resolved' && t.status !== 'closed') throw Errors.badRequest('ticket is not resolved yet');
+    const existing = (await sql.query('SELECT id FROM csat_surveys WHERE ticket_id=$1', [ticketId])).rows[0];
+    if (existing) return existing.id as string;
+    const inserted = (await sql.query(
+      `INSERT INTO csat_surveys (organization_id, ticket_id, token) VALUES ($1,$2,$3)
+       ON CONFLICT (ticket_id) DO NOTHING RETURNING id`,
+      [t.organization_id, ticketId, randomUUID()],
+    )).rows[0]?.id as string | undefined;
+    return inserted ?? (await sql.query('SELECT id FROM csat_surveys WHERE ticket_id=$1', [ticketId])).rows[0].id as string;
+  });
+  // Record via the existing respond path (org context + requester/answered checks).
+  return respond(actor, surveyId, score, comment);
+}
+
 /** CSAT metrics: response rate and average score for the principal's scope. */
 export async function metrics(actor: Principal) {
   return withOrgContext(orgContextFor(actor), async (sql) => {

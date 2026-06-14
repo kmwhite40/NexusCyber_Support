@@ -2,7 +2,7 @@ import { it, expect, beforeAll } from 'vitest';
 import { describeDb } from '../helpers/db.js';
 import { withSystemContext } from '../../src/db/pool.js';
 import { loadPrincipal } from '../../src/auth/principal.js';
-import { createSurveyForTicket, respond, pending, metrics } from '../../src/modules/csat.js';
+import { createSurveyForTicket, respond, pending, metrics, respondByTicket, ticketSurveyState } from '../../src/modules/csat.js';
 import { createTicket } from '../../src/modules/tickets.js';
 import type { Principal } from '../../src/types.js';
 
@@ -50,5 +50,30 @@ describeDb('CSAT (integration)', () => {
       (await sql.query('SELECT id FROM csat_surveys WHERE ticket_id=$1', [ticketId])).rows[0],
     );
     await expect(respond(endUser, survey.id, 3)).rejects.toThrow(/already answered/i);
+  });
+
+  it('lets the requester rate a resolved ticket with NO pre-created survey (find-or-create)', async () => {
+    const t = await createTicket(endUser, { subject: `CSAT by-ticket ${Date.now()}`, impact: 3, urgency: 3 });
+    await withSystemContext(async (sql) => sql.query("UPDATE tickets SET status='resolved' WHERE id=$1", [t.id]));
+
+    const before = await ticketSurveyState(endUser, t.id);
+    expect(before.ratable).toBe(true);
+    expect(before.rated).toBe(false);
+
+    const res = await respondByTicket(endUser, t.id, 4);
+    expect(res.score).toBe(4);
+
+    const after = await ticketSurveyState(endUser, t.id);
+    expect(after.rated).toBe(true);
+    expect(after.score).toBe(4);
+
+    await expect(respondByTicket(endUser, t.id, 2)).rejects.toThrow(/already answered/i);
+  });
+
+  it('refuses to rate a ticket that is not resolved yet', async () => {
+    const t = await createTicket(endUser, { subject: `CSAT not-resolved ${Date.now()}`, impact: 3, urgency: 3 });
+    const st = await ticketSurveyState(endUser, t.id);
+    expect(st.ratable).toBe(false);
+    await expect(respondByTicket(endUser, t.id, 5)).rejects.toThrow(/not resolved/i);
   });
 });

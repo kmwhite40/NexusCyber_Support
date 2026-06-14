@@ -149,7 +149,7 @@ export default function TicketDetailPage() {
         )}
       </div>
 
-      <CsatPrompt ticketId={id} />
+      <CsatPrompt ticketId={id} status={ticket.status} />
 
       {/* Approval gate (service requests) */}
       {pendingApproval && (
@@ -381,45 +381,63 @@ function LinkedTickets({ ticket, isAgent, canUpdate, onChange }: { ticket: Ticke
   );
 }
 
-function CsatPrompt({ ticketId }: { ticketId: string }) {
-  const [surveyId, setSurveyId] = React.useState<string | null>(null);
+function CsatPrompt({ ticketId, status }: { ticketId: string; status: string }) {
+  const [state, setState] = React.useState<{ ratable: boolean; rated: boolean } | null>(null);
   const [done, setDone] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
   const [hover, setHover] = React.useState(0);
+  const [err, setErr] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    api.get<{ data: Array<{ id: string; ticket_id: string }> }>('/csat/pending')
-      .then((r) => { const s = r.data.find((x) => x.ticket_id === ticketId); if (s) setSurveyId(s.id); })
-      .catch(() => {});
-  }, [ticketId]);
+    // Only resolved/closed tickets are ratable; ask the server who may rate + whether done.
+    if (status !== 'resolved' && status !== 'closed') { setState({ ratable: false, rated: false }); return; }
+    api.get<{ ratable: boolean; rated: boolean; score: number | null }>(`/csat/ticket/${ticketId}`)
+      .then((r) => setState({ ratable: r.ratable, rated: r.rated }))
+      .catch(() => setState({ ratable: false, rated: false }));
+  }, [ticketId, status]);
 
   async function rate(score: number) {
-    if (!surveyId) return;
-    await api.post(`/csat/${surveyId}/respond`, { score }).catch(() => {});
-    setDone(true);
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.post(`/csat/ticket/${ticketId}/respond`, { score });
+      setDone(true);
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.detail : 'Could not submit your rating — please try again.');
+    } finally {
+      setBusy(false);
+    }
   }
 
-  if (!surveyId) return null;
+  if (!state) return null; // still loading
+  if (!state.ratable && !state.rated) return null; // not resolved, or viewer is not the requester
+  const finished = done || state.rated;
   return (
     <Card className="border-brand/40">
       <CardBody className="flex flex-wrap items-center justify-between gap-3">
-        {done ? (
+        {finished ? (
           <span className="text-sm text-success">Thanks for your feedback!</span>
         ) : (
           <>
             <span className="text-sm text-fg">How satisfied were you with the resolution?</span>
-            <div className="flex items-center gap-1" onMouseLeave={() => setHover(0)}>
-              {[1, 2, 3, 4, 5].map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  onMouseEnter={() => setHover(n)}
-                  onClick={() => rate(n)}
-                  className={`text-xl ${n <= hover ? 'text-warning' : 'text-muted'}`}
-                  aria-label={`${n} star${n > 1 ? 's' : ''}`}
-                >
-                  ★
-                </button>
-              ))}
+            <div className="flex items-center gap-3">
+              <div className={`flex items-center gap-1 ${busy ? 'opacity-50' : ''}`} onMouseLeave={() => setHover(0)}>
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    disabled={busy}
+                    onMouseEnter={() => setHover(n)}
+                    onClick={() => rate(n)}
+                    className={`text-xl transition-colors ${n <= hover ? 'text-warning' : 'text-muted hover:text-warning/70'}`}
+                    aria-label={`${n} star${n > 1 ? 's' : ''}`}
+                  >
+                    ★
+                  </button>
+                ))}
+              </div>
+              {err && <span className="text-xs text-danger">{err}</span>}
             </div>
           </>
         )}
