@@ -124,6 +124,18 @@ export async function startTicketSla(
   return { response_due_at: responseDue, resolution_due_at: resolutionDue };
 }
 
+/** Mark the response SLA met on first response (agent reply / assignment / work
+ *  started). Idempotent and never un-breaches: a genuinely late first response
+ *  stays 'breached' for reporting. Returns true if a running/warning instance was met. */
+export async function markResponseMet(sql: Sql, ticketId: string): Promise<boolean> {
+  const { rowCount } = await sql.query(
+    `UPDATE sla_instances SET state='met'
+      WHERE ticket_id=$1 AND metric='response' AND state IN ('running','warning','paused')`,
+    [ticketId],
+  );
+  return (rowCount ?? 0) > 0;
+}
+
 export type SlaState = 'running' | 'paused' | 'warning' | 'met' | 'breached';
 
 /** Pure evaluation of an instance's current state (for the periodic sweep). */

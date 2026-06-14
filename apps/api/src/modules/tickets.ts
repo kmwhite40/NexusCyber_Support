@@ -7,7 +7,7 @@ import { orgContextFor } from '../auth/principal.js';
 import { authorize, can } from '../authz/pdp.js';
 import { audit } from './audit.js';
 import { publish } from '../events/bus.js';
-import { startTicketSla, pauseTicketSlas, resumeTicketSlas } from './sla.js';
+import { startTicketSla, pauseTicketSlas, resumeTicketSlas, markResponseMet } from './sla.js';
 import { linksForTicket } from './links.js';
 import { resolveTransitions, isTransitionAllowed } from './workflows.js';
 import { Errors } from '../errors.js';
@@ -261,6 +261,8 @@ export async function addComment(
       [t.organization_id, id, actor.id, { visibility }],
     );
     await audit(actor, { action: 'ticket.comment', organizationId: t.organization_id, resourceType: 'ticket', resourceId: id, detail: { visibility } });
+    // A customer-visible reply from an agent is the "first response" — stop the response SLA.
+    if (visibility === 'customer' && actor.plane === 'nexus') await markResponseMet(sql, id);
     publish('ticket.commented', t.organization_id, {
       ticket_id: id,
       org_id: t.organization_id,
@@ -292,6 +294,8 @@ export async function assignTicket(
       [t.organization_id, id, actor.id, { assignedAgentId, assignmentGroupId }],
     );
     await audit(actor, { action: 'ticket.assign', organizationId: t.organization_id, resourceType: 'ticket', resourceId: id });
+    // Picking up / assigning a ticket counts as the first response — stop the response SLA.
+    if (assignedAgentId) await markResponseMet(sql, id);
     publish('ticket.assigned', t.organization_id, { ticket_id: id, org_id: t.organization_id, agent_id: assignedAgentId, group_id: assignmentGroupId });
     return rows[0];
   });
@@ -321,6 +325,10 @@ export async function transition(actor: Principal, id: string, to: string, opts:
       await sql.query(`UPDATE sla_instances SET state='met' WHERE ticket_id=$1 AND metric='resolution' AND state NOT IN ('met','breached')`, [id]);
     }
     if (to === 'closed') sets.push('closed_at=now()');
+    // Leaving the intake states means work has started — that's the first response.
+    if ((t.status === 'new' || t.status === 'triage') && to !== 'new' && to !== 'triage') {
+      await markResponseMet(sql, id);
+    }
 
     const { rows } = await sql.query(`UPDATE tickets SET ${sets.join(', ')} WHERE id=$1 RETURNING *`, params);
 
