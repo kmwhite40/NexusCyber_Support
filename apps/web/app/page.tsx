@@ -49,10 +49,7 @@ export default function Landing() {
 
         <div className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 text-center">
           <div className="flex max-w-2xl flex-col items-center gap-7">
-            <BrandLockup size={92} tagline />
-            <span className="rounded-full border border-border/70 bg-surface/50 px-3.5 py-1 text-[11px] font-medium uppercase tracking-[0.2em] text-muted backdrop-blur-sm">
-              Government cloud
-            </span>
+            <BrandLockup size={96} tagline />
             <p className="mx-auto max-w-lg text-base leading-relaxed text-fg/65 sm:text-lg">
               ITSM, on-call response, and continuous security posture — isolated per
               customer, ready for Government clouds.
