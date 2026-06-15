@@ -50,11 +50,11 @@ export default function Landing() {
         <div className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 text-center">
           <div className="max-w-2xl space-y-6">
             <div className="flex justify-center">
-              <BrandLockup size={60} tagline />
+              <BrandLockup size={92} tagline />
             </div>
             <h1 className="font-semibold tracking-tight">
-              <span className="block text-5xl text-fg sm:text-6xl">The cyber operations</span>
-              <span className="block text-5xl font-light text-fg/55 sm:text-6xl">control plane</span>
+              <span className="block text-3xl text-fg sm:text-4xl">The cyber operations</span>
+              <span className="block text-3xl font-light text-fg/55 sm:text-4xl">control plane</span>
             </h1>
             <p className="mx-auto max-w-xl text-sm leading-relaxed text-fg/60">
               ITSM, on-call response, and continuous security posture — isolated per
