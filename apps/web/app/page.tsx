@@ -7,6 +7,7 @@ import { homePath } from '@/lib/api';
 import { GLSLHills } from '@/components/ui/glsl-hills';
 import { Navbar1 } from '@/components/ui/navbar1';
 import { Button } from '@/components/ui/primitives';
+import { BrandLockup } from '@/components/ui/brand';
 
 const PILLARS = [
   { title: 'ITSM & ITIL', body: 'Incidents, requests, change & problem — one queue.' },
@@ -48,6 +49,9 @@ export default function Landing() {
 
         <div className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 text-center">
           <div className="max-w-2xl space-y-6">
+            <div className="flex justify-center">
+              <BrandLockup size={60} tagline />
+            </div>
             <h1 className="font-semibold tracking-tight">
               <span className="block text-5xl text-fg sm:text-6xl">The cyber operations</span>
               <span className="block text-5xl font-light text-fg/55 sm:text-6xl">control plane</span>
