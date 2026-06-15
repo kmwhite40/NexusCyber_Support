@@ -2,7 +2,6 @@
 import { useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowRight } from 'lucide-react';
 import { useAuth } from '@/components/auth-context';
 import { homePath } from '@/lib/api';
 import { GLSLHills } from '@/components/ui/glsl-hills';
@@ -58,14 +57,8 @@ export default function Landing() {
               customer, ready for Commercial and Government clouds.
             </p>
             <div className="flex items-center justify-center gap-3 pt-2">
-              <Link href="/signup">
-                <Button size="lg">
-                  Get started
-                  <ArrowRight className="size-4" />
-                </Button>
-              </Link>
               <Link href="/login">
-                <Button variant="outline" size="lg">
+                <Button size="lg">
                   Sign in
                 </Button>
               </Link>
