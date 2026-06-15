@@ -22,7 +22,7 @@ const FOOTER_LINKS = [
 ];
 
 const navData = {
-  logo: { url: '/', src: '/anchor-mark.svg', alt: 'Anchor', title: 'Anchor' },
+  logo: { url: '/', src: '/anchor-mark.png', alt: 'Anchor', title: 'Anchor' },
   auth: { login: { text: 'Log in', url: '/login' } },
 };
 
@@ -48,25 +48,22 @@ export default function Landing() {
         </div>
 
         <div className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 text-center">
-          <div className="max-w-2xl space-y-6">
-            <div className="flex justify-center">
-              <BrandLockup size={92} tagline />
-            </div>
+          <div className="flex max-w-2xl flex-col items-center gap-7">
+            <BrandLockup size={92} tagline />
+            <span className="rounded-full border border-border/70 bg-surface/50 px-3.5 py-1 text-[11px] font-medium uppercase tracking-[0.2em] text-muted backdrop-blur-sm">
+              Commercial &amp; Government cloud
+            </span>
             <h1 className="font-semibold tracking-tight">
               <span className="block text-3xl text-fg sm:text-4xl">The cyber operations</span>
-              <span className="block text-3xl font-light text-fg/55 sm:text-4xl">control plane</span>
+              <span className="block text-3xl font-light text-fg/50 sm:text-4xl">control plane</span>
             </h1>
-            <p className="mx-auto max-w-xl text-sm leading-relaxed text-fg/60">
+            <p className="mx-auto max-w-lg text-sm leading-relaxed text-fg/60 sm:text-[15px]">
               ITSM, on-call response, and continuous security posture — isolated per
               customer, ready for Commercial and Government clouds.
             </p>
-            <div className="flex items-center justify-center gap-3 pt-2">
-              <Link href="/login">
-                <Button size="lg">
-                  Sign in
-                </Button>
-              </Link>
-            </div>
+            <Link href="/login" className="pt-1">
+              <Button size="lg" className="px-8">Sign in</Button>
+            </Link>
           </div>
         </div>
 
