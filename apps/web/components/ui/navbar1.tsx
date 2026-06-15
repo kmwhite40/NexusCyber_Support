@@ -48,9 +48,9 @@ interface Navbar1Props {
 const Navbar1 = ({
   logo = {
     url: '/',
-    src: '/nexus-mark.svg',
-    alt: 'Nexus',
-    title: 'Nexus',
+    src: '/anchor-mark.svg',
+    alt: 'Anchor',
+    title: 'Anchor',
   },
   menu = [
     { title: 'Home', url: '/' },

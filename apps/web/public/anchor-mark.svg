@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none" role="img" aria-label="Anchor">
+  <defs>
+    <linearGradient id="anchorGrad" x1="8" y1="8" x2="56" y2="58" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1e40af"/>
+      <stop offset="0.55" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#3b82f6"/>
+    </linearGradient>
+  </defs>
+  <g stroke="url(#anchorGrad)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <circle cx="32" cy="15" r="6.5"/>
+    <path d="M32 21.5 V46.5"/>
+    <circle cx="15" cy="27" r="4.5"/>
+    <path d="M15 31.5 C15 41.5, 22 46.5, 32 46.5"/>
+    <circle cx="49" cy="27" r="4.5"/>
+    <path d="M49 31.5 C49 41.5, 42 46.5, 32 46.5"/>
+  </g>
+</svg>

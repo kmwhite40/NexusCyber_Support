@@ -22,7 +22,7 @@ const FOOTER_LINKS = [
 ];
 
 const navData = {
-  logo: { url: '/', src: '/nexus-mark.svg', alt: 'Anchor', title: 'Anchor' },
+  logo: { url: '/', src: '/anchor-mark.svg', alt: 'Anchor', title: 'Anchor' },
   auth: { login: { text: 'Log in', url: '/login' }, signup: { text: 'Get started', url: '/signup' } },
 };
 
