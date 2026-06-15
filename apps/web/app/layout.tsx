@@ -22,7 +22,7 @@ const mono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: 'Anchor — Control Plane',
-  description: 'Enterprise ITSM, on-call, and security posture platform for Commercial and Government clouds',
+  description: 'Enterprise ITSM, on-call, and security posture platform for Government clouds',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
