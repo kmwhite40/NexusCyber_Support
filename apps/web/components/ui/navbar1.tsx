@@ -41,7 +41,7 @@ interface Navbar1Props {
   mobileExtraLinks?: { name: string; url: string }[];
   auth?: {
     login: { text: string; url: string };
-    signup: { text: string; url: string };
+    signup?: { text: string; url: string };
   };
 }
 
@@ -103,12 +103,14 @@ const Navbar1 = ({
             </div>
           </div>
           <div className="flex gap-2">
-            <Button asChild variant="outline" size="sm">
+            <Button asChild variant={auth.signup ? 'outline' : 'default'} size="sm">
               <a href={auth.login.url}>{auth.login.text}</a>
             </Button>
-            <Button asChild size="sm">
-              <a href={auth.signup.url}>{auth.signup.text}</a>
-            </Button>
+            {auth.signup && (
+              <Button asChild size="sm">
+                <a href={auth.signup.url}>{auth.signup.text}</a>
+              </Button>
+            )}
           </div>
         </nav>
 
@@ -153,12 +155,14 @@ const Navbar1 = ({
                     </div>
                   </div>
                   <div className="flex flex-col gap-3">
-                    <Button asChild variant="outline">
+                    <Button asChild variant={auth.signup ? 'outline' : 'default'}>
                       <a href={auth.login.url}>{auth.login.text}</a>
                     </Button>
-                    <Button asChild>
-                      <a href={auth.signup.url}>{auth.signup.text}</a>
-                    </Button>
+                    {auth.signup && (
+                      <Button asChild>
+                        <a href={auth.signup.url}>{auth.signup.text}</a>
+                      </Button>
+                    )}
                   </div>
                 </div>
               </SheetContent>
