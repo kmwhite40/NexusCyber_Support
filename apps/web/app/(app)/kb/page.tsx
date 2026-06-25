@@ -120,17 +120,25 @@ export default function KbPage() {
     router.push(`/tickets/new?subject=${encodeURIComponent(subject)}&description=${encodeURIComponent(description)}`);
   }
 
-  // Deep-link: /kb?page=<id> opens that article directly (e.g. from portal search / Ask Anchor).
+  const doSearch = React.useCallback(async (q: string) => {
+    if (!q.trim()) { setHits(null); return; }
+    const r = await api.get<{ data: Hit[] }>(`/kb/search?q=${encodeURIComponent(q)}`);
+    setHits(r.data);
+  }, []);
+
+  // Deep-link: /kb?page=<id> opens that article directly; /kb?q=<text> runs a search
+  // (used by cross-references between articles, since article IDs aren't stable across envs).
   React.useEffect(() => {
-    const pid = new URLSearchParams(window.location.search).get('page');
-    if (pid) openPage(pid);
-  }, [openPage]);
+    const params = new URLSearchParams(window.location.search);
+    const pid = params.get('page');
+    if (pid) { openPage(pid); return; }
+    const q = params.get('q');
+    if (q) { setQuery(q); doSearch(q); }
+  }, [openPage, doSearch]);
 
   async function runSearch(e: React.FormEvent) {
     e.preventDefault();
-    if (!query.trim()) { setHits(null); return; }
-    const r = await api.get<{ data: Hit[] }>(`/kb/search?q=${encodeURIComponent(query)}`);
-    setHits(r.data);
+    doSearch(query);
   }
 
   async function addComment() {
