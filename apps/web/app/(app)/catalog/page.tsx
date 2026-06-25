@@ -23,6 +23,16 @@ export default function CatalogPage() {
     }
   }, [me]);
 
+  // Deep-link support: /catalog?item=<key> (e.g. from the portal search) opens that
+  // item's request form directly instead of landing on the full catalog.
+  React.useEffect(() => {
+    if (!items || items.length === 0) return;
+    const key = new URLSearchParams(window.location.search).get('item');
+    if (!key) return;
+    const match = items.find((i) => i.key === key);
+    if (match) setActive(match);
+  }, [items]);
+
   const grouped = (items ?? []).reduce<Record<string, CatalogItem[]>>((acc, it) => {
     (acc[it.category] ??= []).push(it);
     return acc;

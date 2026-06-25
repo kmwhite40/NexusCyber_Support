@@ -121,7 +121,7 @@ export default function PortalPage() {
                 <div className="p-2">
                   <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted">Request something</div>
                   {filteredCatalog.slice(0, 4).map((i) => (
-                    <Link key={i.key} href="/catalog" className="flex items-center justify-between rounded-md px-2 py-1.5 hover:bg-surface-2">
+                    <Link key={i.key} href={`/catalog?item=${encodeURIComponent(i.key)}`} className="flex items-center justify-between rounded-md px-2 py-1.5 hover:bg-surface-2">
                       <span className="text-sm text-fg">{i.name}</span>
                       <span className="ml-2 shrink-0 text-[10px] text-muted">{i.category}</span>
                     </Link>
@@ -166,7 +166,7 @@ export default function PortalPage() {
                 {items.slice(0, 5).map((i) => (
                   <Link
                     key={i.key}
-                    href="/catalog"
+                    href={`/catalog?item=${encodeURIComponent(i.key)}`}
                     className="flex items-center justify-between rounded-lg border border-border bg-surface-2/40 px-3 py-2.5 transition hover:border-brand/40 hover:bg-surface-2"
                   >
                     <div>
