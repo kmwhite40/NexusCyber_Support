@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anchor Service Desk — Change Log — June 25, 2026</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+  @media print {
+    body { background: #ffffff !important; padding: 0 !important; }
+    .container { border: none !important; box-shadow: none !important; }
+    .hero, .meta, .metrics th, .metrics tr:nth-child(even) td, .callout, .callout-blue, .callout-amber { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .section-card { break-inside: avoid; }
+    h2 { break-after: avoid; }
+  }
+  body { margin: 0; padding: 24px; background: #eef2f7; font-family: 'Inter', "Segoe UI", Arial, sans-serif; color: #1f2937; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+  .container { max-width: 860px; margin: 0 auto; background: #ffffff; border: 1px solid #dbe3ee; box-shadow: 0 4px 24px rgba(15, 23, 42, 0.08); }
+  .rainbow-bar { height: 4px; background: linear-gradient(90deg, #b45309, #be185d, #2563eb, #06b6d4, #10b981); }
+  .hero { background: linear-gradient(135deg, #0a1f44 0%, #1d3557 55%, #047857 100%); color: #ffffff; padding: 36px 40px 30px; }
+  .hero h1 { margin: 0 0 6px; font-size: 32px; font-weight: 700; line-height: 1.15; letter-spacing: -0.3px; }
+  .hero .subtitle { margin: 0 0 4px; color: #94a3b8; font-size: 15px; font-weight: 500; }
+  .hero .date-range { margin: 0; color: #cbd5e1; font-size: 17px; font-weight: 400; }
+  .meta { background: #0a1f44; color: #cbd5e1; padding: 12px 40px; border-bottom: 4px solid #047857; font-size: 13px; display: flex; flex-wrap: wrap; gap: 6px 24px; }
+  .content { padding: 32px 40px 36px; }
+  h2 { margin: 32px 0 14px; color: #0a1f44; font-size: 22px; font-weight: 700; border-bottom: 2px solid #047857; padding-bottom: 8px; letter-spacing: -0.2px; }
+  h2:first-child { margin-top: 0; }
+  h3 { margin: 20px 0 8px; color: #1d3557; font-size: 16px; font-weight: 600; }
+  p { margin: 0 0 12px; font-size: 14.5px; }
+  .callout { background: #f0fdf4; border: 1px solid #86efac; border-left: 5px solid #16a34a; padding: 16px 18px; margin: 14px 0 18px; font-size: 14.5px; line-height: 1.55; }
+  .callout-blue { background: #eff6ff; border: 1px solid #93c5fd; border-left: 5px solid #2563eb; padding: 16px 18px; margin: 14px 0 18px; font-size: 14.5px; line-height: 1.55; }
+  .callout-amber { background: #fffbeb; border: 1px solid #fcd34d; border-left: 5px solid #d97706; padding: 16px 18px; margin: 14px 0 18px; font-size: 14.5px; line-height: 1.55; }
+  .metrics { width: 100%; border-collapse: collapse; margin: 16px 0 24px; font-size: 14px; }
+  .metrics th { background: #0a1f44; color: #ffffff; text-align: left; padding: 10px 14px; font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+  .metrics td { padding: 10px 14px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+  .metrics tr:nth-child(even) td { background: #f8fafc; }
+  ul, ol { padding-left: 22px; margin: 8px 0 16px; }
+  li { margin-bottom: 6px; font-size: 14.5px; }
+  strong { font-weight: 600; }
+  code { background: #f1f5f9; padding: 2px 6px; border-radius: 3px; font-size: 13px; font-family: "SF Mono", "Fira Code", Consolas, monospace; color: #334155; }
+  .section-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 18px 20px; margin: 14px 0 18px; }
+  .section-card h3 { margin-top: 0; color: #0a1f44; }
+  .badge { display: inline-block; background: #047857; color: #ffffff; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; text-transform: uppercase; letter-spacing: 0.3px; vertical-align: middle; margin-left: 8px; }
+  .badge-fix { background: #dc2626; }
+  .badge-new { background: #2563eb; }
+  .badge-major { background: #be185d; }
+  .divider { border: none; border-top: 1px solid #e5e7eb; margin: 28px 0; }
+  .footer { background: #f8fafc; border-top: 1px solid #dbe3ee; padding: 20px 40px 24px; font-size: 12px; color: #64748b; line-height: 1.55; }
+  .footer .brand { color: #0a1f44; font-weight: 600; }
+  .stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0 24px; }
+  .stat-cell { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px; text-align: center; }
+  .stat-num { font-size: 22px; font-weight: 700; color: #0a1f44; line-height: 1; }
+  .stat-lbl { font-size: 10px; color: #64748b; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.4px; font-weight: 600; }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="rainbow-bar"></div>
+    <div class="hero">
+      <p class="subtitle">Anchor by SBS &mdash; Service Desk / ITSM Platform</p>
+      <h1>Change Log &amp; Release Notes</h1>
+      <p class="date-range">Shipped: June 25, 2026</p>
+    </div>
+    <div class="meta">
+      <span><strong>Date:</strong> June 25, 2026</span>
+      <span><strong>To:</strong> Product, Engineering, &amp; Service-Desk Leadership</span>
+      <span><strong>From:</strong> Office of the CTO</span>
+      <span><strong>Subject:</strong> ServiceNow-parity Phases 1&ndash;4 &middot; KB library + audit &middot; Virtual agent &middot; Support-experience polish</span>
+    </div>
+    <div class="content">
+
+      <h2>Executive Summary</h2>
+      <p>A single, high-velocity day took Anchor through the four planned <strong>ServiceNow-parity phases</strong> and a knowledge-base build-out, all shipped to the government cloud at <code>anchor.azurewebsites.us</code>. Headlines: a <strong>Platform User Administration</strong> surface with delegated, org-scoped admin; <strong>ITSM depth</strong> (change calendar + CMDB attributes/relationships); a <strong>flow designer</strong> and <strong>self-service report builder</strong>; a retrieval-grounded <strong>virtual agent</strong> (&ldquo;Ask Anchor&rdquo;); a <strong>67-article knowledge base</strong> with an audit pass (dedupe, security URLs/contact, tag hygiene, FAQs, known-issues log); and a support-experience layer (per-login welcome dialog, a site-wide hotline + CUI/FedRAMP banner, KB deflection &amp; deep-linking). All API changes apply in-boundary via migrate-on-boot; the full API test suite (218 passing) stayed green throughout.</p>
+
+      <div class="stat-row">
+        <div class="stat-cell"><div class="stat-num">4</div><div class="stat-lbl">Parity phases shipped</div></div>
+        <div class="stat-cell"><div class="stat-num">8</div><div class="stat-lbl">DB migrations (0041&ndash;0048)</div></div>
+        <div class="stat-cell"><div class="stat-num">67</div><div class="stat-lbl">KB articles (0 dupes)</div></div>
+        <div class="stat-cell"><div class="stat-num">218</div><div class="stat-lbl">API tests passing</div></div>
+      </div>
+
+      <h2>Headline Capabilities Shipped</h2>
+
+      <div class="section-card">
+        <h3>1. Platform User Administration <span class="badge badge-major">MAJOR</span> <span class="badge badge-new">NEW</span></h3>
+        <p>A new <code>/team</code> page (gated by <code>admin.users.manage</code>) to administer platform (nexus) staff: roles, status, local password, and <strong>organization scope</strong>.</p>
+        <ul>
+          <li><strong>Scope a delegated admin to specific orgs or all orgs</strong> &mdash; &ldquo;all orgs&rdquo; is a new grant (an org-NULL nexus role assignment + an <code>app.all_orgs</code> RLS flag) that gives cross-org visibility <em>without</em> full platform-superuser.</li>
+          <li><strong>Guardrails</strong> &mdash; only a SuperAdmin may grant all-orgs or assign the SuperAdmin role; delegated admins act only within their own scope. Every change is audit-logged; <code>/me</code> now exposes the caller&rsquo;s scope.</li>
+          <li><strong>Break-glass</strong> &mdash; three dedicated local SuperAdmin accounts for sign-in where SSO/dev-login is unavailable.</li>
+        </ul>
+      </div>
+
+      <div class="section-card">
+        <h3>2. ITSM Depth &mdash; Change Calendar + CMDB <span class="badge badge-new">NEW</span></h3>
+        <ul>
+          <li><strong>Change calendar</strong> &mdash; a month-grid view of scheduled &amp; implementing changes by window, risk-colored, with click-through to the change.</li>
+          <li><strong>CMDB depth</strong> &mdash; configuration items gained extensible <strong>attributes</strong> (JSONB), owner/support-group, and a real <code>ci_relationships</code> graph (depends_on / runs_on / hosts / connects_to / member_of / uses) with RLS isolation and a CI detail editor.</li>
+          <li><strong>Problem management</strong> was reviewed and confirmed already complete (RCA, known-error, workaround, incident clustering) &mdash; no rebuild needed.</li>
+        </ul>
+      </div>
+
+      <div class="section-card">
+        <h3>3. Flow Designer + Report Builder <span class="badge badge-new">NEW</span></h3>
+        <ul>
+          <li><strong>Flow / workflow designer</strong> &mdash; the automation builder now composes <strong>multi-condition</strong> (ALL/ANY) groups and an <strong>ordered list of actions</strong> with reordering and a live flow read-back, persisted as the existing rule JSON.</li>
+          <li><strong>Self-service report builder</strong> &mdash; a new Analytics tab to pick a dimension + measure + filters over ticket data (safelisted to prevent injection), rendered as a bar table with CSV export.</li>
+        </ul>
+      </div>
+
+      <div class="section-card">
+        <h3>4. Virtual Agent &mdash; &ldquo;Ask Anchor&rdquo; <span class="badge badge-new">NEW</span></h3>
+        <p>A retrieval-grounded self-service assistant on the customer portal: a natural-language question returns the best knowledge-base answer, related articles, and matching catalog actions, and deflects to a pre-filled ticket when nothing fits.</p>
+        <ul>
+          <li><strong>In-boundary by design</strong> &mdash; KB full-text + catalog only, <em>no</em> external LLM (the gov enclave disables AI egress). A synthesis step can layer on if/when an AI capability is enabled.</li>
+        </ul>
+      </div>
+
+      <div class="section-card">
+        <h3>5. Knowledge Base &mdash; Library, Audit &amp; Deflection <span class="badge badge-new">NEW</span> <span class="badge badge-fix">FIX</span></h3>
+        <ul>
+          <li><strong>Self-service library</strong> &mdash; added global Help Desk articles: account/MFA/Intune/email/onboarding how-tos plus ~15 typical-problem troubleshooting guides (slow PC, Wi-Fi, printer, Outlook, Teams, OneDrive, display, audio, disk, shared folders, browser, crashes, access denied, Bluetooth).</li>
+          <li><strong>Audit fixes</strong> &mdash; removed 3 cross-space duplicate articles (now 67 pages, 0 duplicates); enriched Security articles with real endpoints + support portal / mailbox / after-hours hotline; tag hygiene (Azure Government <code>govcloud&rarr;azure-gov</code>; M365 <code>govcloud&rarr;gcc-high</code>; AWS GovCloud keeps <code>govcloud</code>).</li>
+          <li><strong>New content types</strong> &mdash; an <strong>FAQ</strong> space, a <strong>Known Issues</strong> log, and additional onboarding (employee &amp; manager checklists).</li>
+          <li><strong>&ldquo;Did this resolve your issue?&rdquo;</strong> &mdash; each article now prompts the reader: <em>Yes</em> records a deflection and thanks them; <em>No</em> opens a ticket <strong>pre-populated</strong> with the article reference. Backed by <code>kb_deflections</code> analytics.</li>
+          <li><strong>Direct-to-article routing</strong> &mdash; <code>/kb?page=&lt;id&gt;</code> deep-linking; portal search and Ask Anchor now open the exact article instead of the generic KB page.</li>
+        </ul>
+      </div>
+
+      <div class="section-card">
+        <h3>6. Support Experience &amp; Service Catalog <span class="badge badge-new">NEW</span></h3>
+        <ul>
+          <li><strong>Welcome dialog</strong> &mdash; a per-login modal (admins and all users) with support hours, the SLA priority matrix, and the after-hours hotline; resets on logout, doesn&rsquo;t nag on refresh.</li>
+          <li><strong>Site-wide banner</strong> &mdash; a red/white rolling banner on every page that rotates the on-call hotline notice and a <strong>CUI / FedRAMP data-handling warning</strong> (do not upload sensitive logs/credentials as ticket attachments).</li>
+          <li><strong>Catalog</strong> &mdash; new <strong>User Device Intune Enrollment</strong> item (Company Portal + Outlook Classic for GovCloud); portal search results deep-link straight to a catalog item&rsquo;s request form. Landing page logo restyled (stacked, centered).</li>
+          <li><strong>Hotline number</strong> standardized to <strong>(800) 265-6446</strong> across the app and help-desk documents.</li>
+        </ul>
+      </div>
+
+      <h2>Change Log (by area)</h2>
+      <table class="metrics">
+        <tr><th>Area</th><th>Change</th><th>Type</th></tr>
+        <tr><td>Identity / RBAC</td><td>Platform Users page; org-scope (specific/all); all-orgs RLS grant; break-glass admins; <code>/me</code> scope</td><td>Major / New</td></tr>
+        <tr><td>Change mgmt</td><td>Month-grid change calendar (scheduled + implementing)</td><td>New</td></tr>
+        <tr><td>CMDB</td><td>CI attributes, owner/support-group, <code>ci_relationships</code> + detail editor</td><td>New</td></tr>
+        <tr><td>Automation</td><td>Multi-condition / multi-action flow designer with read-back</td><td>New</td></tr>
+        <tr><td>Analytics</td><td>Self-service report builder (dimension/measure/filter, CSV)</td><td>New</td></tr>
+        <tr><td>Self-service</td><td>&ldquo;Ask Anchor&rdquo; virtual agent (KB + catalog, deflect-to-ticket)</td><td>New</td></tr>
+        <tr><td>Knowledge base</td><td>67-article library; dedupe; security URLs/contact; tag hygiene; FAQ + Known Issues; article deflection; deep-linking</td><td>New / Fix</td></tr>
+        <tr><td>Experience</td><td>Per-login welcome dialog; hotline + CUI banner; landing logo; hotline number</td><td>New</td></tr>
+        <tr><td>Catalog</td><td>User Device Intune Enrollment item; portal search deep-link</td><td>New</td></tr>
+      </table>
+
+      <div class="callout">
+        <strong>Live &amp; verified on prod:</strong> break-glass admin sign-in returns SuperAdmin + all-orgs scope; report builder and assist endpoints return data; CMDB attributes + a relationship round-tripped end-to-end; KB shows 67 pages with zero cross-space duplicates; article feedback records Yes/No; <code>/kb?page=&lt;id&gt;</code> resolves a real article. All eight migrations (0041&ndash;0048) applied in-boundary on boot.
+      </div>
+
+      <h2>What&rsquo;s Next</h2>
+      <ul>
+        <li><strong>Search tuning</strong> for the virtual agent &mdash; fuzzier matching (e.g. &ldquo;wifi&rdquo; vs &ldquo;Wi-Fi&rdquo;, URL-host tokens) so retrieval is more forgiving.</li>
+        <li><strong>Report builder &rarr; dashboards</strong> &mdash; save a report definition as a pinned dashboard widget.</li>
+        <li><strong>CMDB</strong> &mdash; relationship graph visualization and optional import (CSV / Graph / Intune).</li>
+        <li><strong>Problem &rarr; change linkage</strong> to round out the change/problem workflow.</li>
+        <li><strong>Deflection analytics</strong> surfaced in Analytics (article resolve-rate from <code>kb_deflections</code>).</li>
+      </ul>
+
+      <hr class="divider" />
+      <p style="font-size: 12.5px; color: #64748b;">Anchor runs entirely within the government-cloud boundary. Live at <a href="https://anchor.azurewebsites.us">anchor.azurewebsites.us</a>; API in the gov enclave with migrate-on-boot. A companion Carbon platform newsletter covers the federal-compliance workstream.</p>
+
+    </div>
+    <div class="footer">
+      <p><span class="brand">Anchor by SBS</span> &middot; Service-Desk / ITSM Platform for Government clouds</p>
+      <p>Microsoft 365 Gov (GCC / GCC High / DoD) &middot; Azure Government &middot; Operated inside the FedRAMP boundary</p>
+      <p>Generated June 25, 2026 &middot; Change log &mdash; ServiceNow-parity Phases 1&ndash;4, KB build-out &amp; experience polish</p>
+    </div>
+  </div>
+</body>
+</html>
