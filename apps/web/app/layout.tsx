@@ -2,6 +2,8 @@ import type { Metadata } from 'next';
 import { Public_Sans, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import { AuthProvider } from '@/components/auth-context';
+import { WelcomeDialog } from '@/components/welcome-dialog';
+import { HotlineBanner } from '@/components/hotline-banner';
 
 // Public Sans is the official U.S. government typeface (USWDS) — a deliberate,
 // context-specific choice for a gov control plane. JetBrains Mono carries machine
@@ -39,7 +41,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body className="font-sans antialiased">
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>
+          <HotlineBanner />
+          {children}
+          <WelcomeDialog />
+        </AuthProvider>
       </body>
     </html>
   );
