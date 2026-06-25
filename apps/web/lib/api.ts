@@ -400,12 +400,23 @@ export const auth = {
 };
 
 export interface ServiceRow { id: string; organization_id: string; name: string; kind: string; ticket_count: number; }
-export interface ConfigurationItem { id: string; organization_id: string; ci_class: string; name: string; criticality: number; status: string; ticket_count: number; }
+export interface ConfigurationItem { id: string; organization_id: string; ci_class: string; name: string; criticality: number; status: string; ticket_count: number; owner?: string | null; support_group?: string | null; attributes?: Record<string, unknown>; }
+export const CI_REL_TYPES = ['depends_on', 'runs_on', 'hosts', 'connects_to', 'member_of', 'uses'] as const;
+export type CiRelType = (typeof CI_REL_TYPES)[number];
+export interface CiRelationship { id: string; rel_type: CiRelType; ci_id: string; name: string; ci_class: string; }
+export interface ConfigurationItemDetail extends ConfigurationItem {
+  attributes: Record<string, unknown>;
+  relationships: { outgoing: CiRelationship[]; incoming: CiRelationship[] };
+}
 export const servicesApi = {
   list: () => api.get<{ data: ServiceRow[] }>('/services').then((r) => r.data),
   create: (b: { name: string; kind?: string; organizationId?: string }) => api.post<ServiceRow>('/services', b),
   cis: (q = '') => api.get<{ data: ConfigurationItem[] }>(`/configuration-items${q}`).then((r) => r.data),
-  createCi: (b: { name: string; ciClass: string; criticality?: string | number; status?: string; organizationId?: string }) => api.post<ConfigurationItem>('/configuration-items', b),
+  createCi: (b: { name: string; ciClass: string; criticality?: string | number; status?: string; owner?: string; supportGroup?: string; attributes?: Record<string, unknown>; organizationId?: string }) => api.post<ConfigurationItem>('/configuration-items', b),
+  ci: (id: string) => api.get<ConfigurationItemDetail>(`/configuration-items/${id}`),
+  updateCi: (id: string, b: { criticality?: string | number; status?: string; owner?: string | null; supportGroup?: string | null; attributes?: Record<string, unknown> }) => api.patch<ConfigurationItem>(`/configuration-items/${id}`, b),
+  addRel: (b: { sourceId: string; targetId: string; relType: CiRelType }) => api.post<CiRelationship>('/ci-relationships', b),
+  removeRel: (id: string) => api.del<{ deleted: boolean }>(`/ci-relationships/${id}`),
 };
 
 export interface OrgDetail { id: string; name: string; cloud: string; data_boundary?: string; status?: string; entra_tenant_id?: string | null; user_count: number; open_tickets: number; }

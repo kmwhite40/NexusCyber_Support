@@ -1222,9 +1222,54 @@ export async function registerRoutes(app: FastifyInstance) {
 
   app.post('/api/v1/configuration-items', async (req, reply) => {
     const p = await requirePrincipal(req);
-    const body = z.object({ name: z.string().min(1), ciClass: z.string().min(1), criticality: z.union([z.string(), z.number()]).optional(), status: z.string().optional(), organizationId: z.string().uuid().optional() }).parse(req.body);
+    const body = z.object({
+      name: z.string().min(1),
+      ciClass: z.string().min(1),
+      criticality: z.union([z.string(), z.number()]).optional(),
+      status: z.string().optional(),
+      owner: z.string().optional(),
+      supportGroup: z.string().optional(),
+      attributes: z.record(z.unknown()).optional(),
+      organizationId: z.string().uuid().optional(),
+    }).parse(req.body);
     reply.code(201);
     return services.createConfigurationItem(p, body);
+  });
+
+  app.get('/api/v1/configuration-items/:id', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return services.getConfigurationItem(p, id);
+  });
+
+  app.patch('/api/v1/configuration-items/:id', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({
+      criticality: z.union([z.string(), z.number()]).optional(),
+      status: z.string().optional(),
+      owner: z.string().nullable().optional(),
+      supportGroup: z.string().nullable().optional(),
+      attributes: z.record(z.unknown()).optional(),
+    }).parse(req.body);
+    return services.updateConfigurationItem(p, id, body);
+  });
+
+  app.post('/api/v1/ci-relationships', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const body = z.object({
+      sourceId: z.string().uuid(),
+      targetId: z.string().uuid(),
+      relType: z.enum(services.CI_REL_TYPES),
+    }).parse(req.body);
+    reply.code(201);
+    return services.addCiRelationship(p, body);
+  });
+
+  app.delete('/api/v1/ci-relationships/:id', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return services.removeCiRelationship(p, id);
   });
 
   // ---------------- Notification delivery log ----------------
