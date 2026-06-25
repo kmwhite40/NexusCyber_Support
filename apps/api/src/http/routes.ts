@@ -9,6 +9,7 @@ import { withOrgContext, withSystemContext } from '../db/pool.js';
 import { orgContextFor } from '../auth/principal.js';
 import * as accounts from '../modules/accounts.js';
 import * as platformUsers from '../modules/platform-users.js';
+import * as assist from '../modules/assist.js';
 import * as tickets from '../modules/tickets.js';
 import * as posture from '../modules/posture.js';
 import * as analytics from '../modules/analytics.js';
@@ -360,6 +361,13 @@ export async function registerRoutes(app: FastifyInstance) {
       .parse(req.params);
     authorize(p, 'customer.admin.manage_users', { organizationId: orgId });
     return accounts.removeOrgUserAdmin(p, orgId, userId);
+  });
+
+  // ---------------- Virtual agent / assisted intake ----------------
+  app.get('/api/v1/assist', async (req) => {
+    const p = await requirePrincipal(req);
+    const { q } = z.object({ q: z.string() }).parse(req.query);
+    return assist.assist(p, q);
   });
 
   // ---------------- Platform user administration (nexus staff) ----------------
@@ -721,6 +729,26 @@ export async function registerRoutes(app: FastifyInstance) {
     const q = z.object({ organizationId: z.string().uuid().optional() }).parse(req.query);
     const orgId = p.plane === 'customer' ? p.organizationId ?? undefined : q.organizationId;
     return analytics.overview(p, orgId);
+  });
+
+  // Self-service report builder: safelisted dimension/measure aggregate over tickets.
+  app.get('/api/v1/analytics/report/fields', async (req) => {
+    await requirePrincipal(req);
+    return analytics.REPORT_FIELDS;
+  });
+  app.get('/api/v1/analytics/report', async (req) => {
+    const p = await requirePrincipal(req);
+    const q = z.object({
+      dimension: z.string(),
+      measure: z.string(),
+      days: z.coerce.number().optional(),
+      status: z.string().optional(),
+      priority: z.string().optional(),
+      type: z.string().optional(),
+      organizationId: z.string().uuid().optional(),
+    }).parse(req.query);
+    const organizationId = p.plane === 'customer' ? p.organizationId ?? undefined : q.organizationId;
+    return analytics.runReport(p, { ...q, organizationId });
   });
 
   // ---------------- On-call / paging ----------------

@@ -354,6 +354,24 @@ export const analytics = {
     api.get<PostureCompliance>(`/analytics/posture-compliance${organizationId ? `?organizationId=${organizationId}` : ''}`),
   opsSummary: (organizationId?: string) =>
     api.get<OpsSummary>(`/analytics/ops-summary${organizationId ? `?organizationId=${organizationId}` : ''}`),
+  reportFields: () => api.get<{ dimensions: string[]; measures: string[] }>('/analytics/report/fields'),
+  report: (q: { dimension: string; measure: string; days?: number; status?: string; priority?: string; type?: string }) => {
+    const params = new URLSearchParams();
+    Object.entries(q).forEach(([k, v]) => { if (v !== undefined && v !== '') params.set(k, String(v)); });
+    return api.get<ReportResult>(`/analytics/report?${params.toString()}`);
+  },
+};
+export interface ReportResult { dimension: string; measure: string; days: number; rows: Array<{ label: string; value: number }>; }
+
+export interface AssistResult {
+  query: string;
+  answer: { id: string; title: string; snippet: string } | null;
+  articles: Array<{ id: string; title: string; snippet: string }>;
+  services: Array<{ key: string; name: string; category: string }>;
+  deflect: boolean;
+}
+export const assistApi = {
+  ask: (q: string) => api.get<AssistResult>(`/assist?q=${encodeURIComponent(q)}`),
 };
 
 export interface AutomationRule {

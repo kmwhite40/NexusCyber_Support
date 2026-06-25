@@ -5,7 +5,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { api, catalog, type Ticket, type CatalogItem, ApiError } from '@/lib/api';
+import { api, catalog, assistApi, type Ticket, type CatalogItem, type AssistResult, ApiError } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
 import { Card, CardBody, Button, Input, Textarea, Select, Field, Badge } from '@/components/ui/primitives';
 import { StatusBadge, PriorityBadge } from '@/components/ui/badges';
@@ -139,6 +139,9 @@ export default function PortalPage() {
         </div>
       </div>
 
+      {/* Ask Anchor — virtual agent (KB-grounded self-service) */}
+      <AskAnchor />
+
       {/* Featured services showcase */}
       <section>
         <div className="mb-2 flex items-center justify-between">
@@ -217,6 +220,80 @@ export default function PortalPage() {
         )}
       </div>
     </div>
+  );
+}
+
+function AskAnchor() {
+  const [q, setQ] = React.useState('');
+  const [asked, setAsked] = React.useState('');
+  const [res, setRes] = React.useState<AssistResult | null>(null);
+  const [busy, setBusy] = React.useState(false);
+
+  async function ask(e: React.FormEvent) {
+    e.preventDefault();
+    const query = q.trim();
+    if (!query) return;
+    setBusy(true); setAsked(query); setRes(null);
+    try { setRes(await assistApi.ask(query)); } catch { setRes(null); } finally { setBusy(false); }
+  }
+
+  return (
+    <Card>
+      <CardBody>
+        <div className="mb-1 flex items-center gap-2">
+          <h2 className="text-sm font-semibold text-fg">Ask Anchor</h2>
+          <Badge tone="brand">self-service</Badge>
+        </div>
+        <p className="mb-3 text-xs text-muted">Describe your issue in your own words — we&apos;ll surface the best answer and the right request to file.</p>
+        <form onSubmit={ask} className="flex items-center gap-2">
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="e.g. how do I reset my password in GovCloud?" className="h-10" />
+          <Button type="submit" disabled={busy || !q.trim()}>{busy ? 'Asking…' : 'Ask'}</Button>
+        </form>
+
+        {res && (
+          <div className="mt-4 space-y-3">
+            {res.answer ? (
+              <Link href="/kb" className="block rounded-lg border border-brand/40 bg-brand/5 p-3 hover:bg-brand/10">
+                <div className="text-sm font-semibold text-fg">{res.answer.title}</div>
+                {res.answer.snippet && <div className="mt-1 text-xs text-muted [&_b]:font-medium [&_b]:text-brand" dangerouslySetInnerHTML={{ __html: res.answer.snippet }} />}
+                <div className="mt-1 text-[11px] text-brand">Open in knowledge base →</div>
+              </Link>
+            ) : (
+              <p className="text-xs text-muted">No knowledge-base article matched “{asked}”.</p>
+            )}
+
+            {res.articles.length > 1 && (
+              <div>
+                <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted">Related articles</div>
+                <div className="space-y-1">
+                  {res.articles.slice(1, 4).map((a) => (
+                    <Link key={a.id} href="/kb" className="block rounded-md px-2 py-1 text-sm text-fg hover:bg-surface-2">{a.title}</Link>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {res.services.length > 0 && (
+              <div>
+                <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted">Suggested requests</div>
+                <div className="flex flex-wrap gap-2">
+                  {res.services.map((s) => (
+                    <Link key={s.key} href={`/catalog?item=${encodeURIComponent(s.key)}`} className="rounded-md border border-border bg-surface-2/40 px-2.5 py-1 text-xs text-fg hover:border-brand/40 hover:bg-surface-2">
+                      {s.name} <span className="text-muted">· {s.category}</span>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center gap-3 border-t border-border pt-3 text-xs">
+              <span className="text-muted">{res.deflect ? 'Didn’t find an answer?' : 'Still need help?'}</span>
+              <Link href="/tickets/new" className="font-medium text-brand hover:underline">Create a request →</Link>
+            </div>
+          </div>
+        )}
+      </CardBody>
+    </Card>
   );
 }
 

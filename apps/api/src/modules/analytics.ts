@@ -206,6 +206,77 @@ export async function overview(actor: Principal, orgId?: string) {
  * RLS-scoped via withOrgContext; `orgId` narrows to one customer (agents only).
  * `days` is clamped server-side and inlined into generate_series (safe integer).
  */
+// ---------- Self-service report builder ----------
+// Safelisted dimensions/measures so an arbitrary client request can never inject SQL.
+const REPORT_DIMENSIONS: Record<string, string> = {
+  status: 't.status',
+  priority: 't.priority',
+  type: 't.type',
+  channel: 't.source_channel',
+  category: "coalesce(nullif(t.category, ''), '(none)')",
+  organization: 'o.name',
+  month: "to_char(date_trunc('month', t.created_at), 'YYYY-MM')",
+  week: "to_char(date_trunc('week', t.created_at), 'YYYY-MM-DD')",
+  day: "to_char(date_trunc('day', t.created_at), 'YYYY-MM-DD')",
+};
+const REPORT_MEASURES: Record<string, string> = {
+  count: 'count(*)::int',
+  open: "count(*) FILTER (WHERE t.status NOT IN ('resolved','closed'))::int",
+  avg_resolution_days:
+    "coalesce(round(avg(EXTRACT(EPOCH FROM (t.resolved_at - t.created_at))/86400.0) FILTER (WHERE t.resolved_at IS NOT NULL), 2), 0)::float",
+  avg_csat: "coalesce(round(avg(t.satisfaction_score) FILTER (WHERE t.satisfaction_score IS NOT NULL), 2), 0)::float",
+};
+export const REPORT_FIELDS = {
+  dimensions: Object.keys(REPORT_DIMENSIONS),
+  measures: Object.keys(REPORT_MEASURES),
+};
+
+export interface ReportInput {
+  dimension: string;
+  measure: string;
+  days?: number;
+  status?: string;
+  priority?: string;
+  type?: string;
+  organizationId?: string;
+}
+
+export async function runReport(actor: Principal, input: ReportInput) {
+  if (!can(actor, 'report.read.operational') && !can(actor, 'report.read.customer')) {
+    throw Errors.forbidden('missing reporting permission');
+  }
+  const dimExpr = REPORT_DIMENSIONS[input.dimension];
+  const measExpr = REPORT_MEASURES[input.measure];
+  if (!dimExpr) throw Errors.badRequest(`unknown dimension ${input.dimension}`);
+  if (!measExpr) throw Errors.badRequest(`unknown measure ${input.measure}`);
+  const days = Math.min(Math.max(Math.floor(Number(input.days) || 90), 1), 730);
+
+  return withOrgContext(orgContextFor(actor), async (sql) => {
+    const params: unknown[] = [];
+    const where: string[] = [`t.created_at >= now() - ($${params.push(days)} || ' days')::interval`];
+    if (input.status) where.push(`t.status = $${params.push(input.status)}`);
+    if (input.priority) where.push(`t.priority = $${params.push(input.priority)}`);
+    if (input.type) where.push(`t.type = $${params.push(input.type)}`);
+    if (input.organizationId) where.push(`t.organization_id = $${params.push(input.organizationId)}`);
+    const join = input.dimension === 'organization' ? 'JOIN organizations o ON o.id = t.organization_id' : '';
+    const { rows } = await sql.query(
+      `SELECT ${dimExpr} AS label, ${measExpr} AS value
+         FROM tickets t ${join}
+        WHERE ${where.join(' AND ')}
+        GROUP BY 1
+        ORDER BY value DESC NULLS LAST
+        LIMIT 100`,
+      params,
+    );
+    return {
+      dimension: input.dimension,
+      measure: input.measure,
+      days,
+      rows: rows.map((r) => ({ label: r.label == null ? '(none)' : String(r.label), value: Number(r.value) })),
+    };
+  });
+}
+
 export async function operationalKpis(actor: Principal, orgId?: string, days = 30) {
   if (!can(actor, 'report.read.operational') && !can(actor, 'report.read.customer')) {
     throw Errors.forbidden('missing reporting permission');

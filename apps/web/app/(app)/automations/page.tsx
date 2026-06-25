@@ -10,13 +10,22 @@ import { DataTable, EmptyState, Skeleton } from '@/components/ui/data';
 
 const EVENTS = ['ticket.created', 'ticket.status_changed', 'ticket.priority_changed', 'sla.warning', 'sla.breached', 'posture.finding_created'];
 const OPS = ['eq', 'neq', 'in', 'gte', 'lte', 'contains', 'exists'];
-const ACTIONS = [
+const ACTIONS: Array<{ type: string; label: string; field: string | null; gated?: boolean }> = [
   { type: 'add_internal_note', label: 'Add internal note', field: 'text' },
   { type: 'add_tag', label: 'Add tag', field: 'tag' },
   { type: 'escalate_ticket', label: 'Escalate ticket', field: null },
   { type: 'page_oncall', label: 'Page on-call', field: null },
-  { type: 'notify_user', label: 'Notify user (gated)', field: 'text' },
+  { type: 'create_posture_finding', label: 'Create posture finding', field: null },
+  { type: 'notify_teams_channel', label: 'Notify Teams channel', field: 'channel' },
+  { type: 'notify_user', label: 'Notify user', field: 'text', gated: true },
+  { type: 'change_status', label: 'Change status', field: 'status', gated: true },
+  { type: 'add_comment', label: 'Add public comment', field: 'text', gated: true },
 ];
+function parseVal(v: string, op: string): unknown {
+  if (op === 'in') return v.split(',').map((s) => s.trim());
+  if (v === '' || isNaN(Number(v))) return v;
+  return Number(v);
+}
 
 const stateTone = (s: string) => (s === 'published' ? 'success' : s === 'disabled' ? 'neutral' : s === 'testing' ? 'warning' : 'brand');
 
@@ -103,29 +112,47 @@ export default function AutomationsPage() {
   );
 }
 
+type CondRow = { field: string; op: string; value: string };
+type ActRow = { type: string; param: string };
+
 function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [name, setName] = React.useState('');
   const [event, setEvent] = React.useState(EVENTS[0]);
-  const [field, setField] = React.useState('priority');
-  const [op, setOp] = React.useState('eq');
-  const [value, setValue] = React.useState('P1');
-  const [actionType, setActionType] = React.useState(ACTIONS[0].type);
-  const [actionValue, setActionValue] = React.useState('Auto: high-priority event — review.');
+  const [match, setMatch] = React.useState<'all' | 'any'>('all');
+  const [conds, setConds] = React.useState<CondRow[]>([{ field: 'priority', op: 'eq', value: 'P1' }]);
+  const [acts, setActs] = React.useState<ActRow[]>([{ type: 'add_tag', param: 'auto' }]);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
-  const actionDef = ACTIONS.find((a) => a.type === actionType)!;
+  const setCond = (i: number, patch: Partial<CondRow>) => setConds((c) => c.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const setAct = (i: number, patch: Partial<ActRow>) => setActs((a) => a.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const moveAct = (i: number, dir: -1 | 1) => setActs((a) => {
+    const j = i + dir;
+    if (j < 0 || j >= a.length) return a;
+    const next = [...a];
+    [next[i], next[j]] = [next[j], next[i]];
+    return next;
+  });
 
   function buildDefinition(): AutomationRule['definition'] {
-    const parsed = op === 'in' ? value.split(',').map((s) => s.trim()) : isNaN(Number(value)) || value === '' ? value : Number(value);
-    const conditions = field.trim() ? { all: [{ field: field.trim(), op, ...(op === 'exists' ? {} : { value: parsed }) }] } : undefined;
-    const action: { type: string; [k: string]: unknown } = { type: actionType };
-    if (actionDef.field) action[actionDef.field] = actionValue;
-    return { trigger: { event }, conditions, actions: [action] };
+    const rows = conds.filter((c) => c.field.trim()).map((c) => ({
+      field: c.field.trim(),
+      op: c.op as 'eq',
+      ...(c.op === 'exists' ? {} : { value: parseVal(c.value, c.op) }),
+    }));
+    const conditions = rows.length ? { [match]: rows } : undefined;
+    const actions = acts.map((a) => {
+      const def = ACTIONS.find((d) => d.type === a.type)!;
+      const obj: { type: string; [k: string]: unknown } = { type: a.type };
+      if (def.field && a.param.trim()) obj[def.field] = a.param;
+      return obj;
+    });
+    return { trigger: { event }, conditions, actions };
   }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (acts.length === 0) { setError('Add at least one action'); return; }
     setBusy(true);
     setError(null);
     try {
@@ -138,32 +165,86 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
     }
   }
 
+  const fieldLabel = (t: string) => {
+    const f = ACTIONS.find((a) => a.type === t)?.field;
+    return f === 'text' ? 'text' : f === 'tag' ? 'tag' : f === 'status' ? 'status' : f === 'channel' ? 'channel' : null;
+  };
+
   return (
-    <Modal title="New automation rule" onClose={onClose}>
-      <form onSubmit={submit}>
-        <Field label="Name"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Tag & note P1 incidents" required minLength={3} /></Field>
-        <Field label="When this event happens">
+    <Modal title="New automation flow" onClose={onClose} wide>
+      <form onSubmit={submit} className="space-y-4">
+        <Field label="Name"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Tag & escalate P1 incidents" required minLength={3} /></Field>
+
+        {/* TRIGGER */}
+        <div className="rounded-md border border-border p-3">
+          <div className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-brand">When (trigger)</div>
           <Select value={event} onChange={(e) => setEvent(e.target.value)}>{EVENTS.map((x) => <option key={x} value={x}>{x}</option>)}</Select>
-        </Field>
-        <div className="mb-1 text-xs font-medium text-muted">And (optional condition)</div>
-        <div className="mb-4 grid grid-cols-3 gap-2">
-          <Input value={field} onChange={(e) => setField(e.target.value)} placeholder="field" />
-          <Select value={op} onChange={(e) => setOp(e.target.value)}>{OPS.map((o) => <option key={o} value={o}>{o}</option>)}</Select>
-          <Input value={value} onChange={(e) => setValue(e.target.value)} placeholder="value" disabled={op === 'exists'} />
         </div>
-        <Field label="Then do">
-          <Select value={actionType} onChange={(e) => setActionType(e.target.value)}>{ACTIONS.map((a) => <option key={a.type} value={a.type}>{a.label}</option>)}</Select>
-        </Field>
-        {actionDef.field && (
-          <Field label={actionDef.field === 'text' ? 'Note text' : 'Tag'}>
-            <Input value={actionValue} onChange={(e) => setActionValue(e.target.value)} />
-          </Field>
-        )}
-        <div className="mb-4 rounded-md border border-border bg-surface-2/40 p-3">
-          <div className="mb-1 text-[10px] uppercase tracking-wider text-muted">Definition preview</div>
-          <pre className="overflow-x-auto text-[11px] text-fg/80">{JSON.stringify(buildDefinition(), null, 2)}</pre>
+
+        {/* CONDITIONS */}
+        <div className="rounded-md border border-border p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-brand">If (conditions)</div>
+            <div className="flex items-center gap-1 text-xs">
+              match
+              <Select className="h-7 w-20" value={match} onChange={(e) => setMatch(e.target.value as 'all' | 'any')}>
+                <option value="all">ALL</option>
+                <option value="any">ANY</option>
+              </Select>
+            </div>
+          </div>
+          <div className="space-y-2">
+            {conds.map((c, i) => (
+              <div key={i} className="grid grid-cols-[1fr_auto_1fr_auto] items-center gap-2">
+                <Input value={c.field} onChange={(e) => setCond(i, { field: e.target.value })} placeholder="field (e.g. priority)" />
+                <Select className="w-24" value={c.op} onChange={(e) => setCond(i, { op: e.target.value })}>{OPS.map((o) => <option key={o} value={o}>{o}</option>)}</Select>
+                <Input value={c.value} onChange={(e) => setCond(i, { value: e.target.value })} placeholder="value" disabled={c.op === 'exists'} />
+                <button type="button" onClick={() => setConds((x) => x.filter((_, j) => j !== i))} className="px-1 text-muted hover:text-danger">✕</button>
+              </div>
+            ))}
+            <Button type="button" size="sm" variant="outline" onClick={() => setConds((x) => [...x, { field: '', op: 'eq', value: '' }])}>+ Condition</Button>
+            {conds.filter((c) => c.field.trim()).length === 0 && <p className="text-[11px] text-muted">No conditions — the flow runs on every {event}.</p>}
+          </div>
         </div>
-        {error && <p className="mb-3 text-xs text-danger">{error}</p>}
+
+        {/* ACTIONS (ordered) */}
+        <div className="rounded-md border border-border p-3">
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-brand">Then (actions, in order)</div>
+          <div className="space-y-2">
+            {acts.map((a, i) => {
+              const fl = fieldLabel(a.type);
+              const gated = ACTIONS.find((d) => d.type === a.type)?.gated;
+              return (
+                <div key={i} className="flex items-center gap-2 rounded border border-border bg-surface-2/30 p-2">
+                  <span className="text-xs text-muted">{i + 1}.</span>
+                  <Select className="w-52" value={a.type} onChange={(e) => setAct(i, { type: e.target.value })}>
+                    {ACTIONS.map((d) => <option key={d.type} value={d.type}>{d.label}{d.gated ? ' (gated)' : ''}</option>)}
+                  </Select>
+                  {fl && <Input className="flex-1" value={a.param} onChange={(e) => setAct(i, { param: e.target.value })} placeholder={fl} />}
+                  {gated && <Badge tone="warning">approval</Badge>}
+                  <div className="flex flex-col">
+                    <button type="button" onClick={() => moveAct(i, -1)} className="text-[10px] text-muted hover:text-fg">▲</button>
+                    <button type="button" onClick={() => moveAct(i, 1)} className="text-[10px] text-muted hover:text-fg">▼</button>
+                  </div>
+                  <button type="button" onClick={() => setActs((x) => x.filter((_, j) => j !== i))} className="px-1 text-muted hover:text-danger">✕</button>
+                </div>
+              );
+            })}
+            <Button type="button" size="sm" variant="outline" onClick={() => setActs((x) => [...x, { type: 'add_tag', param: '' }])}>+ Action</Button>
+          </div>
+        </div>
+
+        {/* FLOW READ-BACK */}
+        <div className="rounded-md border border-border bg-surface-2/40 p-3 text-xs text-fg/80">
+          <div className="mb-1 text-[10px] uppercase tracking-wider text-muted">Flow</div>
+          <div><span className="text-brand">When</span> {event}</div>
+          {conds.filter((c) => c.field.trim()).length > 0 && (
+            <div><span className="text-brand">if</span> {match === 'all' ? 'ALL of' : 'ANY of'}: {conds.filter((c) => c.field.trim()).map((c) => `${c.field} ${c.op}${c.op === 'exists' ? '' : ' ' + c.value}`).join(match === 'all' ? ' AND ' : ' OR ')}</div>
+          )}
+          {acts.map((a, i) => <div key={i}><span className="text-brand">then</span> {i + 1}. {ACTIONS.find((d) => d.type === a.type)?.label}{fieldLabel(a.type) && a.param ? ` — “${a.param}”` : ''}</div>)}
+        </div>
+
+        {error && <p className="text-xs text-danger">{error}</p>}
         <div className="flex gap-3">
           <Button type="submit" disabled={busy}>{busy ? 'Creating…' : 'Create as draft'}</Button>
           <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
@@ -228,10 +309,10 @@ function SimulateModal({ rule, onClose }: { rule: AutomationRule; onClose: () =>
   );
 }
 
-function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onClick={onClose}>
-      <Card className="w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
+      <Card className={`w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} max-h-[90vh] overflow-auto`} onClick={(e) => e.stopPropagation()}>
         <CardHeader><CardTitle>{title}</CardTitle></CardHeader>
         <CardBody>{children}</CardBody>
       </Card>
