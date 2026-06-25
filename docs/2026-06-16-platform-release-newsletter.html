@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Carbon Platform Release Newsletter - June 16, 2026</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+  @media print {
+    body { background: #ffffff !important; padding: 0 !important; }
+    .container { border: none !important; box-shadow: none !important; }
+    .hero { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .meta { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .metrics th { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .metrics tr:nth-child(even) td { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .callout { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .section-card { break-inside: avoid; }
+    h2 { break-after: avoid; }
+  }
+  body { margin: 0; padding: 24px; background: #eef2f7; font-family: 'Inter', "Segoe UI", Arial, sans-serif; color: #1f2937; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+  .container { max-width: 860px; margin: 0 auto; background: #ffffff; border: 1px solid #dbe3ee; box-shadow: 0 4px 24px rgba(15, 23, 42, 0.08); }
+  .rainbow-bar { height: 4px; background: linear-gradient(90deg, #b45309, #be185d, #2563eb, #06b6d4, #10b981); }
+  .hero { background: linear-gradient(135deg, #0a1f44 0%, #1d3557 55%, #047857 100%); color: #ffffff; padding: 36px 40px 30px; }
+  .hero h1 { margin: 0 0 6px; font-size: 32px; font-weight: 700; line-height: 1.15; letter-spacing: -0.3px; }
+  .hero .subtitle { margin: 0 0 4px; color: #94a3b8; font-size: 15px; font-weight: 500; }
+  .hero .date-range { margin: 0; color: #cbd5e1; font-size: 17px; font-weight: 400; }
+  .meta { background: #0a1f44; color: #cbd5e1; padding: 12px 40px; border-bottom: 4px solid #047857; font-size: 13px; display: flex; flex-wrap: wrap; gap: 6px 24px; }
+  .content { padding: 32px 40px 36px; }
+  h2 { margin: 32px 0 14px; color: #0a1f44; font-size: 22px; font-weight: 700; border-bottom: 2px solid #047857; padding-bottom: 8px; letter-spacing: -0.2px; }
+  h2:first-child { margin-top: 0; }
+  h3 { margin: 20px 0 8px; color: #1d3557; font-size: 16px; font-weight: 600; }
+  p { margin: 0 0 12px; font-size: 14.5px; }
+  .callout { background: #f0fdf4; border: 1px solid #86efac; border-left: 5px solid #16a34a; padding: 16px 18px; margin: 14px 0 18px; font-size: 14.5px; line-height: 1.55; }
+  .callout-blue { background: #eff6ff; border: 1px solid #93c5fd; border-left: 5px solid #2563eb; padding: 16px 18px; margin: 14px 0 18px; font-size: 14.5px; line-height: 1.55; }
+  .callout-amber { background: #fffbeb; border: 1px solid #fcd34d; border-left: 5px solid #d97706; padding: 16px 18px; margin: 14px 0 18px; font-size: 14.5px; line-height: 1.55; }
+  .callout-red { background: #fef2f2; border: 1px solid #fecaca; border-left: 5px solid #dc2626; padding: 16px 18px; margin: 14px 0 18px; font-size: 14.5px; line-height: 1.55; }
+  .metrics { width: 100%; border-collapse: collapse; margin: 16px 0 24px; font-size: 14px; }
+  .metrics th { background: #0a1f44; color: #ffffff; text-align: left; padding: 10px 14px; font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+  .metrics td { padding: 10px 14px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+  .metrics tr:nth-child(even) td { background: #f8fafc; }
+  .metrics td:last-child { font-weight: 500; }
+  ul, ol { padding-left: 22px; margin: 8px 0 16px; }
+  li { margin-bottom: 6px; font-size: 14.5px; }
+  strong { font-weight: 600; }
+  code { background: #f1f5f9; padding: 2px 6px; border-radius: 3px; font-size: 13px; font-family: "SF Mono", "Fira Code", Consolas, monospace; color: #334155; }
+  .section-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 18px 20px; margin: 14px 0 18px; }
+  .section-card h3 { margin-top: 0; color: #0a1f44; }
+  .badge { display: inline-block; background: #047857; color: #ffffff; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; text-transform: uppercase; letter-spacing: 0.3px; vertical-align: middle; margin-left: 8px; }
+  .badge-fix { background: #dc2626; }
+  .badge-new { background: #2563eb; }
+  .badge-perf { background: #7c3aed; }
+  .badge-major { background: #be185d; }
+  .badge-il5 { background: #b45309; }
+  .divider { border: none; border-top: 1px solid #e5e7eb; margin: 28px 0; }
+  .footer { background: #f8fafc; border-top: 1px solid #dbe3ee; padding: 20px 40px 24px; font-size: 12px; color: #64748b; line-height: 1.55; }
+  .footer .brand { color: #0a1f44; font-weight: 600; }
+  .stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0 24px; }
+  .stat-cell { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px; text-align: center; }
+  .stat-num { font-size: 22px; font-weight: 700; color: #0a1f44; line-height: 1; }
+  .stat-lbl { font-size: 10px; color: #64748b; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.4px; font-weight: 600; }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="rainbow-bar"></div>
+    <div class="hero">
+      <p class="subtitle">Carbon by SBS</p>
+      <h1>Platform Release Newsletter</h1>
+      <p class="date-range">Release Update: May 29 &ndash; June 16, 2026</p>
+    </div>
+    <div class="meta">
+      <span><strong>Date:</strong> June 16, 2026</span>
+      <span><strong>To:</strong> Product, Engineering, &amp; Federal Compliance Leadership</span>
+      <span><strong>From:</strong> Office of the CTO</span>
+      <span><strong>Subject:</strong> CMMC SSP Appendix A (v2) &middot; Tenant-Data Auto-Population &middot; Platform UI Realignment &middot; ConMon Trend Automation &middot; CONMONaaS Service Docs</span>
+    </div>
+    <div class="content">
+
+      <h2>Executive Summary</h2>
+      <p>This window took the deepest assessor artifact Carbon produces &mdash; the CMMC System Security Plan &mdash; and made it both <em>authoritative in format</em> and <em>auto-populated from real tenant data</em>, while the rest of the platform got a coherent visual language and the continuous-monitoring surface learned to accrue trends on its own. <strong>31 source commits</strong> landed across four workstreams:
+        <strong>(1) CMMC L2 SSP Appendix A (v2)</strong> &mdash; a brand-new generator that renders all 110 NIST SP 800-171 Rev 2 requirements in the FedRAMP SSP Appendix A control style (Control Summary table + a per-NIST-800-171A-assessment-objective narrative), selectable against the legacy generator, in Markdown / HTML / Word;
+        <strong>(2) tenant-data + evidence auto-population</strong> &mdash; v2 joins that template against the tenant's objective assessments, bound evidence, open POA&amp;Ms, and overall CMMC score, then labels each requirement by confidence so an estimate never reads as an evidence-backed fact;
+        <strong>(3) a platform-wide UI realignment</strong> &mdash; a shared <code>KpiStrip</code> + <code>SectionLabel</code> design kit applied across ~25 pages for a consistent command-center layout;
+        <strong>(4) Continuous-Monitoring maturation</strong> &mdash; auto-captured monthly snapshots so trends accrue without manual sync, an in-place &ldquo;Sync now,&rdquo; and an honest cross-cloud posture panel. Underneath: a reliability pass on the CISO briefing, GCC High auth resilience, cache-producer wiring, and the CONMONaaS managed-service documentation suite.</p>
+
+      <h2>Build Metrics</h2>
+      <div class="stat-row">
+        <div class="stat-cell"><div class="stat-num">31</div><div class="stat-lbl">Commits</div></div>
+        <div class="stat-cell"><div class="stat-num">90</div><div class="stat-lbl">Files Changed</div></div>
+        <div class="stat-cell"><div class="stat-num">+15.0k</div><div class="stat-lbl">Inserts</div></div>
+        <div class="stat-cell"><div class="stat-num">+7</div><div class="stat-lbl">New Spec Files</div></div>
+      </div>
+      <table class="metrics">
+        <tr><th>Metric</th><th>Count / Status</th></tr>
+        <tr><td>Source commits (May 29 &ndash; June 16)</td><td>31 (non-merge)</td></tr>
+        <tr><td>Files changed</td><td>90</td></tr>
+        <tr><td>Lines added / removed</td><td>+15 043 / &minus;1 962</td></tr>
+        <tr><td>New source modules (<code>src/</code>)</td><td>10 &mdash; incl. the CMMC L2 SSP v2 data / service / docx / enrichment quartet</td></tr>
+        <tr><td>New test spec files</td><td>+7 this window (CMMC SSP v2 dataset integrity, renderers, enrichment, escaping)</td></tr>
+        <tr><td>Pages realigned</td><td>~25 (KpiStrip + SectionLabel design kit)</td></tr>
+        <tr><td>Headline commit</td><td><code>d378873</code> &mdash; CMMC L2 SSP Appendix A (v2) with tenant-data + evidence auto-population</td></tr>
+      </table>
+
+      <h2>Headline Capabilities Shipped</h2>
+
+      <div class="section-card">
+        <h3>1. CMMC L2 SSP &mdash; FedRAMP Appendix A Generator (v2) <span class="badge badge-major">MAJOR</span> <span class="badge badge-new">NEW</span></h3>
+        <p>A new, fully additive CMMC Level 2 SSP generator that documents all <strong>110 NIST SP 800-171 Rev 2 requirements</strong> in the FedRAMP System Security Plan <em>Appendix A</em> control style. The legacy 18-section generator is untouched; an admin picks the template version per export at <code>/documentation</code>.</p>
+        <ul>
+          <li><strong>Faithful Appendix A layout</strong> &mdash; every requirement renders a <em>Control Summary Information</em> table (responsible role, organization-defined parameters, implementation-status &amp; control-origination checkboxes) plus a &ldquo;What is the solution and how is it implemented?&rdquo; table with one narrative per NIST SP 800-171A assessment objective (14 families &middot; 110 requirements &middot; 302 objective parts).</li>
+          <li><strong>Three formats at parity</strong> &mdash; Markdown, self-contained print-ready HTML, and a true Word <code>.docx</code> (navy headings, boxed tables, CUI banner + footer, page numbers).</li>
+          <li><strong>Per-export version toggle</strong> &mdash; &ldquo;Legacy (data-driven 18-section)&rdquo; vs &ldquo;v2 (FedRAMP Appendix A, 110 reqs)&rdquo; selectable in the SSP Generator UI.</li>
+          <li><strong>Faithful by construction</strong> &mdash; the dataset is a structured extraction of the source DOCX template, guarded by tests asserting the 110 / 14 / 302 counts and per-family breakdown.</li>
+        </ul>
+      </div>
+
+      <div class="section-card">
+        <h3>2. Tenant-Data + Evidence Auto-Population <span class="badge badge-major">MAJOR</span></h3>
+        <p>v2 doesn't just template &mdash; it <em>fills itself in</em> from the platform. A pure enrichment layer joins the Appendix A shell against real tenant data and <strong>augments</strong> (never replaces) the assessor-facing draft for each requirement where data exists.</p>
+        <ul>
+          <li><strong>Four tenant sources</strong> &mdash; per-objective assessment records (status, notes, evidence), bound evidence artifacts (title / source / type / freshness), open POA&amp;M items, and the tenant's overall CMMC score distributed proportionally per family as a status fallback.</li>
+          <li><strong>Auto-checked status &amp; origination</strong> &mdash; the Implementation-Status box is set from the rolled-up objective status; Control Origination is auto-marked &ldquo;Shared&rdquo; only when the backing evidence is CSP-sourced. Every auto-derived value is flagged <code>(auto-derived from platform &mdash; confirm)</code>.</li>
+          <li><strong>Confidence labeling</strong> &mdash; each requirement is tagged <strong>evidence-backed</strong>, <strong>assessed</strong>, or <strong>score-estimate</strong>; a score-only requirement renders as a clearly-marked &ldquo;Score-Derived Estimate&rdquo; with a caveat so an estimate never reads as an evidence-backed fact.</li>
+          <li><strong>Honest empty-state</strong> &mdash; with no score and no records, requirements stay a tailor-ready draft and the operator is told to run a scan / collect evidence / walk the objectives matrix first.</li>
+          <li><strong>Code-split for weight</strong> &mdash; the ~330 KB Appendix A dataset and generators load on demand, trimming the Documentation bundle by ~37% for every other visitor. <span class="badge badge-perf">PERF</span></li>
+        </ul>
+      </div>
+
+      <div class="section-card">
+        <h3>3. Platform-Wide UI Realignment &mdash; KpiStrip + SectionLabel Kit <span class="badge badge-new">NEW</span></h3>
+        <p>A shared presentation kit (<code>KpiStrip</code> + <code>SectionLabel</code>) was extracted and applied across the platform so summary stats and section rhythm read identically everywhere &mdash; a consistent command-center layout in place of ~25 bespoke stat grids.</p>
+        <ul>
+          <li><strong>Surfaces realigned</strong> &mdash; SecureScore, ComplianceMonitoring, ContinuousMonitoring, ConfigurationManager, AuditTrail, EvidenceCollection, WorkflowManagement, RiskDashboard, DLP / InsiderRisk / CCOInsights, Purview Compliance Manager, DatabaseHealth, Organizations, SecurityAudit, Microsoft365DSC, UserManagement, M365 Admin Center, AzurePolicies, DefenderCoverage, CMMC Crosswalk, AccessReviews, SensitivityLabels, Platform/System Admin, CISODashboard, GovernanceDashboard, AuditorPortal, IdentityGovernance, and the ATO Workspace summary.</li>
+          <li><strong>Polish + cleanup</strong> &mdash; hover-scale refinement on KpiStrip and removal of dead cache writes uncovered during the sweep.</li>
+        </ul>
+      </div>
+
+      <div class="section-card">
+        <h3>4. Continuous-Monitoring Maturation <span class="badge badge-new">NEW</span> <span class="badge badge-fix">FIX</span></h3>
+        <p>The ConMon / Compliance-Monitoring surface moved from manual refresh to self-accruing trends and an honest multi-cloud posture.</p>
+        <ul>
+          <li><strong>Auto-captured monthly snapshots</strong> &mdash; trend history accrues on its own so charts populate without an operator remembering to sync.</li>
+          <li><strong>&ldquo;Sync now&rdquo; in place</strong> &mdash; refresh metrics without a full reload; the sync now correctly updates the KPI tiles (previously left showing stale numbers).</li>
+          <li><strong>Honest cross-cloud posture</strong> &mdash; a Secure Score tile plus a truthful AWS / cross-cloud posture panel wired to the real compliance assessment (empty AWS card is gated rather than faked).</li>
+          <li><strong>Command-center realign</strong> &mdash; Compliance Monitoring reorganized into a refined command-center layout.</li>
+        </ul>
+      </div>
+
+      <div class="section-card">
+        <h3>5. CONMONaaS Managed-Service Documentation Suite <span class="badge badge-new">NEW</span></h3>
+        <p>A full Continuous-Monitoring-as-a-Service documentation set landed for the managed-service offering &mdash; portfolio one-pager, offering &amp; SOP, standards, the employee mini-runbook, customer communications playbook, the LTE Helpdesk operations + customer guide, and the after-hours on-call Rules of Engagement, all generated from versioned build scripts.</p>
+      </div>
+
+      <h2>Reliability &amp; Data Integrity</h2>
+      <p>A continuation of the &ldquo;never show a sponsor a fabricated or stale number&rdquo; discipline.</p>
+      <ul>
+        <li><strong>CISO briefing fidelity</strong> &mdash; stop the briefing from dropping findings, dedupe frameworks, and surface uncollected signals instead of silently omitting them.</li>
+        <li><strong>GCC High auth resilience</strong> &mdash; the Supabase fetch wrapper now tolerates GCC High latency / timeouts rather than failing the request.</li>
+        <li><strong>Tenant-aggregation cache producers</strong> &mdash; wired the four missing cache producers so tenant aggregation reflects real collected data.</li>
+        <li><strong>Trust Center honesty</strong> &mdash; the Multi-Cloud tab posture is computed honestly instead of optimistically rolled up.</li>
+        <li><strong>Monthly report + audit bundle</strong> &mdash; Secure Score is now wired into the monthly report and audit bundle, with empty provider cards gated.</li>
+        <li><strong>v2 SSP hardening</strong> &mdash; assessor notes are escaped so they can't break Markdown tables; the per-export path is guarded with an explicit empty-state toast.</li>
+      </ul>
+
+      <h2>Coverage After This Window</h2>
+      <table class="metrics">
+        <tr><th>Surface</th><th>Status entering 5/29</th><th>Status leaving 6/16</th></tr>
+        <tr><td>CMMC L2 SSP format options</td><td>Single data-driven 18-section generator</td><td>+ <strong>FedRAMP Appendix A (v2)</strong> &mdash; 110 reqs, per-objective narratives, MD/HTML/DOCX, per-export toggle</td></tr>
+        <tr><td>SSP tenant-data population</td><td>Objective matrix only (often blank)</td><td>Objectives + evidence + POA&amp;M + score fallback, with evidence/assessed/estimate confidence labels</td></tr>
+        <tr><td>UI consistency</td><td>~25 bespoke stat grids</td><td>Shared KpiStrip + SectionLabel command-center kit</td></tr>
+        <tr><td>ConMon trends</td><td>Manual sync; KPIs could go stale</td><td>Auto-captured monthly snapshots + in-place &ldquo;Sync now&rdquo; that updates KPIs</td></tr>
+        <tr><td>Cross-cloud posture panel</td><td>Optimistic / partially faked AWS card</td><td>Honest posture wired to the real compliance assessment; empty cards gated</td></tr>
+        <tr><td>Managed-service (CONMONaaS) docs</td><td>None</td><td>Portfolio, offering, SOP, runbooks, comms playbook, helpdesk + on-call RoE</td></tr>
+        <tr><td>Documentation bundle weight</td><td>SSP dataset always loaded</td><td>v2 dataset code-split &mdash; Documentation chunk ~37% lighter</td></tr>
+      </table>
+
+      <h2>Customer-Facing Outcomes</h2>
+      <div class="callout">
+        <strong>Federal customers + MSPs can now:</strong>
+        <ol>
+          <li><strong>Generate a CMMC L2 SSP in the FedRAMP Appendix A style</strong> covering all 110 NIST 800-171 R2 requirements with a per-assessment-objective narrative &mdash; in Word, HTML, or Markdown &mdash; without disturbing the legacy generator.</li>
+          <li><strong>Have that SSP auto-populate from their own tenant</strong> &mdash; implementation status, control statements, and evidence pulled from objective assessments, bound evidence, POA&amp;Ms, and the live CMMC score, each tagged by confidence and flagged for human confirmation.</li>
+          <li><strong>Read every dashboard the same way</strong> &mdash; a consistent KpiStrip command-center layout across the platform.</li>
+          <li><strong>Watch ConMon trends accrue on their own</strong> &mdash; monthly snapshots captured automatically, with an in-place &ldquo;Sync now&rdquo; and an honest cross-cloud posture.</li>
+          <li><strong>Stand up Continuous Monitoring as a managed service</strong> with a complete CONMONaaS documentation suite (SOPs, runbooks, customer guide, on-call RoE).</li>
+        </ol>
+      </div>
+
+      <h2>What's Next</h2>
+      <ul>
+        <li><strong>v2 SSP enrichment depth</strong> &mdash; pull per-family domain detail (not just the overall score) into the status fallback, and surface the confidence breakdown in the SSP Generator UI before export.</li>
+        <li><strong>Evidence freshness in the SSP</strong> &mdash; promote stale-evidence warnings into the Appendix A evidence tables so an assessor sees age at a glance.</li>
+        <li><strong>Finish the KpiStrip sweep</strong> &mdash; carry the design kit through the remaining provider and Azure pages.</li>
+        <li><strong>ConMon snapshot retention + export</strong> &mdash; expose the accrued trend history in the monthly report and ATO package.</li>
+        <li><strong>R3 Appendix A parity</strong> &mdash; evaluate an Appendix A-style v2 for the NIST 800-171 Rev 3 SSP to match the R2 modernization.</li>
+      </ul>
+
+      <hr class="divider" />
+      <p style="font-size: 12.5px; color: #64748b;">Carbon is operated entirely from the customer tenant. No Anthropic-side data plane. Government-cloud parity is non-negotiable. Tooling-only by charter. See <a href="https://m365gcc.azurewebsites.us">m365gcc.azurewebsites.us</a> for the production instance, or open <code>/trust-center</code> for the FedRAMP 20x submission package.</p>
+
+    </div>
+    <div class="footer">
+      <p><span class="brand">Carbon by SBS</span> &middot; Federal Compliance Acceleration Platform</p>
+      <p>Microsoft 365 Gov (Commercial / GCC / GCC High / DoD) &middot; AWS GovCloud (US) IL5 &middot; GCP Assured Workloads (FedRAMP Mod-High / IL2-IL5)</p>
+      <p>Live: <a href="https://m365gcc.azurewebsites.us">m365gcc.azurewebsites.us</a> &middot; Resource group <code>M365_Compliance</code> &middot; Web app <code>M365GCC</code> &middot; USGov Virginia</p>
+      <p>Generated June 16, 2026 &middot; Covers commit window <code>7017f5c</code> through <code>e481a2a</code> (May 29 &ndash; June 16)</p>
+    </div>
+  </div>
+</body>
+</html>
