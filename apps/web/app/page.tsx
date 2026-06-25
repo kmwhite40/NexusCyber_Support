@@ -49,7 +49,7 @@ export default function Landing() {
 
         <div className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 text-center">
           <div className="flex max-w-2xl flex-col items-center gap-7">
-            <BrandLockup size={104} tagline />
+            <BrandLockup size={208} tagline stacked />
             <Link href="/login" className="pt-2">
               <Button size="lg" className="px-8">Sign in</Button>
             </Link>
