@@ -4,11 +4,11 @@ import type { Principal } from '../src/types.js';
 
 const customer = (over: Partial<Principal> = {}): Principal => ({
   id: 'u1', plane: 'customer', email: 'u@acme', displayName: null, organizationId: 'org-acme',
-  roles: ['EndUser'], permissions: ['ticket.create'], assignedOrgs: [], elevated: false, ...over,
+  roles: ['EndUser'], permissions: ['ticket.create'], assignedOrgs: [], allOrgs: false, elevated: false, ...over,
 });
 const agent = (over: Partial<Principal> = {}): Principal => ({
   id: 'a1', plane: 'nexus', email: 'a@nexus', displayName: null, organizationId: null,
-  roles: ['Tier2'], permissions: ['ticket.create'], assignedOrgs: ['org-acme'], elevated: false, ...over,
+  roles: ['Tier2'], permissions: ['ticket.create'], assignedOrgs: ['org-acme'], allOrgs: false, elevated: false, ...over,
 });
 
 describe('resolveSearchOrg', () => {

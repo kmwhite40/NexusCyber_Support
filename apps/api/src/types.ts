@@ -10,7 +10,8 @@ export interface Principal {
   organizationId: string | null; // customer plane: their org
   roles: string[]; // role keys
   permissions: string[]; // resolved permission verbs
-  assignedOrgs: string[]; // nexus plane scope
+  assignedOrgs: string[]; // nexus plane scope (explicit per-org grants)
+  allOrgs: boolean; // nexus plane: granted access to ALL orgs (org-NULL role assignment)
   elevated: boolean;
 }
 

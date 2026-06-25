@@ -29,8 +29,8 @@ function inOrgScope(principal: Principal, orgId?: string | null): boolean {
   if (!orgId) return true; // org-agnostic resource
   if (principal.permissions.includes('admin.superuser')) return true; // platform superuser: all orgs
   if (principal.plane === 'customer') return principal.organizationId === orgId;
-  // nexus plane: must be an assigned customer
-  return principal.assignedOrgs.includes(orgId);
+  // nexus plane: an all-orgs grant, or an explicit per-org assignment.
+  return principal.allOrgs || principal.assignedOrgs.includes(orgId);
 }
 
 export function decide(

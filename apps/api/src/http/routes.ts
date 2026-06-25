@@ -8,6 +8,7 @@ import * as oidc from '../auth/oidc.js';
 import { withOrgContext, withSystemContext } from '../db/pool.js';
 import { orgContextFor } from '../auth/principal.js';
 import * as accounts from '../modules/accounts.js';
+import * as platformUsers from '../modules/platform-users.js';
 import * as tickets from '../modules/tickets.js';
 import * as posture from '../modules/posture.js';
 import * as analytics from '../modules/analytics.js';
@@ -232,6 +233,8 @@ export async function registerRoutes(app: FastifyInstance) {
       organization_id: p.organizationId,
       roles: p.roles,
       capabilities: p.permissions,
+      assigned_orgs: p.assignedOrgs,
+      all_orgs: p.allOrgs,
       elevated: p.elevated,
     };
   });
@@ -357,6 +360,65 @@ export async function registerRoutes(app: FastifyInstance) {
       .parse(req.params);
     authorize(p, 'customer.admin.manage_users', { organizationId: orgId });
     return accounts.removeOrgUserAdmin(p, orgId, userId);
+  });
+
+  // ---------------- Platform user administration (nexus staff) ----------------
+  const scopeSchema = z.union([
+    z.object({ mode: z.literal('all') }),
+    z.object({ mode: z.literal('orgs'), orgIds: z.array(z.string().uuid()) }),
+  ]);
+
+  app.get('/api/v1/platform/users', async (req) => {
+    const p = await requirePrincipal(req);
+    authorize(p, 'admin.users.manage');
+    return { data: await platformUsers.listPlatformUsers(), assignable_roles: platformUsers.assignableRoles(p) };
+  });
+
+  app.post('/api/v1/platform/users', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    authorize(p, 'admin.users.manage');
+    const body = z
+      .object({
+        email: z.string().email(),
+        displayName: z.string().optional(),
+        roleKeys: z.array(z.string()).optional(),
+        password: z.string().min(10).optional(),
+        scope: scopeSchema.optional(),
+      })
+      .parse(req.body);
+    const result = await platformUsers.createPlatformUser(p, body);
+    reply.status(201);
+    return result;
+  });
+
+  app.patch('/api/v1/platform/users/:id', async (req) => {
+    const p = await requirePrincipal(req);
+    authorize(p, 'admin.users.manage');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z
+      .object({
+        status: z.enum(['active', 'suspended']).optional(),
+        displayName: z.string().optional(),
+        password: z.string().min(10).optional(),
+      })
+      .parse(req.body);
+    return platformUsers.updatePlatformUser(p, id, body);
+  });
+
+  app.put('/api/v1/platform/users/:id/roles', async (req) => {
+    const p = await requirePrincipal(req);
+    authorize(p, 'admin.users.manage');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const { roleKeys } = z.object({ roleKeys: z.array(z.string()) }).parse(req.body);
+    return platformUsers.setPlatformUserRoles(p, id, roleKeys);
+  });
+
+  app.put('/api/v1/platform/users/:id/scope', async (req) => {
+    const p = await requirePrincipal(req);
+    authorize(p, 'admin.users.manage');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const scope = scopeSchema.parse(req.body);
+    return platformUsers.setPlatformUserScope(p, id, scope);
   });
 
   // ---------------- Tickets ----------------

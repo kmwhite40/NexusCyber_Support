@@ -20,6 +20,9 @@ export async function loadPrincipal(claims: SessionClaims): Promise<Principal> {
     const assignedOrgs = [
       ...new Set(roleRows.map((r) => r.organization_id).filter((x): x is string => !!x)),
     ];
+    // A nexus role assignment with a NULL organization_id is an "all organizations" grant.
+    const allOrgs =
+      claims.plane === 'nexus' && roleRows.some((r) => r.organization_id == null);
 
     let permissions: string[] = [];
     if (roleKeys.length) {
@@ -49,6 +52,7 @@ export async function loadPrincipal(claims: SessionClaims): Promise<Principal> {
       roles: roleKeys,
       permissions,
       assignedOrgs,
+      allOrgs,
       elevated,
     };
   });
@@ -60,6 +64,7 @@ export function orgContextFor(principal: Principal): OrgContext {
     plane: principal.plane,
     orgId: principal.plane === 'customer' ? principal.organizationId : null,
     assignedOrgs: principal.plane === 'nexus' ? principal.assignedOrgs : [],
+    allOrgs: principal.plane === 'nexus' && principal.allOrgs,
     elevated: principal.elevated,
     // A platform superuser is cross-org at the DB layer too (matches the PDP rule).
     superuser: principal.permissions.includes('admin.superuser'),

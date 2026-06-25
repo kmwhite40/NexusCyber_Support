@@ -54,6 +54,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 export const api = {
   get: <T>(p: string) => request<T>('GET', p),
   post: <T>(p: string, body?: unknown) => request<T>('POST', p, body),
+  put: <T>(p: string, body?: unknown) => request<T>('PUT', p, body),
   patch: <T>(p: string, body?: unknown) => request<T>('PATCH', p, body),
   del: <T>(p: string) => request<T>('DELETE', p),
 };
@@ -71,6 +72,8 @@ export interface Me {
   organization_id: string | null;
   roles: string[];
   capabilities: string[];
+  assigned_orgs?: string[];
+  all_orgs?: boolean;
 }
 export interface Ticket {
   id: string;
@@ -421,6 +424,30 @@ export const customersApi = {
   addUser: (orgId: string, b: { email: string; displayName?: string; roleKey?: string; password?: string }) => api.post<{ id: string }>(`/organizations/${orgId}/users`, b),
   updateUser: (orgId: string, userId: string, b: { status?: 'active' | 'suspended'; roleKey?: string }) => api.patch<{ id: string }>(`/organizations/${orgId}/users/${userId}`, b),
   removeUser: (orgId: string, userId: string) => api.del<{ id: string }>(`/organizations/${orgId}/users/${userId}`),
+};
+
+// ---- Platform user administration (nexus staff) ----
+export interface PlatformUser {
+  id: string;
+  email: string;
+  display_name: string | null;
+  status: string;
+  has_password: boolean;
+  roles: string[];
+  all_orgs: boolean;
+  org_ids: string[];
+  created_at: string;
+}
+export type OrgScope = { mode: 'all' } | { mode: 'orgs'; orgIds: string[] };
+
+export const platformUsersApi = {
+  list: () => api.get<{ data: PlatformUser[]; assignable_roles: string[] }>('/platform/users'),
+  create: (b: { email: string; displayName?: string; roleKeys?: string[]; password?: string; scope?: OrgScope }) =>
+    api.post<{ id: string }>('/platform/users', b),
+  update: (id: string, b: { status?: 'active' | 'suspended'; displayName?: string; password?: string }) =>
+    api.patch<{ id: string }>(`/platform/users/${id}`, b),
+  setRoles: (id: string, roleKeys: string[]) => api.put<{ id: string }>(`/platform/users/${id}/roles`, { roleKeys }),
+  setScope: (id: string, scope: OrgScope) => api.put<{ id: string }>(`/platform/users/${id}/scope`, scope),
 };
 
 export interface Delivery {
