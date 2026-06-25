@@ -4,6 +4,7 @@
 // session (sessionStorage) so it appears when someone "enters the site" but not on every nav.
 import * as React from 'react';
 import { BrandMark } from './ui/brand';
+import { useAuth } from './auth-context';
 
 const SLA_ROWS: Array<{ p: string; label: string; tone: string; meaning: string; ack: string; resolve: string }> = [
   { p: 'P1', label: 'Critical', tone: 'bg-danger', meaning: "You're blocked tenant-wide, locked out of all admin, or there's a security incident", ack: '1 hour', resolve: '4 hours' },
@@ -15,20 +16,25 @@ const SLA_ROWS: Array<{ p: string; label: string; tone: string; meaning: string;
 const STORAGE_KEY = 'anchor-welcome-seen';
 
 export function WelcomeDialog() {
+  const { me } = useAuth();
   const [open, setOpen] = React.useState(false);
 
+  // Show once per login for every signed-in user (admins included). Keyed to the user id
+  // and reset on logout (auth-context), so a fresh login re-shows it — but a page refresh
+  // while still signed in does not.
   React.useEffect(() => {
+    if (!me) { setOpen(false); return; }
     try {
-      if (!sessionStorage.getItem(STORAGE_KEY)) setOpen(true);
+      if (sessionStorage.getItem(STORAGE_KEY) !== me.id) setOpen(true);
     } catch {
       setOpen(true);
     }
-  }, []);
+  }, [me]);
 
   const close = React.useCallback(() => {
-    try { sessionStorage.setItem(STORAGE_KEY, '1'); } catch { /* ignore */ }
+    try { sessionStorage.setItem(STORAGE_KEY, me?.id ?? '1'); } catch { /* ignore */ }
     setOpen(false);
-  }, []);
+  }, [me]);
 
   // Close on Escape.
   React.useEffect(() => {

@@ -36,6 +36,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = React.useCallback(() => {
     setToken(null);
     setMe(null);
+    // Reset the welcome dialog so it shows again on the next login.
+    try { sessionStorage.removeItem('anchor-welcome-seen'); } catch { /* ignore */ }
     router.push('/login');
   }, [router]);
 
