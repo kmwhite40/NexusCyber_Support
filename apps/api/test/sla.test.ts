@@ -3,8 +3,9 @@ import { addBusinessMinutes, evaluateState, targetMinutes, applyPause, applyResu
 
 describe('SLA engine', () => {
   it('targetMinutes returns priority-specific targets with P3 fallback', () => {
-    expect(targetMinutes('P1', 'response')).toBe(15);
-    expect(targetMinutes('P2', 'resolution')).toBe(8 * 60);
+    expect(targetMinutes('P1', 'response')).toBe(60); // acknowledge: 1 hour
+    expect(targetMinutes('P2', 'resolution')).toBe(8 * 60); // resolve: 1 business day (8 business hours)
+    expect(targetMinutes('P4', 'resolution')).toBe(10 * 8 * 60); // resolve: 10 business days
     expect(targetMinutes('NOPE', 'response')).toBe(targetMinutes('P3', 'response'));
   });
 

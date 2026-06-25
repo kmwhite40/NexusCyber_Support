@@ -7,12 +7,16 @@ import type { Sql } from '../db/pool.js';
 
 export type SlaMetric = 'response' | 'resolution' | 'update' | 'remediation';
 
+// Severity-based service levels (8x5 business minutes). `response` = "We acknowledge",
+// `resolution` = "We aim to resolve". A business day = one 8-hour 8x5 workday (480 min),
+// so e.g. "5 business days" = 5 * 480 = 2400 min. These apply to every organization.
+const BUSINESS_DAY = 8 * 60; // 480 business minutes = one 8x5 workday
 const DEFAULT_TARGETS_MINUTES: Record<string, Record<SlaMetric, number>> = {
   // priority -> metric -> minutes (business minutes)
-  P1: { response: 15, resolution: 4 * 60, update: 60, remediation: 7 * 24 * 60 },
-  P2: { response: 30, resolution: 8 * 60, update: 120, remediation: 30 * 24 * 60 },
-  P3: { response: 60, resolution: 24 * 60, update: 240, remediation: 90 * 24 * 60 },
-  P4: { response: 120, resolution: 72 * 60, update: 480, remediation: 90 * 24 * 60 },
+  P1: { response: 60, resolution: 4 * 60, update: 60, remediation: 7 * 24 * 60 },
+  P2: { response: 4 * 60, resolution: 1 * BUSINESS_DAY, update: 120, remediation: 30 * 24 * 60 },
+  P3: { response: 1 * BUSINESS_DAY, resolution: 5 * BUSINESS_DAY, update: 240, remediation: 90 * 24 * 60 },
+  P4: { response: 2 * BUSINESS_DAY, resolution: 10 * BUSINESS_DAY, update: 480, remediation: 90 * 24 * 60 },
 };
 
 interface CalendarLike {
