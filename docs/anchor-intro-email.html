@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anchor — Introduction Email · Dr. Kevin White</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --navy:#0a1f44;
+    --ink:#1b2840;
+    --body:#3f4d63;
+    --muted:#64748b;
+    --faint:#94a3b8;
+    --line:#e4e9f2;
+    --wash:#f5f8fc;
+    --emerald:#0f9d6b;
+    --emerald-dk:#065f46;
+    --teal:#0e7490;
+    --amber:#b45309;
+    --rose:#dc2626;
+    --violet:#7c3aed;
+    --blue:#2563eb;
+    --serif:'Fraunces',Georgia,serif;
+    --sans:'IBM Plex Sans','Segoe UI',sans-serif;
+    --mono:'IBM Plex Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:var(--sans);background:#e9eef5;color:var(--ink);padding:28px 16px;-webkit-font-smoothing:antialiased;line-height:1.6;}
+
+  .sheet{max-width:680px;margin:0 auto;background:#fff;box-shadow:0 18px 60px rgba(10,31,68,.16);border-radius:4px;overflow:hidden;}
+  .spectrum{height:5px;background:linear-gradient(90deg,var(--amber),var(--rose),var(--violet),var(--blue),var(--teal),var(--emerald));}
+
+  /* header */
+  .head{position:relative;padding:26px 38px 22px;color:#fff;overflow:hidden;
+    background:radial-gradient(560px 220px at 90% -40%,rgba(15,157,107,.5),transparent 60%),linear-gradient(125deg,#08183a,#0a1f44 50%,#064e3b 130%);}
+  .head::after{content:"";position:absolute;inset:0;opacity:.45;
+    background-image:linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);
+    background-size:32px 32px;-webkit-mask-image:radial-gradient(120% 120% at 90% 0%,#000,transparent 70%);mask-image:radial-gradient(120% 120% at 90% 0%,#000,transparent 70%);}
+  .head>*{position:relative;z-index:1;}
+  .brandrow{display:flex;align-items:center;gap:11px;}
+  .sq{width:17px;height:17px;border:2.5px solid var(--emerald);border-radius:4px;position:relative;flex:none;}
+  .sq::after{content:"";position:absolute;inset:3px;background:var(--emerald);border-radius:2px;}
+  .brandrow .nm{font-family:var(--mono);font-size:11.5px;letter-spacing:.32em;text-transform:uppercase;color:#cdeede;}
+
+  /* meta block */
+  .meta{padding:18px 38px;border-bottom:1px solid var(--line);background:var(--wash);}
+  .meta .row{display:flex;gap:10px;font-size:13px;line-height:1.9;}
+  .meta .k{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);min-width:64px;padding-top:2px;}
+  .meta .v{color:var(--ink);font-weight:500;}
+  .meta .v.subj{font-weight:600;color:var(--navy);}
+
+  /* body */
+  .msg{padding:30px 38px 14px;}
+  .msg p{font-size:14.5px;color:var(--body);margin-bottom:16px;}
+  .msg p.greet{color:var(--ink);font-weight:500;}
+  .msg strong{color:var(--navy);font-weight:600;}
+  .msg em{color:var(--emerald-dk);font-style:italic;}
+  .lead-in{font-size:15.5px;color:var(--ink);}
+
+  .h{font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--emerald-dk);margin:24px 0 12px;display:flex;align-items:center;gap:11px;}
+  .h::before{content:"";width:24px;height:1px;background:var(--emerald);}
+  .h::after{content:"";flex:1;height:1px;background:var(--line);}
+
+  ul.why{list-style:none;margin:0 0 8px;}
+  ul.why li{position:relative;padding-left:26px;font-size:14px;color:var(--body);margin-bottom:11px;line-height:1.5;}
+  ul.why li::before{content:"→";position:absolute;left:0;top:0;color:var(--emerald);font-weight:700;}
+  ul.why li strong{color:var(--navy);}
+
+  /* readiness callout */
+  .ready{margin:6px 0 18px;background:#ecfdf5;border:1px solid #a7f3d0;border-left:4px solid var(--emerald);border-radius:8px;padding:15px 18px;}
+  .ready .tag{font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--emerald-dk);font-weight:600;display:flex;align-items:center;gap:8px;margin-bottom:7px;}
+  .ready .tag .b{width:8px;height:8px;border-radius:50%;background:var(--emerald);box-shadow:0 0 0 3px rgba(15,157,107,.18);}
+  .ready p{font-size:14px;color:var(--ink);margin:0;}
+  .ready p strong{color:var(--emerald-dk);}
+
+  /* signature */
+  .sig{margin-top:24px;padding-top:18px;border-top:1px solid var(--line);}
+  .sig .name{font-family:var(--serif);font-size:20px;font-weight:600;color:var(--navy);letter-spacing:-.01em;}
+  .sig .org{font-size:13px;color:var(--muted);margin-top:3px;}
+  .sig .tagline{font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;color:var(--faint);margin-top:6px;text-transform:uppercase;}
+
+  /* footer */
+  .foot{padding:16px 38px 22px;background:var(--wash);border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;}
+  .foot .att{font-family:var(--mono);font-size:10px;letter-spacing:.05em;color:var(--muted);text-transform:uppercase;line-height:1.7;}
+  .foot .live{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--emerald-dk);display:inline-flex;align-items:center;gap:8px;font-weight:600;}
+  .foot .live .b{width:8px;height:8px;border-radius:50%;background:var(--emerald);box-shadow:0 0 0 3px rgba(15,157,107,.18);}
+
+  @media (max-width:560px){.head,.meta,.msg,.foot{padding-left:22px;padding-right:22px;}}
+  @media print{@page{size:letter;margin:.5in;}body{background:#fff;padding:0;}.sheet{box-shadow:none;}
+    .head,.spectrum,.ready,.foot,.meta{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+</style>
+</head>
+<body>
+  <div class="sheet">
+    <div class="spectrum"></div>
+
+    <div class="head">
+      <div class="brandrow"><span class="sq"></span><span class="nm">Anchor by SBS Federal</span></div>
+    </div>
+
+    <div class="meta">
+      <div class="row"><span class="k">To</span><span class="v">Executive Leadership</span></div>
+      <div class="row"><span class="k">From</span><span class="v">Dr. Kevin White</span></div>
+      <div class="row"><span class="k">Subject</span><span class="v subj">Introducing Anchor — production-ready and rolling out to our Carbon customers</span></div>
+    </div>
+
+    <div class="msg">
+      <p class="greet">Leadership,</p>
+
+      <p class="lead-in">I'm pleased to introduce <strong>Anchor</strong>, our purpose-built platform for running IT service management and security operations in the government cloud. Anchor is live at anchor.azurewebsites.us, and <strong>we will be using it to serve our Carbon customers.</strong></p>
+
+      <p>In one sentence: <strong>Anchor gives SBS a single place to take in requests, resolve incidents, fulfill access, monitor security posture, and produce compliance evidence</strong> — for many government customers at once, with strict separation between them. Think of it as a ServiceNow-class service desk that was <em>born</em> inside the FedRAMP / CUI boundary rather than retrofitted into it.</p>
+
+      <div class="h">Why this matters for SBS</div>
+      <ul class="why">
+        <li><strong>Lower cost, full control</strong> — ServiceNow-class capability without the licensing and lock-in; we own the roadmap.</li>
+        <li><strong>Compliance by design</strong> — built in the gov boundary, so audit evidence is a by-product of operations, not a fire drill.</li>
+        <li><strong>One system of record</strong> — service desk and security in one place; fewer tools, cleaner data.</li>
+        <li><strong>Scales as an MSP</strong> — each new customer onboards as an isolated tenant, all run from one platform.</li>
+        <li><strong>Meets users where they are</strong> — Microsoft 365, email, and Entra ID SSO mean minimal change management.</li>
+      </ul>
+
+      <div class="ready">
+        <div class="tag"><span class="b"></span>Production Readiness</div>
+        <p>All quality checks have been conducted by our <strong>team and interns</strong>, and the platform is <strong>ready for production</strong>. We are confident in onboarding our Carbon customers onto Anchor.</p>
+      </div>
+
+      <p>Near-term, Product is investing in deeper cloud provisioning (M365, Azure Gov, AWS GovCloud straight from the catalog), broader automation, and richer executive insight — continuing to close the gap with premium commercial tools while staying purpose-built for our mission.</p>
+
+      <p>I've attached a short <strong>feature one-pager</strong> and an <strong>executive briefing deck</strong> for reference. I'd welcome the chance to give leadership a <strong>20-minute walkthrough</strong> — a quick tour of the platform and a look at the roadmap. Happy to find time that works.</p>
+
+      <div class="sig">
+        <p style="margin-bottom:10px;color:var(--body);font-size:14.5px;">Best regards,</p>
+        <div class="name">Dr. Kevin White</div>
+        <div class="org">SBS Federal &middot; kevin.white@sbsfederal.com</div>
+        <div class="tagline">Anchor — Government-Cloud Service Desk &amp; Security Operations</div>
+      </div>
+    </div>
+
+    <div class="foot">
+      <div class="att">Attachments:<br>anchor-one-pager.html &middot; anchor-presentation.html</div>
+      <div class="live"><span class="b"></span>Live &amp; serving customers today</div>
+    </div>
+  </div>
+</body>
+</html>
