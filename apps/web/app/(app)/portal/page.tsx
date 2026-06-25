@@ -108,7 +108,7 @@ export default function PortalPage() {
                 <div className="border-b border-border p-2">
                   <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted">Knowledge base</div>
                   {kbHits.slice(0, 4).map((h) => (
-                    <Link key={h.id} href="/kb" className="block rounded-md px-2 py-1.5 hover:bg-surface-2">
+                    <Link key={h.id} href={`/kb?page=${h.id}`} className="block rounded-md px-2 py-1.5 hover:bg-surface-2">
                       <div className="text-sm font-medium text-fg">{h.title}</div>
                       {h.snippet && (
                         <div className="mt-0.5 text-xs text-muted [&_b]:font-medium [&_b]:text-brand" dangerouslySetInnerHTML={{ __html: h.snippet }} />
@@ -253,7 +253,7 @@ function AskAnchor() {
         {res && (
           <div className="mt-4 space-y-3">
             {res.answer ? (
-              <Link href="/kb" className="block rounded-lg border border-brand/40 bg-brand/5 p-3 hover:bg-brand/10">
+              <Link href={`/kb?page=${res.answer.id}`} className="block rounded-lg border border-brand/40 bg-brand/5 p-3 hover:bg-brand/10">
                 <div className="text-sm font-semibold text-fg">{res.answer.title}</div>
                 {res.answer.snippet && <div className="mt-1 text-xs text-muted [&_b]:font-medium [&_b]:text-brand" dangerouslySetInnerHTML={{ __html: res.answer.snippet }} />}
                 <div className="mt-1 text-[11px] text-brand">Open in knowledge base →</div>
@@ -267,7 +267,7 @@ function AskAnchor() {
                 <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted">Related articles</div>
                 <div className="space-y-1">
                   {res.articles.slice(1, 4).map((a) => (
-                    <Link key={a.id} href="/kb" className="block rounded-md px-2 py-1 text-sm text-fg hover:bg-surface-2">{a.title}</Link>
+                    <Link key={a.id} href={`/kb?page=${a.id}`} className="block rounded-md px-2 py-1 text-sm text-fg hover:bg-surface-2">{a.title}</Link>
                   ))}
                 </div>
               </div>

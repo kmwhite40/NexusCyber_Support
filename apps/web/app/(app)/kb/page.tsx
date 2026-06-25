@@ -1,5 +1,6 @@
 'use client';
 import * as React from 'react';
+import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
 import { Card, CardBody, Button, Badge, Input } from '@/components/ui/primitives';
@@ -71,6 +72,7 @@ function renderBody(body: string): React.ReactNode {
 
 export default function KbPage() {
   const { can } = useAuth();
+  const router = useRouter();
   const [spaces, setSpaces] = React.useState<Space[] | null>(null);
   const [spaceId, setSpaceId] = React.useState<string | null>(null);
   const [tree, setTree] = React.useState<TreeNode[]>([]);
@@ -79,6 +81,7 @@ export default function KbPage() {
   const [hits, setHits] = React.useState<Hit[] | null>(null);
   const [comment, setComment] = React.useState('');
   const [editing, setEditing] = React.useState<{ title: string; body: string } | null>(null);
+  const [feedback, setFeedback] = React.useState<'idle' | 'thanks'>('idle');
 
   const canAuthor = can('kb.author');
   const canPublish = can('kb.publish');
@@ -97,8 +100,31 @@ export default function KbPage() {
 
   const openPage = React.useCallback((id: string) => {
     setEditing(null);
+    setFeedback('idle');
     api.get<Page>(`/kb/pages/${id}`).then(setPage).catch(() => {});
   }, []);
+
+  // "Did this resolve your issue?" — record the answer, then thank or deflect to a ticket.
+  async function feedbackYes() {
+    if (!page) return;
+    await api.post(`/kb/pages/${page.id}/feedback`, { resolved: true }).catch(() => {});
+    setFeedback('thanks');
+  }
+  async function feedbackNo() {
+    if (!page) return;
+    await api.post(`/kb/pages/${page.id}/feedback`, { resolved: false }).catch(() => {});
+    const subject = `Still need help: ${page.title}`;
+    const description =
+      `I read the knowledge base article “${page.title}” but it didn’t resolve my issue.\n\n` +
+      `What I was trying to do:\n\n\nWhat actually happened:\n\n\n— Referenced KB article: ${page.title}`;
+    router.push(`/tickets/new?subject=${encodeURIComponent(subject)}&description=${encodeURIComponent(description)}`);
+  }
+
+  // Deep-link: /kb?page=<id> opens that article directly (e.g. from portal search / Ask Anchor).
+  React.useEffect(() => {
+    const pid = new URLSearchParams(window.location.search).get('page');
+    if (pid) openPage(pid);
+  }, [openPage]);
 
   async function runSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -258,6 +284,21 @@ export default function KbPage() {
                   )}
                 </div>
                 <div className="prose-nexus space-y-1 border-t border-border pt-4">{renderBody(page.body)}</div>
+
+                {/* Did this resolve your issue? — deflection prompt */}
+                {page.status === 'published' && (
+                  <div className="rounded-lg border border-border bg-surface-2/40 px-4 py-3">
+                    {feedback === 'thanks' ? (
+                      <p className="text-sm text-fg">✅ Thanks for the feedback — glad this helped! If anything else comes up, you can always open a ticket.</p>
+                    ) : (
+                      <div className="flex flex-wrap items-center gap-3">
+                        <span className="text-sm font-medium text-fg">Did this resolve your issue?</span>
+                        <Button size="sm" onClick={feedbackYes}>Yes</Button>
+                        <Button size="sm" variant="outline" onClick={feedbackNo}>No — open a ticket</Button>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Comments */}
                 <div className="border-t border-border pt-4">

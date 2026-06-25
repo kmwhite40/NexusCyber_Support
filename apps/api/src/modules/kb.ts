@@ -193,6 +193,26 @@ export async function search(actor: Principal, q: string, limit = 20) {
   });
 }
 
+/**
+ * Record per-article "did this resolve your issue?" feedback. resolved=true is a
+ * deflection (the reader self-served); resolved=false means they went on to open a
+ * ticket. Stored in kb_deflections for deflection-rate analytics. System context so
+ * any reader (incl. nexus, who have no org) can record without RLS friction.
+ */
+export async function recordFeedback(actor: Principal, pageId: string, resolved: boolean) {
+  authorize(actor, 'kb.read');
+  return withSystemContext(async (sql) => {
+    const page = (await sql.query('SELECT title FROM kb_pages WHERE id=$1', [pageId])).rows[0];
+    if (!page) throw Errors.notFound('page not found');
+    await sql.query(
+      `INSERT INTO kb_deflections (organization_id, query, suggested_page_ids, deflected)
+       VALUES ($1,$2,$3,$4)`,
+      [actor.plane === 'customer' ? actor.organizationId : null, `article: ${page.title}`, [pageId], resolved],
+    );
+    return { recorded: true, resolved };
+  });
+}
+
 export async function addComment(actor: Principal, pageId: string, body: string) {
   authorize(actor, 'kb.read');
   if (!body.trim()) throw Errors.badRequest('comment body required');

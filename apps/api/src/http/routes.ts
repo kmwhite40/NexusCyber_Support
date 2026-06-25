@@ -1085,6 +1085,14 @@ export async function registerRoutes(app: FastifyInstance) {
     return comment;
   });
 
+  // "Did this article resolve your issue?" — deflection feedback.
+  app.post('/api/v1/kb/pages/:id/feedback', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const { resolved } = z.object({ resolved: z.boolean() }).parse(req.body);
+    return kb.recordFeedback(p, id, resolved);
+  });
+
   app.get('/api/v1/kb/search', async (req) => {
     const p = await requirePrincipal(req);
     const q = z.object({ q: z.string().optional() }).parse(req.query);

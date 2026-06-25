@@ -43,6 +43,22 @@ export default function NewTicketPage() {
     }
   }, [me]);
 
+  // Prefill from query params (e.g. when a KB article didn't resolve the reader's issue).
+  React.useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    const subject = sp.get('subject');
+    const description = sp.get('description');
+    const type = sp.get('type');
+    if (subject || description || type) {
+      setForm((f) => ({
+        ...f,
+        ...(subject ? { subject: subject.slice(0, 300) } : {}),
+        ...(description ? { description } : {}),
+        ...(type ? { type } : {}),
+      }));
+    }
+  }, []);
+
   const priority = MATRIX[form.impact][form.urgency];
 
   async function submit(e: React.FormEvent) {
