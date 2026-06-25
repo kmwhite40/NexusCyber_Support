@@ -85,6 +85,9 @@ export default function PortalPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-10 pb-12">
+      {/* First-time walkthrough prompt (skippable) */}
+      <WalkthroughBanner />
+
       {/* Hero */}
       <div className="relative overflow-hidden rounded-2xl border border-border bg-gradient-to-br from-surface to-surface-2 px-8 py-12 text-center">
         <div className="pointer-events-none absolute -right-16 -top-16 h-64 w-64 rounded-full bg-brand/15 blur-3xl" />
@@ -223,6 +226,36 @@ export default function PortalPage() {
   );
 }
 
+const WALKTHROUGH_URL = '/how-to-create-a-ticket.html';
+
+/** First-time onboarding prompt to watch the "how to create a ticket" walkthrough. Skippable;
+ *  the choice persists (localStorage) so it doesn't reappear. A permanent link lives in the
+ *  Submit-a-request card for anyone who wants to re-watch. */
+function WalkthroughBanner() {
+  const [hidden, setHidden] = React.useState(true);
+  React.useEffect(() => {
+    try { setHidden(localStorage.getItem('anchor-walkthrough-dismissed') === '1'); } catch { setHidden(false); }
+  }, []);
+  const dismiss = () => {
+    try { localStorage.setItem('anchor-walkthrough-dismissed', '1'); } catch { /* ignore */ }
+    setHidden(true);
+  };
+  if (hidden) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-brand/40 bg-brand/5 px-5 py-3.5">
+      <span className="text-2xl" aria-hidden>🎬</span>
+      <div className="min-w-[200px] flex-1">
+        <div className="text-sm font-semibold text-fg">New to Anchor? Watch a 60-second walkthrough</div>
+        <div className="text-xs text-muted">Learn how to create a support ticket — and get help even faster.</div>
+      </div>
+      <a href={WALKTHROUGH_URL} target="_blank" rel="noopener noreferrer" onClick={dismiss}>
+        <Button size="sm">▶ Watch walkthrough</Button>
+      </a>
+      <Button size="sm" variant="ghost" onClick={dismiss}>Skip</Button>
+    </div>
+  );
+}
+
 function AskAnchor() {
   const [q, setQ] = React.useState('');
   const [asked, setAsked] = React.useState('');
@@ -342,6 +375,7 @@ function QuickSubmit({ onCreated }: { onCreated: (t: Ticket) => void }) {
           <div className="flex items-center gap-3">
             <Button type="submit" disabled={busy}>{busy ? 'Submitting…' : 'Submit request'}</Button>
             <Link href="/catalog" className="text-xs text-muted hover:text-fg">or browse the service catalog →</Link>
+            <a href={WALKTHROUGH_URL} target="_blank" rel="noopener noreferrer" className="ml-auto text-xs text-brand hover:underline">▶ How to create a ticket</a>
           </div>
         </form>
       </CardBody>
