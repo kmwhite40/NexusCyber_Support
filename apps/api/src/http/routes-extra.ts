@@ -17,8 +17,72 @@ import * as oncall from '../modules/oncall.js';
 import * as csat from '../modules/csat.js';
 import * as analytics from '../modules/analytics.js';
 import * as notifications from '../modules/notifications.js';
+import * as apiKeys from '../modules/api-keys.js';
+import * as webhooks from '../modules/webhooks.js';
 
 export async function registerExtraRoutes(app: FastifyInstance): Promise<void> {
+  // ---------------- Integration: M2M API keys (integration.manage) ----------------
+  app.get('/api/v1/integration/api-keys', async (req) => {
+    const p = await requirePrincipal(req);
+    const q = z.object({ organizationId: z.string().uuid().optional() }).parse(req.query ?? {});
+    return { data: await apiKeys.listApiKeys(p, q.organizationId) };
+  });
+
+  app.post('/api/v1/integration/api-keys', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const body = z
+      .object({
+        organizationId: z.string().uuid().optional(),
+        name: z.string().min(2).max(120),
+        scopes: z.array(z.string()).optional(),
+        expiresAt: z.string().datetime().optional(),
+      })
+      .parse(req.body);
+    const key = await apiKeys.createApiKey(p, body);
+    reply.status(201);
+    return key;
+  });
+
+  app.delete('/api/v1/integration/api-keys/:id', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return apiKeys.revokeApiKey(p, id);
+  });
+
+  // ---------------- Integration: outbound webhooks (integration.manage) ----------------
+  app.get('/api/v1/integration/webhooks', async (req) => {
+    const p = await requirePrincipal(req);
+    const q = z.object({ organizationId: z.string().uuid().optional() }).parse(req.query ?? {});
+    return { data: await webhooks.listEndpoints(p, q.organizationId) };
+  });
+
+  app.post('/api/v1/integration/webhooks', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const body = z
+      .object({
+        organizationId: z.string().uuid().optional(),
+        url: z.string().url(),
+        eventTypes: z.array(z.string()).optional(),
+        secret: z.string().min(16).max(200).optional(),
+      })
+      .parse(req.body);
+    const ep = await webhooks.createEndpoint(p, body);
+    reply.status(201);
+    return ep;
+  });
+
+  app.delete('/api/v1/integration/webhooks/:id', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return webhooks.deleteEndpoint(p, id);
+  });
+
+  app.get('/api/v1/integration/webhooks/deliveries', async (req) => {
+    const p = await requirePrincipal(req);
+    const q = z.object({ organizationId: z.string().uuid().optional(), limit: z.coerce.number().int().optional() }).parse(req.query ?? {});
+    return { data: await webhooks.listDeliveries(p, q.organizationId, q.limit) };
+  });
+
   // ---------------- Operational KPIs for the enterprise dashboards ----------------
   app.get('/api/v1/analytics/kpis', async (req) => {
     const p = await requirePrincipal(req);

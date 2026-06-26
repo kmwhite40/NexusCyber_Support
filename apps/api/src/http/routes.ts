@@ -444,10 +444,15 @@ export async function registerRoutes(app: FastifyInstance) {
         serviceId: z.string().uuid().optional(),
         organizationId: z.string().uuid().optional(),
         tags: z.array(z.string()).optional(),
+        severity: z.string().max(40).optional(),
+        customFields: z.record(z.unknown()).optional(),
+        externalRef: z.string().min(1).max(200).optional(),
+        externalSource: z.string().min(1).max(60).optional(),
       })
       .parse(req.body);
-    const ticket = await tickets.createTicket(p, body);
-    reply.status(201);
+    const { matched, ...ticket } = await tickets.createTicket(p, body);
+    // 200 when an existing ticket was matched by externalRef (idempotent re-sync); 201 on create.
+    reply.status(matched ? 200 : 201);
     return ticket;
   });
 

@@ -13,6 +13,7 @@ import { registerIdempotency, IdempotencyStore } from './http/idempotency.js';
 import { registerNotificationHandlers } from './modules/notifications.js';
 import { registerAutomationHandlers } from './modules/automation.js';
 import { registerCsatHandlers } from './modules/csat.js';
+import { registerWebhookHandlers } from './modules/webhooks.js';
 import { startSlaSweeper } from './jobs/sla-sweeper.js';
 import { startConMonScheduler } from './modules/conmon.js';
 import { subscribe } from './events/bus.js';
@@ -110,6 +111,8 @@ async function main() {
   registerNotificationHandlers();
   registerAutomationHandlers();
   registerCsatHandlers();
+  // Outbound webhook dispatcher: forwards ticket.* events to per-org registered receivers.
+  registerWebhookHandlers();
 
   // Background SLA evaluation sweep (warning/breach), idempotent.
   startSlaSweeper();

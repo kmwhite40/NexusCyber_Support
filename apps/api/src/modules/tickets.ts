@@ -53,6 +53,10 @@ export interface CreateTicketInput {
   affectedUserId?: string;
   organizationId?: string; // required for nexus-plane agents creating on behalf
   tags?: string[];
+  severity?: string; // descriptive severity (priority is still derived from impact×urgency)
+  customFields?: Record<string, unknown>; // integration metadata (custom_fields jsonb)
+  externalRef?: string; // integration idempotency key (e.g. <tenantId>:<source>:<itemId>)
+  externalSource?: string; // originating system label (e.g. 'anchor')
 }
 
 export async function createTicket(actor: Principal, input: CreateTicketInput) {
@@ -67,12 +71,48 @@ export async function createTicket(actor: Principal, input: CreateTicketInput) {
   const priority = derivePriority(impact, urgency);
 
   return withOrgContext(orgContextFor(actor), async (sql) => {
+    // Idempotent upsert: a repeated sync of the same source item (external_ref) returns
+    // the existing ticket — updated in place — instead of creating a duplicate.
+    if (input.externalRef) {
+      const existing = (
+        await sql.query('SELECT * FROM tickets WHERE organization_id=$1 AND external_ref=$2', [orgId, input.externalRef])
+      ).rows[0];
+      if (existing) {
+        const { rows: updated } = await sql.query(
+          `UPDATE tickets
+              SET subject=$2, description=$3, category=$4, impact=$5, urgency=$6, priority=$7, tags=$8,
+                  severity=$9, custom_fields=$10
+            WHERE id=$1 RETURNING *`,
+          [
+            existing.id,
+            input.subject,
+            input.description ?? existing.description,
+            input.category ?? existing.category,
+            impact,
+            urgency,
+            priority,
+            input.tags ?? existing.tags,
+            input.severity ?? existing.severity,
+            input.customFields ?? existing.custom_fields,
+          ],
+        );
+        await sql.query(
+          `INSERT INTO ticket_events (organization_id, ticket_id, actor_id, event_type, detail)
+           VALUES ($1,$2,$3,'synced',$4)`,
+          [orgId, existing.id, actor.id, { external_ref: input.externalRef, source: input.externalSource ?? existing.external_source }],
+        );
+        // matched=true → the route replies 200 (idempotent update), not 201.
+        return { ...updated[0], matched: true };
+      }
+    }
+
     const ticketNumber = await nextTicketNumber(sql, orgId);
     const { rows } = await sql.query(
       `INSERT INTO tickets
          (organization_id, ticket_number, type, requester_id, affected_user_id, source_channel,
-          subject, description, category, service_id, impact, urgency, priority, status, tags)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'new',$14)
+          subject, description, category, service_id, impact, urgency, priority, status, tags,
+          external_ref, external_source, severity, custom_fields)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'new',$14,$15,$16,$17,$18)
        RETURNING *`,
       [
         orgId,
@@ -89,6 +129,10 @@ export async function createTicket(actor: Principal, input: CreateTicketInput) {
         urgency,
         priority,
         input.tags ?? [],
+        input.externalRef ?? null,
+        input.externalSource ?? null,
+        input.severity ?? null,
+        input.customFields ?? {},
       ],
     );
     const ticket = rows[0];
@@ -124,7 +168,7 @@ export async function createTicket(actor: Principal, input: CreateTicketInput) {
       publish('ticket.acknowledged', orgId, { ticket_id: ticket.id, org_id: orgId }, { idempotencyKey: `ticket.acknowledged:${ticket.id}` });
     }
 
-    return { ...ticket, response_due_at: due.response_due_at, resolution_due_at: due.resolution_due_at, status: 'triage' };
+    return { ...ticket, response_due_at: due.response_due_at, resolution_due_at: due.resolution_due_at, status: 'triage', matched: false };
   });
 }
 
