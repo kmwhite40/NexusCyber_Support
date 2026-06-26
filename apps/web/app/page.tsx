@@ -113,26 +113,26 @@ export default function Landing() {
       <header className="absolute inset-x-0 top-0 z-30">
         <nav className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
           <Link href="/" className="flex items-center gap-2.5">
-            <BrandMark size={28} />
-            <span className="text-[15px] font-semibold tracking-tight text-fg">Anchor</span>
+            <BrandMark size={32} />
+            <span className="text-lg font-semibold tracking-tight text-fg">Anchor</span>
           </Link>
           <div className="flex items-center gap-1 sm:gap-2">
             <Link
               href="/kb"
-              className="hidden items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium text-fg/70 transition-colors hover:text-fg sm:inline-flex"
+              className="hidden items-center gap-1.5 rounded-md px-3 py-2 text-base font-medium text-fg/70 transition-colors hover:text-fg sm:inline-flex"
             >
-              <BookOpen className="h-4 w-4" strokeWidth={1.75} />
+              <BookOpen className="h-[18px] w-[18px]" strokeWidth={1.75} />
               Help Center
             </Link>
             <Link
               href="/login"
-              className="hidden rounded-md px-3 py-2 text-sm font-medium text-fg/70 transition-colors hover:text-fg sm:inline-flex"
+              className="hidden rounded-md px-3 py-2 text-base font-medium text-fg/70 transition-colors hover:text-fg sm:inline-flex"
             >
               Sign in
             </Link>
             <Link href="/tickets/new">
-              <Button size="md" className="px-4">
-                <Ticket className="h-4 w-4" strokeWidth={2} />
+              <Button size="lg" className="px-5 text-base">
+                <Ticket className="h-[18px] w-[18px]" strokeWidth={2} />
                 Submit a Ticket
               </Button>
             </Link>
@@ -148,7 +148,7 @@ export default function Landing() {
         <div className="pointer-events-none absolute inset-0 z-[2] bg-gradient-to-b from-bg/30 via-bg/60 to-bg" />
 
         <div className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 pb-24 pt-28 text-center">
-          <span className="mb-7 inline-flex items-center gap-2 rounded-full border border-border bg-surface/50 px-3.5 py-1.5 text-xs font-medium text-fg/70 backdrop-blur">
+          <span className="mb-7 inline-flex items-center gap-2 rounded-full border border-border bg-surface/50 px-4 py-2 text-sm font-medium text-fg/70 backdrop-blur">
             <span className="relative flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand/70" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
@@ -162,21 +162,21 @@ export default function Landing() {
             <span className="text-brand">resolved in real-time.</span>
           </h1>
 
-          <p className="mt-6 max-w-xl text-pretty text-base leading-relaxed text-fg/60 sm:text-lg">
+          <p className="mt-6 max-w-2xl text-pretty text-lg leading-relaxed text-fg/60 sm:text-xl">
             Submit a request, track its progress, and find instant answers — all in one
             secure portal, with a support team that resolves issues fast.
           </p>
 
           <div className="mt-9 flex flex-col items-center gap-3 sm:flex-row">
             <Link href="/tickets/new">
-              <Button size="lg" className="px-7">
-                <Ticket className="h-4 w-4" strokeWidth={2} />
+              <Button size="lg" className="h-12 px-8 text-base">
+                <Ticket className="h-[18px] w-[18px]" strokeWidth={2} />
                 Submit a Ticket
               </Button>
             </Link>
             <Link href="/kb">
-              <Button variant="outline" size="lg" className="px-7 backdrop-blur">
-                <Search className="h-4 w-4" strokeWidth={1.75} />
+              <Button variant="outline" size="lg" className="h-12 px-8 text-base backdrop-blur">
+                <Search className="h-[18px] w-[18px]" strokeWidth={1.75} />
                 Browse Help Center
               </Button>
             </Link>
@@ -184,19 +184,19 @@ export default function Landing() {
 
           <dl className="mt-14 grid grid-cols-3 gap-x-8 gap-y-2 sm:gap-x-16">
             {[
-              ['4 min', 'Avg. first response'],
-              ['24 / 7', 'Support coverage'],
-              ['1,200+', 'Help articles'],
+              ['Azure Gov', 'Secure US-Gov hosting'],
+              ['24 / 7', 'Critical-issue hotline'],
+              ['One portal', 'Requests, catalog & answers'],
             ].map(([n, l]) => (
               <div key={l} className="text-center">
                 <dt className="text-2xl font-semibold tracking-tight text-fg sm:text-3xl">{n}</dt>
-                <dd className="mt-1 text-[11px] uppercase tracking-widest text-fg/45 sm:text-xs">{l}</dd>
+                <dd className="mt-1.5 text-xs uppercase tracking-widest text-fg/45 sm:text-sm">{l}</dd>
               </div>
             ))}
           </dl>
         </div>
 
-        <div className="relative z-10 mb-7 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 px-6 text-[11px] uppercase tracking-widest text-fg/40">
+        <div className="relative z-10 mb-7 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 px-6 text-xs uppercase tracking-widest text-fg/40">
           <span>NIST 800-53</span><span aria-hidden>·</span>
           <span>CMMC 2.0</span><span aria-hidden>·</span>
           <span>FedRAMP</span><span aria-hidden>·</span>
@@ -209,13 +209,13 @@ export default function Landing() {
       <section className="relative z-10 border-t border-border bg-bg">
         <div className="mx-auto max-w-6xl px-6 py-20 sm:py-28">
           <div className="mb-12 max-w-2xl">
-            <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-brand">
-              <Zap className="h-3.5 w-3.5" strokeWidth={2} /> Ways to get help
+            <span className="inline-flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-brand">
+              <Zap className="h-4 w-4" strokeWidth={2} /> Ways to get help
             </span>
-            <h2 className="mt-3 text-3xl font-semibold tracking-tight text-fg sm:text-4xl">
+            <h2 className="mt-3 text-4xl font-semibold tracking-tight text-fg sm:text-5xl">
               Everything you need, one portal.
             </h2>
-            <p className="mt-3 text-base leading-relaxed text-fg/55">
+            <p className="mt-4 text-lg leading-relaxed text-fg/55">
               Whether it’s a quick question or a hardware request — start here and we’ll take it from there.
             </p>
           </div>
@@ -231,14 +231,14 @@ export default function Landing() {
                   className={`group flex animate-fade-up flex-col justify-between rounded-xl border border-border glass p-6 shadow-card transition-all duration-200 hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-glow ${f.span}`}
                 >
                   <div>
-                    <div className="mb-5 inline-flex h-11 w-11 items-center justify-center rounded-lg border border-brand/20 bg-brand/10 text-brand">
-                      <Icon className="h-5 w-5" strokeWidth={1.75} />
+                    <div className="mb-5 inline-flex h-12 w-12 items-center justify-center rounded-lg border border-brand/20 bg-brand/10 text-brand">
+                      <Icon className="h-6 w-6" strokeWidth={1.75} />
                     </div>
-                    <h3 className="text-lg font-semibold tracking-tight text-fg">{f.title}</h3>
-                    <p className="mt-2 text-sm leading-relaxed text-fg/55">{f.body}</p>
+                    <h3 className="text-xl font-semibold tracking-tight text-fg">{f.title}</h3>
+                    <p className="mt-2 text-base leading-relaxed text-fg/55">{f.body}</p>
                   </div>
                   <div className="mt-6 flex items-center justify-between">
-                    <span className="text-xs font-medium uppercase tracking-wider text-fg/40">{f.meta}</span>
+                    <span className="text-sm font-medium uppercase tracking-wider text-fg/40">{f.meta}</span>
                     <ArrowRight
                       className="h-4 w-4 text-brand opacity-0 transition-all duration-200 group-hover:translate-x-0.5 group-hover:opacity-100"
                       strokeWidth={2}
@@ -258,16 +258,16 @@ export default function Landing() {
             {/* header */}
             <div className="flex flex-col gap-3 border-b border-border px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
-                <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-brand/20 bg-brand/10 text-brand">
-                  <Activity className="h-[18px] w-[18px]" strokeWidth={1.75} />
+                <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-brand/20 bg-brand/10 text-brand">
+                  <Activity className="h-5 w-5" strokeWidth={1.75} />
                 </span>
                 <div>
-                  <h2 className="text-base font-semibold tracking-tight text-fg">Service status</h2>
-                  <p className="text-xs text-fg/45">Updated {secs}s ago · auto-refreshing</p>
+                  <h2 className="text-lg font-semibold tracking-tight text-fg">Service status</h2>
+                  <p className="text-sm text-fg/45">Updated {secs}s ago · auto-refreshing</p>
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <span className="inline-flex items-center gap-2 rounded-full border border-success/30 bg-success/10 px-3 py-1 text-xs font-medium text-success">
+                <span className="inline-flex items-center gap-2 rounded-full border border-success/30 bg-success/10 px-3.5 py-1.5 text-sm font-medium text-success">
                   <span className="relative flex h-2 w-2">
                     <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success/70" />
                     <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
@@ -277,10 +277,10 @@ export default function Landing() {
                 <button
                   type="button"
                   onClick={() => setSecs(0)}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-fg/60 transition-colors hover:bg-surface-2 hover:text-fg"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-border text-fg/60 transition-colors hover:bg-surface-2 hover:text-fg"
                   aria-label="Refresh status"
                 >
-                  <RefreshCw className="h-4 w-4" strokeWidth={1.75} />
+                  <RefreshCw className="h-[18px] w-[18px]" strokeWidth={1.75} />
                 </button>
               </div>
             </div>
@@ -289,7 +289,7 @@ export default function Landing() {
             <div className="grid grid-cols-1 divide-y divide-border lg:grid-cols-2 lg:divide-x lg:divide-y-0">
               {/* services the customer uses */}
               <div className="p-6">
-                <h3 className="mb-4 text-xs font-semibold uppercase tracking-widest text-fg/45">Systems</h3>
+                <h3 className="mb-4 text-sm font-semibold uppercase tracking-widest text-fg/45">Systems</h3>
                 <ul className="space-y-1">
                   {SERVICES.map((s) => {
                     const st = STATE_STYLES[s.state];
@@ -298,12 +298,12 @@ export default function Landing() {
                         key={s.name}
                         className="flex items-center justify-between rounded-lg px-3 py-2.5 transition-colors hover:bg-surface-2/60"
                       >
-                        <span className="flex items-center gap-3 text-sm text-fg/80">
+                        <span className="flex items-center gap-3 text-base text-fg/80">
                           <span className={`h-2 w-2 rounded-full ${st.dot}`} />
                           {s.name}
                         </span>
-                        <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${st.text}`}>
-                          {s.state === 'operational' && <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={2} />}
+                        <span className={`inline-flex items-center gap-1.5 text-sm font-medium ${st.text}`}>
+                          {s.state === 'operational' && <CheckCircle2 className="h-4 w-4" strokeWidth={2} />}
                           {st.label}
                         </span>
                       </li>
@@ -315,8 +315,8 @@ export default function Landing() {
               {/* popular self-serve answers */}
               <div className="p-6">
                 <div className="mb-4 flex items-center justify-between">
-                  <h3 className="text-xs font-semibold uppercase tracking-widest text-fg/45">Popular in the Help Center</h3>
-                  <Link href="/kb" className="text-xs font-medium text-brand hover:underline">
+                  <h3 className="text-sm font-semibold uppercase tracking-widest text-fg/45">Popular in the Help Center</h3>
+                  <Link href="/kb" className="text-sm font-medium text-brand hover:underline">
                     Browse all →
                   </Link>
                 </div>
@@ -328,11 +328,11 @@ export default function Landing() {
                         className="group flex items-center justify-between gap-3 rounded-lg border border-border bg-surface/40 px-3.5 py-3 transition-colors hover:border-brand/30"
                       >
                         <span className="flex min-w-0 items-center gap-3">
-                          <LifeBuoy className="h-4 w-4 shrink-0 text-brand" strokeWidth={1.75} />
-                          <span className="truncate text-sm font-medium text-fg">{t.title}</span>
+                          <LifeBuoy className="h-[18px] w-[18px] shrink-0 text-brand" strokeWidth={1.75} />
+                          <span className="truncate text-base font-medium text-fg">{t.title}</span>
                         </span>
                         <span className="flex shrink-0 items-center gap-2">
-                          <span className="hidden text-[11px] uppercase tracking-wider text-fg/35 sm:inline">{t.tag}</span>
+                          <span className="hidden text-xs uppercase tracking-wider text-fg/35 sm:inline">{t.tag}</span>
                           <ChevronRight className="h-4 w-4 text-fg/30 transition-colors group-hover:text-brand" strokeWidth={1.75} />
                         </span>
                       </Link>
@@ -345,21 +345,21 @@ export default function Landing() {
 
           {/* closing CTA */}
           <div className="mt-12 flex flex-col items-center gap-4 rounded-2xl border border-border glass px-6 py-12 text-center shadow-card sm:py-16">
-            <h2 className="max-w-xl text-2xl font-semibold tracking-tight text-fg sm:text-3xl">
+            <h2 className="max-w-xl text-3xl font-semibold tracking-tight text-fg sm:text-4xl">
               Can’t find what you need?
             </h2>
-            <p className="max-w-md text-sm leading-relaxed text-fg/55">
+            <p className="max-w-md text-base leading-relaxed text-fg/55 sm:text-lg">
               Our support team is ready to help — submit a ticket and we’ll take it from here.
             </p>
             <div className="mt-2 flex flex-col gap-3 sm:flex-row">
               <Link href="/tickets/new">
-                <Button size="lg" className="px-7">
-                  <Ticket className="h-4 w-4" strokeWidth={2} />
+                <Button size="lg" className="h-12 px-8 text-base">
+                  <Ticket className="h-[18px] w-[18px]" strokeWidth={2} />
                   Submit a Ticket
                 </Button>
               </Link>
               <Link href="/login">
-                <Button variant="outline" size="lg" className="px-7">
+                <Button variant="outline" size="lg" className="h-12 px-8 text-base">
                   Sign in to your portal
                 </Button>
               </Link>
@@ -370,9 +370,9 @@ export default function Landing() {
 
       {/* ====================== FOOTER ====================== */}
       <footer className="relative z-10 border-t border-border bg-bg">
-        <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-6 py-7 text-xs text-fg/45 sm:flex-row">
+        <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-6 py-8 text-sm text-fg/45 sm:flex-row">
           <span className="flex items-center gap-2">
-            <BrandMark size={18} />
+            <BrandMark size={20} />
             Copyright © 2026 NexusCyber. Operated as part of Strategic Business Systems, Inc.
           </span>
           <nav className="flex items-center gap-5">
