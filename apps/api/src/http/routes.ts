@@ -18,6 +18,7 @@ import * as conmon from '../modules/conmon.js';
 import * as oncall from '../modules/oncall.js';
 import * as automation from '../modules/automation.js';
 import * as compliance from '../modules/compliance.js';
+import * as billing from '../modules/billing.js';
 import * as elevation from '../modules/elevation.js';
 import * as attachments from '../modules/attachments.js';
 import * as kb from '../modules/kb.js';
@@ -698,6 +699,44 @@ export async function registerRoutes(app: FastifyInstance) {
     const orgId = p.plane === 'customer' ? p.organizationId! : q.organizationId;
     if (!orgId) throw Errors.badRequest('organizationId required');
     return compliance.evidencePackage(p, orgId);
+  });
+
+  // ---------------- Billing (admin-only; per-customer allocation + overage) ----------------
+  app.get('/api/v1/billing/settings', async (req) => {
+    const p = await requirePrincipal(req);
+    const { organizationId } = z.object({ organizationId: z.string().uuid() }).parse(req.query);
+    return billing.getSettings(p, organizationId);
+  });
+
+  app.put('/api/v1/billing/settings', async (req) => {
+    const p = await requirePrincipal(req);
+    const body = z
+      .object({
+        organizationId: z.string().uuid(),
+        planName: z.string().min(1).max(80),
+        monthlyTicketAllocation: z.number().int().min(0),
+        overageFeeCents: z.number().int().min(0),
+        currency: z.string().min(3).max(3),
+      })
+      .parse(req.body);
+    return billing.setSettings(p, body.organizationId, {
+      plan_name: body.planName,
+      monthly_ticket_allocation: body.monthlyTicketAllocation,
+      overage_fee_cents: body.overageFeeCents,
+      currency: body.currency.toUpperCase(),
+    });
+  });
+
+  app.get('/api/v1/billing/utilization', async (req) => {
+    const p = await requirePrincipal(req);
+    const q = z
+      .object({
+        organizationId: z.string().uuid(),
+        year: z.coerce.number().int().min(2000).max(2100),
+        month: z.coerce.number().int().min(1).max(12),
+      })
+      .parse(req.query);
+    return billing.utilization(p, q.organizationId, q.year, q.month);
   });
 
   app.post('/api/v1/posture/findings/:id/exception', async (req, reply) => {

@@ -455,6 +455,38 @@ export const customersApi = {
   removeUser: (orgId: string, userId: string) => api.del<{ id: string }>(`/organizations/${orgId}/users/${userId}`),
 };
 
+// ---- Billing (admin-only; per-customer allocation + overage) ----
+export interface BillingSettings {
+  organization_id: string;
+  plan_name: string;
+  monthly_ticket_allocation: number;
+  overage_fee_cents: number;
+  currency: string;
+  updated_at: string | null;
+}
+export interface BillingUtilization {
+  organization_id: string;
+  organization_name: string;
+  year: number;
+  month: number;
+  period_start: string;
+  period_end: string;
+  used: number;
+  allocation: number;
+  overage: number;
+  overage_fee_cents: number;
+  amount_cents: number;
+  currency: string;
+  plan_name: string;
+}
+export const billingApi = {
+  settings: (orgId: string) => api.get<BillingSettings>(`/billing/settings?organizationId=${orgId}`),
+  saveSettings: (b: { organizationId: string; planName: string; monthlyTicketAllocation: number; overageFeeCents: number; currency: string }) =>
+    api.put<BillingSettings>('/billing/settings', b),
+  utilization: (orgId: string, year: number, month: number) =>
+    api.get<BillingUtilization>(`/billing/utilization?organizationId=${orgId}&year=${year}&month=${month}`),
+};
+
 // ---- Platform user administration (nexus staff) ----
 export interface PlatformUser {
   id: string;

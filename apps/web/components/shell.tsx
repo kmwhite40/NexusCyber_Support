@@ -30,6 +30,7 @@ const NEXUS_NAV: NavItem[] = [
   { href: '/alerts', label: 'Alerts', icon: <IconBell />, anyPerm: ['alert.read'], section: 'Operations' },
   { href: '/services', label: 'Services', icon: <IconServer />, anyPerm: ['service.read', 'service.manage'], section: 'Operations' },
   { href: '/customers', label: 'Customers', icon: <IconUsers />, anyPerm: ['org.read', 'org.manage'], section: 'Operations' },
+  { href: '/billing', label: 'Billing', icon: <IconReceipt />, anyPerm: ['org.manage'], section: 'Operations' },
   { href: '/team', label: 'Platform users', icon: <IconUsers />, anyPerm: ['admin.users.manage'], section: 'Operations' },
   { href: '/channels', label: 'Channels', icon: <IconPlug />, anyPerm: ['channel.read', 'channel.manage'], section: 'Operations' },
   { href: '/automations', label: 'Automations', icon: <IconRobot />, anyPerm: ['automation.author'], section: 'Operations' },
@@ -171,6 +172,7 @@ function titleFor(path: string): string {
   if (path.startsWith('/incidents')) return 'Incidents';
   if (path.startsWith('/services')) return 'Services & assets';
   if (path.startsWith('/customers')) return 'Customers';
+  if (path.startsWith('/billing')) return 'Billing & utilization';
   if (path.startsWith('/email-logs')) return 'Email logs';
   if (path.startsWith('/alerts')) return 'Alerts';
   if (path.startsWith('/channels')) return 'Channels';
@@ -189,6 +191,7 @@ function IconCatalog() { return <svg width="18" height="18" viewBox="0 0 24 24" 
 function IconPager() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>; }
 function IconHelp() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3 2.5c-.7.3-1 .8-1 1.5v.5"/><circle cx="12" cy="17" r="0.6" fill="currentColor"/></svg>; }
 function IconClipboard() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 15 4v1H9V4z"/><path d="M9 11l2 2 4-4"/></svg>; }
+function IconReceipt() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M5 3v18l2-1.4 2 1.4 2-1.4 2 1.4 2-1.4 2 1.4V3l-2 1.4L14 3l-2 1.4L10 3 8 4.4 5 3z"/><path d="M9 8h6M9 12h6"/></svg>; }
 function IconBook() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 5a2 2 0 0 1 2-2h12v16H6a2 2 0 0 0-2 2V5z"/><path d="M18 17H6a2 2 0 0 0-2 2"/></svg>; }
 function IconCalendar() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>; }
 function IconBug() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="8" y="6" width="8" height="12" rx="4"/><path d="M12 6V4M5 9l2 1M19 9l-2 1M5 15l2-1M19 15l-2-1M4 12h2M18 12h2"/></svg>; }
