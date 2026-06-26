@@ -162,7 +162,7 @@ export default function Landing() {
             <span className="text-brand">resolved in real-time.</span>
           </h1>
 
-          <p className="mt-6 max-w-2xl text-pretty text-lg leading-relaxed text-fg/60 sm:text-xl">
+          <p className="mt-6 max-w-2xl text-pretty text-xl leading-relaxed text-fg/60 sm:text-2xl">
             Submit a request, track its progress, and find instant answers — all in one
             secure portal, with a support team that resolves issues fast.
           </p>
@@ -189,14 +189,14 @@ export default function Landing() {
               ['One portal', 'Requests, catalog & answers'],
             ].map(([n, l]) => (
               <div key={l} className="text-center">
-                <dt className="text-2xl font-semibold tracking-tight text-fg sm:text-3xl">{n}</dt>
-                <dd className="mt-1.5 text-xs uppercase tracking-widest text-fg/45 sm:text-sm">{l}</dd>
+                <dt className="text-3xl font-semibold tracking-tight text-fg sm:text-4xl">{n}</dt>
+                <dd className="mt-1.5 text-sm uppercase tracking-widest text-fg/45 sm:text-base">{l}</dd>
               </div>
             ))}
           </dl>
         </div>
 
-        <div className="relative z-10 mb-7 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 px-6 text-xs uppercase tracking-widest text-fg/40">
+        <div className="relative z-10 mb-7 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 px-6 text-sm uppercase tracking-widest text-fg/40">
           <span>NIST 800-53</span><span aria-hidden>·</span>
           <span>CMMC 2.0</span><span aria-hidden>·</span>
           <span>FedRAMP</span><span aria-hidden>·</span>
@@ -215,7 +215,7 @@ export default function Landing() {
             <h2 className="mt-3 text-4xl font-semibold tracking-tight text-fg sm:text-5xl">
               Everything you need, one portal.
             </h2>
-            <p className="mt-4 text-lg leading-relaxed text-fg/55">
+            <p className="mt-4 text-xl leading-relaxed text-fg/55">
               Whether it’s a quick question or a hardware request — start here and we’ll take it from there.
             </p>
           </div>
@@ -234,8 +234,8 @@ export default function Landing() {
                     <div className="mb-5 inline-flex h-12 w-12 items-center justify-center rounded-lg border border-brand/20 bg-brand/10 text-brand">
                       <Icon className="h-6 w-6" strokeWidth={1.75} />
                     </div>
-                    <h3 className="text-xl font-semibold tracking-tight text-fg">{f.title}</h3>
-                    <p className="mt-2 text-base leading-relaxed text-fg/55">{f.body}</p>
+                    <h3 className="text-xl font-semibold tracking-tight text-fg sm:text-2xl">{f.title}</h3>
+                    <p className="mt-2 text-base leading-relaxed text-fg/55 sm:text-lg">{f.body}</p>
                   </div>
                   <div className="mt-6 flex items-center justify-between">
                     <span className="text-sm font-medium uppercase tracking-wider text-fg/40">{f.meta}</span>
@@ -348,7 +348,7 @@ export default function Landing() {
             <h2 className="max-w-xl text-3xl font-semibold tracking-tight text-fg sm:text-4xl">
               Can’t find what you need?
             </h2>
-            <p className="max-w-md text-base leading-relaxed text-fg/55 sm:text-lg">
+            <p className="max-w-md text-lg leading-relaxed text-fg/55 sm:text-xl">
               Our support team is ready to help — submit a ticket and we’ll take it from here.
             </p>
             <div className="mt-2 flex flex-col gap-3 sm:flex-row">
@@ -370,7 +370,7 @@ export default function Landing() {
 
       {/* ====================== FOOTER ====================== */}
       <footer className="relative z-10 border-t border-border bg-bg">
-        <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-6 py-8 text-sm text-fg/45 sm:flex-row">
+        <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-6 py-8 text-base text-fg/45 sm:flex-row">
           <span className="flex items-center gap-2">
             <BrandMark size={20} />
             Copyright © 2026 NexusCyber. Operated as part of Strategic Business Systems, Inc.
