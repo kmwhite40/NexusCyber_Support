@@ -58,6 +58,62 @@ export function allStepsApproved(steps: Array<{ decision: string | null }>): boo
   return steps.length > 0 && steps.every((s) => s.decision === 'approved');
 }
 
+// ---- CAB quorum voting (dedicated subsystem; see spec 2026-06-25) ----
+
+export type VoteValue = 'approve' | 'reject' | 'abstain';
+export type Threshold = 'majority' | 'two_thirds' | 'unanimous';
+export interface VoteRow { vote: VoteValue | null; weight: number }
+export interface Tally { approve: number; reject: number; abstain: number; pending: number; cast: number; roster: number }
+
+/** Weighted tally of a vote roster. Pure. */
+export function tallyVotes(rows: VoteRow[]): Tally {
+  const t: Tally = { approve: 0, reject: 0, abstain: 0, pending: 0, cast: 0, roster: 0 };
+  for (const r of rows) {
+    const w = r.weight ?? 1;
+    t.roster += w;
+    if (r.vote === 'approve') { t.approve += w; t.cast += w; }
+    else if (r.vote === 'reject') { t.reject += w; t.cast += w; }
+    else if (r.vote === 'abstain') { t.abstain += w; t.cast += w; }
+    else t.pending += w;
+  }
+  return t;
+}
+
+/** Does the for/against split pass the threshold? `allVoted` = no pending roster left. Pure. */
+function thresholdPasses(a: number, r: number, threshold: Threshold, allVoted: boolean): boolean {
+  if (a + r === 0) return false;
+  if (threshold === 'majority') return a > r;
+  if (threshold === 'two_thirds') return a >= Math.ceil((2 * (a + r)) / 3);
+  // unanimous: any reject fails; pass only once every non-abstaining voter has approved
+  return r === 0 && allVoted;
+}
+
+/**
+ * Resolve a change's CAB status from its vote roster. Pure.
+ * Returns 'approved' | 'rejected' | 'cab_review' (still open).
+ */
+export function resolveVote(rows: VoteRow[], cfg: { quorum: number; threshold: Threshold }): ChangeStatus {
+  const t = tallyVotes(rows);
+  const quorumMet = t.cast >= cfg.quorum;
+  const allVoted = t.pending === 0;
+  if (quorumMet && thresholdPasses(t.approve, t.reject, cfg.threshold, allVoted)) return 'approved';
+  // Reject once passing is mathematically impossible even if every pending vote approves.
+  const canStillPass = thresholdPasses(t.approve + t.pending, t.reject, cfg.threshold, true);
+  if (!canStillPass && t.approve + t.reject > 0) return 'rejected';
+  if (quorumMet && allVoted && t.approve + t.reject === 0) return 'rejected'; // quorum met by all-abstain
+  return 'cab_review';
+}
+
+const RISK_MATRIX: Record<string, Record<string, 'low' | 'medium' | 'high'>> = {
+  low: { low: 'low', medium: 'low', high: 'medium' },
+  medium: { low: 'low', medium: 'medium', high: 'high' },
+  high: { low: 'medium', medium: 'high', high: 'high' },
+};
+/** Impact x likelihood -> risk band. Pure. */
+export function deriveRisk(impact: 'low' | 'medium' | 'high', likelihood: 'low' | 'medium' | 'high') {
+  return RISK_MATRIX[impact][likelihood];
+}
+
 export interface CreateChangeInput {
   title: string;
   description?: string;
