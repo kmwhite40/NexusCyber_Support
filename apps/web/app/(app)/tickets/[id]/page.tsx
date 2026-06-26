@@ -3,7 +3,8 @@ import * as React from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { api, oncall, ApiError, type Ticket, TIER_GROUPS, LINK_TYPES } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
-import { Card, CardHeader, CardTitle, CardBody, Button, Textarea, Badge, Select } from '@/components/ui/primitives';
+import { Card, CardHeader, CardTitle, CardBody, Button, Input, Textarea, Badge, Select } from '@/components/ui/primitives';
+import { ArrowLeft, Check, Minus, Star } from 'lucide-react';
 import { Skeleton } from '@/components/ui/data';
 import { PriorityBadge, StatusBadge, SlaBadge } from '@/components/ui/badges';
 import { TicketAttachments } from '@/components/ticket-attachments';
@@ -120,7 +121,7 @@ export default function TicketDetailPage() {
 
   return (
     <div className="space-y-5">
-      <button onClick={() => router.push('/tickets')} className="text-xs text-muted hover:text-fg">← Back to tickets</button>
+      <button onClick={() => router.push('/tickets')} className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-fg"><ArrowLeft className="h-4 w-4" strokeWidth={1.75} /> Back to tickets</button>
 
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -137,7 +138,7 @@ export default function TicketDetailPage() {
             <Button size="sm" variant="outline" onClick={claim} disabled={busy}>Claim</Button>
             {can('oncall.page') && (
               <Button size="sm" variant="danger" onClick={pageOnCall} disabled={busy || paged}>
-                {paged ? 'Paged ✓' : 'Page on-call'}
+                {paged ? <span className="inline-flex items-center gap-1.5"><Check className="h-4 w-4" strokeWidth={1.75} /> Paged</span> : 'Page on-call'}
               </Button>
             )}
             {(nextStates[ticket.status] ?? []).map((s) => (
@@ -192,15 +193,15 @@ export default function TicketDetailPage() {
                 {tasks.map((t) => (
                   <div key={t.id} className="flex items-center gap-3 rounded-md border border-border bg-surface-2/40 px-3 py-2">
                     <span
-                      className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border text-[10px] ${
+                      className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border text-xs ${
                         t.status === 'done' ? 'border-success text-success' : t.status === 'skipped' ? 'border-muted text-muted' : 'border-border text-muted'
                       }`}
                     >
-                      {t.status === 'done' ? '✓' : t.status === 'skipped' ? '–' : t.position + 1}
+                      {t.status === 'done' ? <Check className="h-3 w-3" strokeWidth={1.75} /> : t.status === 'skipped' ? <Minus className="h-3 w-3" strokeWidth={1.75} /> : t.position + 1}
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="text-xs font-medium text-fg">{t.label}</div>
-                      <div className="text-[10px] text-muted">{t.assignee_role}{t.automatable ? ' · automatable' : ''}</div>
+                      <div className="text-xs text-muted">{t.assignee_role}{t.automatable ? ' · automatable' : ''}</div>
                     </div>
                     {t.status === 'pending' && isAgent && can('ticket.update') ? (
                       <Button size="sm" variant="outline" onClick={() => completeTask(t.id)} disabled={busy}>Complete</Button>
@@ -231,7 +232,7 @@ export default function TicketDetailPage() {
                   <div className="mb-1 flex items-center gap-2">
                     <span className="text-xs font-medium text-fg">{c.author_id === me?.id ? 'You' : c.visibility === 'internal' ? 'Agent (internal)' : 'Participant'}</span>
                     {c.visibility === 'internal' && <Badge tone="warning">internal note</Badge>}
-                    <span className="ml-auto text-[11px] text-muted">{new Date(c.created_at).toLocaleString()}</span>
+                    <span className="ml-auto text-xs text-muted">{new Date(c.created_at).toLocaleString()}</span>
                   </div>
                   <p className="whitespace-pre-wrap text-sm text-fg/90">{c.body}</p>
                 </div>
@@ -263,7 +264,7 @@ export default function TicketDetailPage() {
                 <div key={s.id} className="flex items-center justify-between">
                   <div>
                     <div className="text-xs font-medium capitalize text-fg">{s.metric}</div>
-                    <div className="text-[11px] text-muted">Due {new Date(s.due_at).toLocaleString()}</div>
+                    <div className="text-xs text-muted">Due {new Date(s.due_at).toLocaleString()}</div>
                   </div>
                   <SlaBadge state={s.state} />
                 </div>
@@ -290,7 +291,7 @@ export default function TicketDetailPage() {
                   <li key={e.id} className="relative">
                     <span className="absolute -left-[21px] top-1 h-2 w-2 rounded-full bg-brand" />
                     <div className="text-xs font-medium text-fg">{e.event_type.replace(/_/g, ' ')}</div>
-                    <div className="text-[11px] text-muted">{new Date(e.created_at).toLocaleString()}</div>
+                    <div className="text-xs text-muted">{new Date(e.created_at).toLocaleString()}</div>
                   </li>
                 ))}
                 {(ticket.events ?? []).length === 0 && <li className="text-xs text-muted">No events.</li>}
@@ -353,11 +354,11 @@ function LinkedTickets({ ticket, isAgent, canUpdate, onChange }: { ticket: Ticke
               <Select className="h-9 w-40" value={linkType} onChange={(e) => setLinkType(e.target.value)}>
                 {LINK_TYPES.map((t) => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
               </Select>
-              <input
+              <Input
                 value={number}
                 onChange={(e) => setNumber(e.target.value)}
                 placeholder="Ticket number (e.g. ACME-000002)"
-                className="h-9 flex-1 rounded-md border border-border bg-surface px-3 text-sm text-fg"
+                className="h-9 flex-1"
               />
               <Button size="sm" onClick={addLink} disabled={busy || !number.trim()}>Link</Button>
             </div>
@@ -430,10 +431,10 @@ function CsatPrompt({ ticketId, status }: { ticketId: string; status: string }) 
                     disabled={busy}
                     onMouseEnter={() => setHover(n)}
                     onClick={() => rate(n)}
-                    className={`text-xl transition-colors ${n <= hover ? 'text-warning' : 'text-muted hover:text-warning/70'}`}
+                    className={`transition-colors ${n <= hover ? 'text-warning' : 'text-muted hover:text-warning/70'}`}
                     aria-label={`${n} star${n > 1 ? 's' : ''}`}
                   >
-                    ★
+                    <Star className="h-5 w-5" strokeWidth={1.75} fill={n <= hover ? 'currentColor' : 'none'} />
                   </button>
                 ))}
               </div>

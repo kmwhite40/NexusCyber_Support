@@ -7,7 +7,7 @@ import {
   type CustomerPortfolioRow, type PostureCompliance, type OpsSummary, type DeliveryHealth,
 } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
-import { Card, CardBody, CardHeader, CardTitle, Button, Input, Field } from '@/components/ui/primitives';
+import { Card, CardBody, CardHeader, CardTitle, Button, Input, Field, Select, Checkbox, SegmentedControl } from '@/components/ui/primitives';
 import { StatCard, EmptyState, Skeleton } from '@/components/ui/data';
 import { Donut, MiniBars, TrendChart } from '@/components/ui/charts';
 import { DashboardWidget } from '@/components/ui/dashboard-widgets';
@@ -70,29 +70,28 @@ export default function DashboardsPage() {
         </div>
         <div className="flex items-center gap-2">
           {isAgent && USES_ORG.includes(tab) && (
-            <select title="Organization" value={orgId} onChange={(e) => setOrgId(e.target.value)} className="rounded-md border border-border bg-surface px-3 py-1.5 text-sm">
+            <Select title="Organization" value={orgId} onChange={(e) => setOrgId(e.target.value)} className="h-9 w-auto">
               <option value="">{tab === 'posture' || tab === 'serviceops' ? 'Select customer…' : 'All customers'}</option>
               {orgs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-            </select>
+            </Select>
           )}
           {USES_KPIS.includes(tab) && (
-            <div className="flex overflow-hidden rounded-md border border-border">
-              {PERIODS.map((p) => (
-                <button key={p} type="button" onClick={() => setDays(p)} className={`px-3 py-1.5 text-sm ${days === p ? 'bg-brand text-brand-fg' : 'bg-surface text-muted hover:text-fg'}`}>{p}d</button>
-              ))}
-            </div>
+            <SegmentedControl<string>
+              size="sm"
+              value={String(days)}
+              onChange={(v) => setDays(Number(v))}
+              options={PERIODS.map((p) => ({ value: String(p), label: `${p}d` }))}
+            />
           )}
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-1 border-b border-border">
-        {tabs.map((t) => (
-          <button key={t.id} type="button" onClick={() => setTab(t.id)} title={t.hint}
-            className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors ${tab === t.id ? 'border-brand text-fg' : 'border-transparent text-muted hover:text-fg'}`}>
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <SegmentedControl<Tab>
+        className="flex-wrap"
+        value={tab}
+        onChange={setTab}
+        options={tabs.map((t) => ({ value: t.id, label: <span title={t.hint}>{t.label}</span> }))}
+      />
 
       {tab === 'custom' ? <CustomDashboards isAgent={isAgent} orgs={orgs} canManage={can('dashboard.manage')} />
         : tab === 'agents' ? <TeamPerformance />
@@ -419,7 +418,7 @@ function CustomDashboards({ isAgent, orgs, canManage }: { isAgent: boolean; orgs
         <Card><CardBody>
           {!active ? <EmptyState title="Select a dashboard" /> : (
             <div className="space-y-3">
-              <h2 className="text-lg font-semibold">{active.name}</h2>
+              <CardTitle className="text-lg">{active.name}</CardTitle>
               <div className="grid gap-4">{active.layout.map((w, i) => <DashboardWidget key={`${i}:${w.type}`} type={w.type} overview={overview} />)}</div>
             </div>
           )}
@@ -449,12 +448,12 @@ function NewDashboardModal({ orgs, isAgent, onClose, onCreated }: { orgs: { id: 
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onClick={onClose}>
       <Card className="w-full max-w-md" onClick={(e) => e.stopPropagation()}>
         <CardBody className="space-y-3">
-          <h2 className="text-lg font-semibold">New dashboard</h2>
+          <CardTitle className="text-lg">New dashboard</CardTitle>
           <Field label="Name"><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
-          {isAgent && <Field label="Organization"><select title="Organization" className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm" value={organizationId} onChange={(e) => setOrganizationId(e.target.value)}><option value="">Select…</option>{orgs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select></Field>}
+          {isAgent && <Field label="Organization"><Select title="Organization" value={organizationId} onChange={(e) => setOrganizationId(e.target.value)}><option value="">Select…</option>{orgs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</Select></Field>}
           <div><div className="mb-1 text-xs font-medium text-muted">Widgets</div>
             <div className="grid grid-cols-2 gap-1.5">
-              {WIDGETS.map((w) => <label key={w} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={picked.includes(w)} onChange={() => toggle(w)} /> {WIDGET_NAME[w]}</label>)}
+              {WIDGETS.map((w) => <label key={w} className="flex items-center gap-2 text-sm"><Checkbox checked={picked.includes(w)} onChange={() => toggle(w)} /> {WIDGET_NAME[w]}</label>)}
             </div>
           </div>
           {err && <p className="text-xs text-danger">{err}</p>}

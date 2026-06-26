@@ -2,7 +2,7 @@
 import * as React from 'react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
-import { Card, CardHeader, CardTitle, CardBody, Button, Badge, Input } from '@/components/ui/primitives';
+import { Card, CardHeader, CardTitle, CardBody, Button, Badge, Input, Textarea } from '@/components/ui/primitives';
 import { DataTable, EmptyState, Skeleton } from '@/components/ui/data';
 
 interface Problem {
@@ -116,10 +116,10 @@ export default function ProblemsPage() {
                 </div>
                 {canManage ? (
                   <div className="space-y-2">
-                    <label className="text-[11px] font-semibold uppercase tracking-wider text-muted">Root cause</label>
-                    <textarea value={edit.rootCause} onChange={(e) => setEdit({ ...edit, rootCause: e.target.value })} rows={2} className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-fg" />
-                    <label className="text-[11px] font-semibold uppercase tracking-wider text-muted">Workaround</label>
-                    <textarea value={edit.workaround} onChange={(e) => setEdit({ ...edit, workaround: e.target.value })} rows={2} className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-fg" />
+                    <label className="text-xs font-semibold uppercase tracking-wider text-muted">Root cause</label>
+                    <Textarea value={edit.rootCause} onChange={(e) => setEdit({ ...edit, rootCause: e.target.value })} rows={2} />
+                    <label className="text-xs font-semibold uppercase tracking-wider text-muted">Workaround</label>
+                    <Textarea value={edit.workaround} onChange={(e) => setEdit({ ...edit, workaround: e.target.value })} rows={2} />
                     <div className="flex flex-wrap gap-2">
                       <Button size="sm" onClick={() => saveEdit()}>Save</Button>
                       {!sel.known_error && <Button size="sm" variant="outline" onClick={() => saveEdit(true)}>Mark known error</Button>}

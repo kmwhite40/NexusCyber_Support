@@ -7,6 +7,7 @@ import { automation, type AutomationRule, type SimResult, ApiError } from '@/lib
 import { useAuth } from '@/components/auth-context';
 import { Card, CardHeader, CardTitle, CardBody, Button, Badge, Input, Select, Field, Textarea } from '@/components/ui/primitives';
 import { DataTable, EmptyState, Skeleton } from '@/components/ui/data';
+import { X, ChevronUp, ChevronDown } from 'lucide-react';
 
 const EVENTS = ['ticket.created', 'ticket.status_changed', 'ticket.priority_changed', 'sla.warning', 'sla.breached', 'posture.finding_created'];
 const OPS = ['eq', 'neq', 'in', 'gte', 'lte', 'contains', 'exists'];
@@ -199,7 +200,7 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
                 <Input value={c.field} onChange={(e) => setCond(i, { field: e.target.value })} placeholder="field (e.g. priority)" />
                 <Select className="w-24" value={c.op} onChange={(e) => setCond(i, { op: e.target.value })}>{OPS.map((o) => <option key={o} value={o}>{o}</option>)}</Select>
                 <Input value={c.value} onChange={(e) => setCond(i, { value: e.target.value })} placeholder="value" disabled={c.op === 'exists'} />
-                <button type="button" onClick={() => setConds((x) => x.filter((_, j) => j !== i))} className="px-1 text-muted hover:text-danger">✕</button>
+                <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => setConds((x) => x.filter((_, j) => j !== i))} aria-label="Remove condition"><X className="h-4 w-4" strokeWidth={1.75} /></Button>
               </div>
             ))}
             <Button type="button" size="sm" variant="outline" onClick={() => setConds((x) => [...x, { field: '', op: 'eq', value: '' }])}>+ Condition</Button>
@@ -223,10 +224,10 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
                   {fl && <Input className="flex-1" value={a.param} onChange={(e) => setAct(i, { param: e.target.value })} placeholder={fl} />}
                   {gated && <Badge tone="warning">approval</Badge>}
                   <div className="flex flex-col">
-                    <button type="button" onClick={() => moveAct(i, -1)} className="text-[10px] text-muted hover:text-fg">▲</button>
-                    <button type="button" onClick={() => moveAct(i, 1)} className="text-[10px] text-muted hover:text-fg">▼</button>
+                    <Button type="button" variant="ghost" size="icon" className="h-5 w-5" onClick={() => moveAct(i, -1)} aria-label="Move action up"><ChevronUp className="h-4 w-4" strokeWidth={1.75} /></Button>
+                    <Button type="button" variant="ghost" size="icon" className="h-5 w-5" onClick={() => moveAct(i, 1)} aria-label="Move action down"><ChevronDown className="h-4 w-4" strokeWidth={1.75} /></Button>
                   </div>
-                  <button type="button" onClick={() => setActs((x) => x.filter((_, j) => j !== i))} className="px-1 text-muted hover:text-danger">✕</button>
+                  <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => setActs((x) => x.filter((_, j) => j !== i))} aria-label="Remove action"><X className="h-4 w-4" strokeWidth={1.75} /></Button>
                 </div>
               );
             })}

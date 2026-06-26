@@ -1,6 +1,7 @@
 'use client';
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
+import { ArrowRight } from 'lucide-react';
 import { api, setToken, homePath, type Me } from '@/lib/api';
 import { useAuth } from './auth-context';
 
@@ -59,7 +60,7 @@ export function DemoToggle() {
         <span className="grid h-5 w-5 place-items-center rounded-full bg-brand/15 text-[10px] font-bold text-brand">D</span>
         <span className="text-muted">Demo · viewing as</span>
         <span className="text-fg">{current}</span>
-        <span className="text-muted">→</span>
+        <ArrowRight aria-hidden className="h-4 w-4 text-muted" strokeWidth={1.75} />
         <span className="rounded-full bg-brand/15 px-2 py-0.5 text-brand">{busy ? '…' : other}</span>
       </button>
     </div>

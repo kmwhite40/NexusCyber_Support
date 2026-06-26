@@ -3,8 +3,9 @@ import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
-import { Card, CardBody, Button, Badge, Input } from '@/components/ui/primitives';
+import { Card, CardBody, Button, Badge, Input, Textarea } from '@/components/ui/primitives';
 import { EmptyState, Skeleton } from '@/components/ui/data';
+import { BookOpen, Search, FileText, CheckCircle2, MessageSquare, Pencil } from 'lucide-react';
 
 interface Space { id: string; key: string; name: string; description?: string; page_count: number }
 interface TreeNode { id: string; parent_id: string | null; title: string; status: string; children: TreeNode[] }
@@ -193,12 +194,15 @@ export default function KbPage() {
     <div className="space-y-5">
       <div className="flex items-end justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Knowledge base</h1>
-          <p className="mt-1 text-sm text-muted">Self-service articles, runbooks, and how-tos.</p>
+          <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
+            <BookOpen className="h-6 w-6 text-brand" strokeWidth={1.75} />
+            Help Center
+          </h1>
+          <p className="mt-1 text-sm text-muted">Self-service articles, guides, and how-tos.</p>
         </div>
         <form onSubmit={runSearch} className="flex gap-2">
           <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search articles…" className="w-64" />
-          <Button type="submit" variant="outline">Search</Button>
+          <Button type="submit" variant="outline"><Search className="h-4 w-4" strokeWidth={1.75} />Search</Button>
         </form>
       </div>
 
@@ -232,7 +236,7 @@ export default function KbPage() {
         <div className="space-y-3">
           <Card>
             <CardBody className="space-y-2">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-muted">Spaces</div>
+              <div className="text-xs font-semibold uppercase tracking-wider text-muted">Spaces</div>
               {!spaces ? <Skeleton className="h-8" /> : spaces.map((s) => (
                 <button key={s.id} onClick={() => { setSpaceId(s.id); setPage(null); }} className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-sm hover:bg-surface-2 ${spaceId === s.id ? 'bg-brand/10 text-brand' : 'text-fg/90'}`}>
                   <span className="truncate">{s.name}</span>
@@ -244,7 +248,10 @@ export default function KbPage() {
           <Card>
             <CardBody>
               <div className="mb-2 flex items-center justify-between">
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-muted">Pages</div>
+                <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted">
+                  <FileText className="h-4 w-4" strokeWidth={1.75} />
+                  Articles
+                </div>
                 {canAuthor && spaceId && <button onClick={newPage} className="text-xs text-brand hover:underline">+ New</button>}
               </div>
               {tree.length === 0 ? <p className="text-xs text-muted">No pages yet.</p> : <Tree nodes={tree} />}
@@ -260,11 +267,11 @@ export default function KbPage() {
             ) : editing ? (
               <div className="space-y-3">
                 <Input value={editing.title} onChange={(e) => setEditing({ ...editing, title: e.target.value })} className="text-lg font-semibold" />
-                <textarea
+                <Textarea
                   value={editing.body}
                   onChange={(e) => setEditing({ ...editing, body: e.target.value })}
                   rows={18}
-                  className="w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-sm text-fg"
+                  className="font-mono"
                 />
                 <div className="flex gap-2">
                   <Button onClick={saveEdit}>Save</Button>
@@ -277,15 +284,15 @@ export default function KbPage() {
                   <div>
                     <h2 className="text-xl font-semibold text-fg">{page.title}</h2>
                     <div className="mt-1 flex items-center gap-2 text-xs text-muted">
-                      <Badge tone={page.status === 'published' ? 'success' : 'neutral'}>{page.status}</Badge>
-                      <span>v{page.version}</span>
-                      <span>· updated {new Date(page.updated_at).toLocaleDateString()}</span>
+                      {canAuthor && <Badge tone={page.status === 'published' ? 'success' : 'neutral'}>{page.status}</Badge>}
+                      {canAuthor && <span>v{page.version}</span>}
+                      <span>Updated {new Date(page.updated_at).toLocaleDateString()}</span>
                       {page.labels.map((l) => <Badge key={l} tone="brand" className="text-[9px]">{l}</Badge>)}
                     </div>
                   </div>
                   {canAuthor && (
                     <div className="flex shrink-0 gap-2">
-                      <Button size="sm" variant="outline" onClick={() => setEditing({ title: page.title, body: page.body })}>Edit</Button>
+                      <Button size="sm" variant="outline" onClick={() => setEditing({ title: page.title, body: page.body })}><Pencil className="h-4 w-4" strokeWidth={1.75} />Edit</Button>
                       {canPublish && page.status === 'draft' && <Button size="sm" onClick={() => transition('published')}>Publish</Button>}
                       {canPublish && page.status === 'published' && <Button size="sm" variant="outline" onClick={() => transition('archived')}>Archive</Button>}
                     </div>
@@ -297,7 +304,10 @@ export default function KbPage() {
                 {page.status === 'published' && (
                   <div className="rounded-lg border border-border bg-surface-2/40 px-4 py-3">
                     {feedback === 'thanks' ? (
-                      <p className="text-sm text-fg">✅ Thanks for the feedback — glad this helped! If anything else comes up, you can always open a ticket.</p>
+                      <p className="flex items-center gap-2 text-sm text-fg">
+                        <CheckCircle2 className="h-4 w-4 shrink-0 text-success" strokeWidth={1.75} />
+                        Thanks for the feedback — glad this helped! If anything else comes up, you can always open a ticket.
+                      </p>
                     ) : (
                       <div className="flex flex-wrap items-center gap-3">
                         <span className="text-sm font-medium text-fg">Did this resolve your issue?</span>
@@ -308,22 +318,27 @@ export default function KbPage() {
                   </div>
                 )}
 
-                {/* Comments */}
-                <div className="border-t border-border pt-4">
-                  <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted">Comments ({page.comments.length})</div>
-                  <div className="space-y-2">
-                    {page.comments.map((c) => (
-                      <div key={c.id} className="rounded-md border border-border bg-surface-2/40 px-3 py-2 text-sm text-fg/90">
-                        {c.body}
-                        <div className="mt-0.5 text-[10px] text-muted">{new Date(c.created_at).toLocaleString()}</div>
-                      </div>
-                    ))}
+                {/* Comments — internal editorial thread, shown to authors only */}
+                {canAuthor && (
+                  <div className="border-t border-border pt-4">
+                    <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted">
+                      <MessageSquare className="h-4 w-4" strokeWidth={1.75} />
+                      Comments ({page.comments.length})
+                    </div>
+                    <div className="space-y-2">
+                      {page.comments.map((c) => (
+                        <div key={c.id} className="rounded-md border border-border bg-surface-2/40 px-3 py-2 text-sm text-fg/90">
+                          {c.body}
+                          <div className="mt-0.5 text-[10px] text-muted">{new Date(c.created_at).toLocaleString()}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-3 flex gap-2">
+                      <Input value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Add a comment…" />
+                      <Button variant="outline" onClick={addComment}>Comment</Button>
+                    </div>
                   </div>
-                  <div className="mt-3 flex gap-2">
-                    <Input value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Add a comment…" />
-                    <Button variant="outline" onClick={addComment}>Comment</Button>
-                  </div>
-                </div>
+                )}
               </div>
             )}
           </CardBody>

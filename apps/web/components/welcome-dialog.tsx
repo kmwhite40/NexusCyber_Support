@@ -3,7 +3,9 @@
 // hours, the SLA priority matrix, and the after-hours hotline. Dismiss persists for the
 // session (sessionStorage) so it appears when someone "enters the site" but not on every nav.
 import * as React from 'react';
+import { X } from 'lucide-react';
 import { BrandMark } from './ui/brand';
+import { Button } from './ui/primitives';
 import { useAuth } from './auth-context';
 
 const SLA_ROWS: Array<{ p: string; label: string; tone: string; meaning: string; ack: string; resolve: string }> = [
@@ -67,7 +69,9 @@ export function WelcomeDialog() {
             </h2>
             <p className="mt-0.5 text-sm text-muted">Here&apos;s how and when we support you.</p>
           </div>
-          <button onClick={close} aria-label="Close" className="rounded-md p-1 text-muted transition hover:bg-surface-2 hover:text-fg">✕</button>
+          <Button variant="ghost" size="icon" onClick={close} aria-label="Close" className="text-muted hover:text-fg">
+            <X aria-hidden className="h-4 w-4" strokeWidth={1.75} />
+          </Button>
         </div>
 
         <div className="space-y-6 px-6 py-5">
@@ -125,12 +129,9 @@ export function WelcomeDialog() {
 
         {/* Footer */}
         <div className="flex justify-end border-t border-border px-6 py-4">
-          <button
-            onClick={close}
-            className="rounded-md bg-brand px-5 py-2 text-sm font-medium text-brand-fg transition hover:opacity-90"
-          >
+          <Button variant="default" onClick={close}>
             Got it
-          </button>
+          </Button>
         </div>
       </div>
     </div>

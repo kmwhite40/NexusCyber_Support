@@ -3,7 +3,7 @@
 // (Overview + Agent Analysis) over our own ticket data.
 import * as React from 'react';
 import { analytics, type AnalyticsOverview, type ReportResult } from '@/lib/api';
-import { Card, CardHeader, CardTitle, CardBody, Badge, Button } from '@/components/ui/primitives';
+import { Card, CardHeader, CardTitle, CardBody, Badge, Button, Select, SegmentedControl, Label } from '@/components/ui/primitives';
 import { StatCard, DataTable, Skeleton, EmptyState } from '@/components/ui/data';
 import { Donut, Scatter, MiniBars } from '@/components/ui/charts';
 
@@ -33,20 +33,15 @@ export default function AnalyticsPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Helpdesk analytics</h1>
           <p className="mt-1 text-sm text-muted">Operational analysis across your in-scope ticket history.</p>
         </div>
-        <div className="inline-flex rounded-md border border-border bg-surface-2/60 p-1">
-          {(['overview', 'agents', 'builder'] as const).map((t) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setTab(t)}
-              className={`rounded px-4 py-1.5 text-xs font-medium capitalize transition ${
-                tab === t ? 'bg-brand text-brand-fg' : 'text-muted hover:text-fg'
-              }`}
-            >
-              {t === 'overview' ? 'Overview' : t === 'agents' ? 'Agent analysis' : 'Report builder'}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl<'overview' | 'agents' | 'builder'>
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: 'overview', label: 'Overview' },
+            { value: 'agents', label: 'Agent analysis' },
+            { value: 'builder', label: 'Report builder' },
+          ]}
+        />
       </div>
 
       {tab === 'builder' ? (
@@ -110,36 +105,36 @@ function ReportBuilder() {
       <Card>
         <CardBody className="flex flex-wrap items-end gap-3">
           <div>
-            <label className="text-[11px] uppercase tracking-wider text-muted">Group by</label>
-            <select aria-label="Group by" className="block h-9 rounded-md border border-border bg-surface px-2 text-sm" value={dimension} onChange={(e) => setDimension(e.target.value)}>
+            <Label className="text-[11px] uppercase tracking-wider text-muted">Group by</Label>
+            <Select aria-label="Group by" className="h-9 w-auto" value={dimension} onChange={(e) => setDimension(e.target.value)}>
               {(fields?.dimensions ?? []).map((d) => <option key={d} value={d}>{DIM_LABEL[d] ?? d}</option>)}
-            </select>
+            </Select>
           </div>
           <div>
-            <label className="text-[11px] uppercase tracking-wider text-muted">Measure</label>
-            <select aria-label="Measure" className="block h-9 rounded-md border border-border bg-surface px-2 text-sm" value={measure} onChange={(e) => setMeasure(e.target.value)}>
+            <Label className="text-[11px] uppercase tracking-wider text-muted">Measure</Label>
+            <Select aria-label="Measure" className="h-9 w-auto" value={measure} onChange={(e) => setMeasure(e.target.value)}>
               {(fields?.measures ?? []).map((m) => <option key={m} value={m}>{MEASURE_LABEL[m] ?? m}</option>)}
-            </select>
+            </Select>
           </div>
           <div>
-            <label className="text-[11px] uppercase tracking-wider text-muted">Window (days)</label>
-            <select aria-label="Window in days" className="block h-9 rounded-md border border-border bg-surface px-2 text-sm" value={days} onChange={(e) => setDays(Number(e.target.value))}>
+            <Label className="text-[11px] uppercase tracking-wider text-muted">Window (days)</Label>
+            <Select aria-label="Window in days" className="h-9 w-auto" value={days} onChange={(e) => setDays(Number(e.target.value))}>
               {[30, 90, 180, 365, 730].map((d) => <option key={d} value={d}>{d}</option>)}
-            </select>
+            </Select>
           </div>
           <div>
-            <label className="text-[11px] uppercase tracking-wider text-muted">Status filter</label>
-            <select aria-label="Status filter" className="block h-9 rounded-md border border-border bg-surface px-2 text-sm" value={status} onChange={(e) => setStatus(e.target.value)}>
+            <Label className="text-[11px] uppercase tracking-wider text-muted">Status filter</Label>
+            <Select aria-label="Status filter" className="h-9 w-auto" value={status} onChange={(e) => setStatus(e.target.value)}>
               <option value="">any</option>
               {['new', 'triage', 'in_progress', 'pending', 'resolved', 'closed'].map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
+            </Select>
           </div>
           <div>
-            <label className="text-[11px] uppercase tracking-wider text-muted">Priority filter</label>
-            <select aria-label="Priority filter" className="block h-9 rounded-md border border-border bg-surface px-2 text-sm" value={priority} onChange={(e) => setPriority(e.target.value)}>
+            <Label className="text-[11px] uppercase tracking-wider text-muted">Priority filter</Label>
+            <Select aria-label="Priority filter" className="h-9 w-auto" value={priority} onChange={(e) => setPriority(e.target.value)}>
               <option value="">any</option>
               {['P1', 'P2', 'P3', 'P4'].map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
+            </Select>
           </div>
           <Button onClick={run} disabled={busy}>{busy ? 'Running…' : 'Run'}</Button>
           <Button variant="outline" onClick={csv} disabled={!result || result.rows.length === 0}>Export CSV</Button>

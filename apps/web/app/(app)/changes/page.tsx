@@ -2,8 +2,9 @@
 import * as React from 'react';
 import { api, ApiError } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
-import { Card, CardHeader, CardTitle, CardBody, Button, Badge, Input, Select } from '@/components/ui/primitives';
+import { Card, CardHeader, CardTitle, CardBody, Button, Badge, Input, Select, Textarea, SegmentedControl } from '@/components/ui/primitives';
 import { DataTable, EmptyState, Skeleton } from '@/components/ui/data';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface Change {
   id: string;
@@ -89,17 +90,15 @@ export default function ChangesPage() {
           <p className="mt-1 text-sm text-muted">Standard, normal, and emergency changes with CAB approval and a change calendar.</p>
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex rounded-md border border-border p-0.5">
-            {(['list', 'calendar'] as const).map((v) => (
-              <button
-                key={v}
-                onClick={() => setView(v)}
-                className={`rounded px-3 py-1 text-xs font-medium capitalize transition ${view === v ? 'bg-surface-2 text-fg' : 'text-muted hover:text-fg'}`}
-              >
-                {v}
-              </button>
-            ))}
-          </div>
+          <SegmentedControl<'list' | 'calendar'>
+            size="sm"
+            value={view}
+            onChange={setView}
+            options={[
+              { value: 'list', label: 'List' },
+              { value: 'calendar', label: 'Calendar' },
+            ]}
+          />
           {can('change.create') && <Button onClick={() => setCreating((c) => !c)}>{creating ? 'Cancel' : 'New change'}</Button>}
         </div>
       </div>
@@ -108,12 +107,11 @@ export default function ChangesPage() {
         <Card>
           <CardBody className="space-y-3">
             <Input placeholder="Change title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
-            <textarea
+            <Textarea
               placeholder="Description, implementation & backout plan"
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
               rows={3}
-              className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-fg"
             />
             <div className="flex gap-2">
               <Select className="w-40" value={form.changeType} onChange={(e) => setForm({ ...form, changeType: e.target.value })}>
@@ -258,9 +256,9 @@ function ChangeCalendar({ onOpen }: { onOpen: (id: string) => void }) {
         <div className="flex w-full items-center justify-between">
           <CardTitle>{monthLabel}</CardTitle>
           <div className="flex items-center gap-1">
-            <Button size="sm" variant="subtle" onClick={() => shift(-1)}>←</Button>
+            <Button size="icon" variant="ghost" aria-label="Previous month" onClick={() => shift(-1)}><ChevronLeft className="h-4 w-4" strokeWidth={1.75} /></Button>
             <Button size="sm" variant="subtle" onClick={() => setMonth(new Date(today.getFullYear(), today.getMonth(), 1))}>Today</Button>
-            <Button size="sm" variant="subtle" onClick={() => shift(1)}>→</Button>
+            <Button size="icon" variant="ghost" aria-label="Next month" onClick={() => shift(1)}><ChevronRight className="h-4 w-4" strokeWidth={1.75} /></Button>
           </div>
         </div>
       </CardHeader>

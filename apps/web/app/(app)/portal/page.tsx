@@ -11,7 +11,7 @@ import { Card, CardBody, Button, Input, Textarea, Select, Field, Badge } from '@
 import { StatusBadge, PriorityBadge } from '@/components/ui/badges';
 import { EmptyState, Skeleton } from '@/components/ui/data';
 import DisplayCards from '@/components/ui/display-cards';
-import { UserMinus, ShieldAlert, AlertTriangle } from 'lucide-react';
+import { UserMinus, ShieldAlert, AlertTriangle, Film, Play, ArrowRight } from 'lucide-react';
 
 const stackBase =
   "before:absolute before:w-[100%] before:outline-1 before:rounded-xl before:outline-border before:h-[100%] before:content-[''] before:bg-blend-overlay before:bg-background/50 grayscale-[100%] hover:before:opacity-0 before:transition-opacity before:duration-700 hover:grayscale-0 before:left-0 before:top-0";
@@ -19,21 +19,21 @@ const stackBase =
 // Featured-services showcase cards for the portal hero (stacked display-cards).
 const FEATURED_CARDS = [
   {
-    icon: <UserMinus className="size-4 text-blue-300" />,
+    icon: <UserMinus className="size-4 text-brand" />,
     title: 'Offboarding',
     description: 'M365 — Offboard departing user',
     date: '2-hour response',
     className: `[grid-area:stack] hover:-translate-y-10 ${stackBase}`,
   },
   {
-    icon: <ShieldAlert className="size-4 text-blue-300" />,
+    icon: <ShieldAlert className="size-4 text-brand" />,
     title: 'Security',
     description: 'Report a security incident',
     date: '15-min · 24×7',
     className: `[grid-area:stack] translate-x-16 translate-y-10 hover:-translate-y-1 ${stackBase}`,
   },
   {
-    icon: <AlertTriangle className="size-4 text-blue-300" />,
+    icon: <AlertTriangle className="size-4 text-brand" />,
     title: 'Outage',
     description: 'Report a service outage',
     date: '15-min · 24×7',
@@ -134,7 +134,7 @@ export default function PortalPage() {
               {kbHits.length === 0 && filteredCatalog.length === 0 && (
                 <div className="p-4 text-center text-xs text-muted">
                   No matches for “{query.trim()}”.{' '}
-                  <Link href="/tickets/new" className="text-brand hover:underline">Submit a request →</Link>
+                  <Link href="/tickets/new" className="inline-flex items-center gap-1 text-brand hover:underline">Submit a request <ArrowRight className="h-4 w-4" strokeWidth={1.75} /></Link>
                 </div>
               )}
             </div>
@@ -149,7 +149,7 @@ export default function PortalPage() {
       <section>
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-fg">Featured services</h2>
-          <Link href="/catalog" className="text-xs text-brand hover:underline">Browse catalog →</Link>
+          <Link href="/catalog" className="inline-flex items-center gap-1 text-xs text-brand hover:underline">Browse catalog <ArrowRight className="h-4 w-4" strokeWidth={1.75} /></Link>
         </div>
         <div className="flex min-h-[20rem] w-full items-center justify-center">
           <DisplayCards cards={FEATURED_CARDS} />
@@ -166,7 +166,7 @@ export default function PortalPage() {
             <CardBody>
               <div className="mb-3 flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-fg">Popular requests</h3>
-                <Link href="/catalog" className="text-xs text-brand hover:underline">All services →</Link>
+                <Link href="/catalog" className="inline-flex items-center gap-1 text-xs text-brand hover:underline">All services <ArrowRight className="h-4 w-4" strokeWidth={1.75} /></Link>
               </div>
               <div className="space-y-2">
                 {items.slice(0, 5).map((i) => (
@@ -179,7 +179,7 @@ export default function PortalPage() {
                       <div className="text-xs font-medium text-fg">{i.name}</div>
                       <div className="text-[10px] text-muted">{i.category}</div>
                     </div>
-                    <span className="text-muted">→</span>
+                    <ArrowRight className="h-4 w-4 text-muted" strokeWidth={1.75} />
                   </Link>
                 ))}
                 {items.length === 0 && <p className="text-xs text-muted">Loading services…</p>}
@@ -193,7 +193,7 @@ export default function PortalPage() {
       <div>
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-lg font-semibold tracking-tight">Your requests</h2>
-          <Link href="/tickets" className="text-xs text-brand hover:underline">View all →</Link>
+          <Link href="/tickets" className="inline-flex items-center gap-1 text-xs text-brand hover:underline">View all <ArrowRight className="h-4 w-4" strokeWidth={1.75} /></Link>
         </div>
         {!tickets ? (
           <div className="space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-14" />)}</div>
@@ -243,13 +243,13 @@ function WalkthroughBanner() {
   if (hidden) return null;
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-brand/40 bg-brand/5 px-5 py-3.5">
-      <span className="text-2xl" aria-hidden>🎬</span>
+      <Film className="h-6 w-6 text-brand" strokeWidth={1.75} aria-hidden />
       <div className="min-w-[200px] flex-1">
         <div className="text-sm font-semibold text-fg">New to Anchor? Watch a 60-second walkthrough</div>
         <div className="text-xs text-muted">Learn how to create a support ticket — and get help even faster.</div>
       </div>
       <a href={WALKTHROUGH_URL} target="_blank" rel="noopener noreferrer" onClick={dismiss}>
-        <Button size="sm">▶ Watch walkthrough</Button>
+        <Button size="sm"><Play className="h-4 w-4" strokeWidth={1.75} /> Watch walkthrough</Button>
       </a>
       <Button size="sm" variant="ghost" onClick={dismiss}>Skip</Button>
     </div>
@@ -289,7 +289,7 @@ function AskAnchor() {
               <Link href={`/kb?page=${res.answer.id}`} className="block rounded-lg border border-brand/40 bg-brand/5 p-3 hover:bg-brand/10">
                 <div className="text-sm font-semibold text-fg">{res.answer.title}</div>
                 {res.answer.snippet && <div className="mt-1 text-xs text-muted [&_b]:font-medium [&_b]:text-brand" dangerouslySetInnerHTML={{ __html: res.answer.snippet }} />}
-                <div className="mt-1 text-[11px] text-brand">Open in knowledge base →</div>
+                <div className="mt-1 inline-flex items-center gap-1 text-[11px] text-brand">Open in knowledge base <ArrowRight className="h-4 w-4" strokeWidth={1.75} /></div>
               </Link>
             ) : (
               <p className="text-xs text-muted">No knowledge-base article matched “{asked}”.</p>
@@ -321,7 +321,7 @@ function AskAnchor() {
 
             <div className="flex items-center gap-3 border-t border-border pt-3 text-xs">
               <span className="text-muted">{res.deflect ? 'Didn’t find an answer?' : 'Still need help?'}</span>
-              <Link href="/tickets/new" className="font-medium text-brand hover:underline">Create a request →</Link>
+              <Link href="/tickets/new" className="inline-flex items-center gap-1 font-medium text-brand hover:underline">Create a request <ArrowRight className="h-4 w-4" strokeWidth={1.75} /></Link>
             </div>
           </div>
         )}
@@ -374,8 +374,8 @@ function QuickSubmit({ onCreated }: { onCreated: (t: Ticket) => void }) {
           {error && <p className="mb-3 text-xs text-danger">{error}</p>}
           <div className="flex items-center gap-3">
             <Button type="submit" disabled={busy}>{busy ? 'Submitting…' : 'Submit request'}</Button>
-            <Link href="/catalog" className="text-xs text-muted hover:text-fg">or browse the service catalog →</Link>
-            <a href={WALKTHROUGH_URL} target="_blank" rel="noopener noreferrer" className="ml-auto text-xs text-brand hover:underline">▶ How to create a ticket</a>
+            <Link href="/catalog" className="inline-flex items-center gap-1 text-xs text-muted hover:text-fg">or browse the service catalog <ArrowRight className="h-4 w-4" strokeWidth={1.75} /></Link>
+            <a href={WALKTHROUGH_URL} target="_blank" rel="noopener noreferrer" className="ml-auto inline-flex items-center gap-1 text-xs text-brand hover:underline"><Play className="h-4 w-4" strokeWidth={1.75} /> How to create a ticket</a>
           </div>
         </form>
       </CardBody>

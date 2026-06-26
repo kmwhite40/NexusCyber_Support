@@ -6,6 +6,44 @@ import { oncall, type OnCallSchedule, type OnCallPage, type Responder, ApiError 
 import { useAuth } from '@/components/auth-context';
 import { Card, CardHeader, CardTitle, CardBody, Button, Badge, Input, Select, Field } from '@/components/ui/primitives';
 import { DataTable, EmptyState, Skeleton, StatCard } from '@/components/ui/data';
+import { Pencil, X } from 'lucide-react';
+
+// In-app replacements for window.confirm / window.prompt / window.alert.
+type Dialog =
+  | { kind: 'confirm'; title: string; message: string; confirmLabel: string; tone: 'default' | 'danger'; onConfirm: () => void }
+  | { kind: 'prompt'; title: string; message: string; initial: string; placeholder?: string; onSubmit: (value: string) => void }
+  | { kind: 'alert'; title: string; message: string };
+
+function DialogHost({ dialog, onClose }: { dialog: Dialog; onClose: () => void }) {
+  const [value, setValue] = React.useState(dialog.kind === 'prompt' ? dialog.initial : '');
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-bg/70 p-4 backdrop-blur-sm" onClick={onClose}>
+      <Card className="w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+        <CardHeader><CardTitle>{dialog.title}</CardTitle></CardHeader>
+        <CardBody className="space-y-4">
+          <p className="text-sm text-fg/80">{dialog.message}</p>
+          {dialog.kind === 'prompt' && (
+            <Input
+              autoFocus
+              value={value}
+              placeholder={dialog.placeholder}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { dialog.onSubmit(value); onClose(); } }}
+            />
+          )}
+          <div className="flex justify-end gap-2">
+            {dialog.kind !== 'alert' && <Button size="sm" variant="ghost" onClick={onClose}>Cancel</Button>}
+            {dialog.kind === 'confirm' && (
+              <Button size="sm" variant={dialog.tone === 'danger' ? 'danger' : 'default'} onClick={() => { dialog.onConfirm(); onClose(); }}>{dialog.confirmLabel}</Button>
+            )}
+            {dialog.kind === 'prompt' && <Button size="sm" onClick={() => { dialog.onSubmit(value); onClose(); }}>Save</Button>}
+            {dialog.kind === 'alert' && <Button size="sm" onClick={onClose}>OK</Button>}
+          </div>
+        </CardBody>
+      </Card>
+    </div>
+  );
+}
 
 export default function OnCallPage() {
   const { can } = useAuth();
@@ -14,6 +52,7 @@ export default function OnCallPage() {
   const [responders, setResponders] = React.useState<Responder[]>([]);
   const [busy, setBusy] = React.useState(false);
   const [config, setConfig] = React.useState<{ mode: 'create' | 'edit' | 'override'; schedule?: OnCallSchedule } | null>(null);
+  const [dialog, setDialog] = React.useState<Dialog | null>(null);
   const canManage = can('oncall.manage');
 
   const load = React.useCallback(() => {
@@ -80,11 +119,16 @@ export default function OnCallPage() {
                         size="sm"
                         variant="ghost"
                         disabled={busy}
-                        onClick={() => {
-                          if (window.confirm(`Delete schedule "${s.team}"? This removes its rotation and responders. Blocked if any page is still open.`)) {
-                            act(() => oncall.deleteSchedule(s.id)).catch((e) => window.alert(e instanceof ApiError ? e.detail : 'Delete failed'));
-                          }
-                        }}
+                        onClick={() => setDialog({
+                          kind: 'confirm',
+                          title: 'Delete schedule',
+                          message: `Delete schedule "${s.team}"? This removes its rotation and responders. Blocked if any page is still open.`,
+                          confirmLabel: 'Delete',
+                          tone: 'danger',
+                          onConfirm: () => {
+                            act(() => oncall.deleteSchedule(s.id)).catch((e) => setDialog({ kind: 'alert', title: 'Delete failed', message: e instanceof ApiError ? e.detail : 'Delete failed' }));
+                          },
+                        })}
                       >
                         Delete
                       </Button>
@@ -126,25 +170,34 @@ export default function OnCallPage() {
                               title="Set cell number"
                               className="text-muted hover:text-fg"
                               disabled={busy}
-                              onClick={() => {
-                                const v = window.prompt(`Cell number for ${p.name} (paging contact)`, p.phone ?? '');
-                                if (v !== null) act(() => oncall.setResponderPhone(p.user_id, v.trim() || null));
-                              }}
+                              onClick={() => setDialog({
+                                kind: 'prompt',
+                                title: 'Set cell number',
+                                message: `Cell number for ${p.name} (paging contact)`,
+                                initial: p.phone ?? '',
+                                placeholder: '+1 555 555 5555',
+                                onSubmit: (v) => act(() => oncall.setResponderPhone(p.user_id, v.trim() || null)),
+                              })}
                             >
-                              ✎
+                              <Pencil className="h-4 w-4" strokeWidth={1.75} />
                             </button>
                             <button
                               type="button"
                               title="Remove from rotation"
                               className="text-muted hover:text-danger"
                               disabled={busy}
-                              onClick={() => {
-                                if (window.confirm(`Remove ${p.name} from "${s.team}"?`)) {
-                                  act(() => oncall.removeParticipant(s.id, p.user_id)).catch((e) => window.alert(e instanceof ApiError ? e.detail : 'Remove failed'));
-                                }
-                              }}
+                              onClick={() => setDialog({
+                                kind: 'confirm',
+                                title: 'Remove responder',
+                                message: `Remove ${p.name} from "${s.team}"?`,
+                                confirmLabel: 'Remove',
+                                tone: 'danger',
+                                onConfirm: () => {
+                                  act(() => oncall.removeParticipant(s.id, p.user_id)).catch((e) => setDialog({ kind: 'alert', title: 'Remove failed', message: e instanceof ApiError ? e.detail : 'Remove failed' }));
+                                },
+                              })}
                             >
-                              ✕
+                              <X className="h-4 w-4" strokeWidth={1.75} />
                             </button>
                           </>
                         )}
@@ -207,6 +260,8 @@ export default function OnCallPage() {
           }}
         />
       )}
+
+      {dialog && <DialogHost dialog={dialog} onClose={() => setDialog(null)} />}
     </div>
   );
 }

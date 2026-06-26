@@ -6,8 +6,9 @@ import { useRouter } from 'next/navigation';
 import { api, catalog, users, attachmentsApi, type CatalogItem, type Ticket, type CatalogForm, type FormFieldDef, ApiError } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
 import { UserPicker } from '@/components/user-picker';
-import { Card, CardBody, CardHeader, CardTitle, Button, Badge, Input, Textarea, Field, Select } from '@/components/ui/primitives';
+import { Card, CardBody, CardHeader, CardTitle, Button, Badge, Input, Textarea, Field, Select, Checkbox } from '@/components/ui/primitives';
 import { Skeleton } from '@/components/ui/data';
+import { Clock, Paperclip } from 'lucide-react';
 
 export default function CatalogPage() {
   const router = useRouter();
@@ -43,8 +44,8 @@ export default function CatalogPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Service catalog</h1>
         <p className="mt-1 text-sm text-muted">
-          Request a standard service. Each item routes to the right tier, applies an SLA, and runs a
-          defined fulfillment workflow with approvals where required.
+          Request a standard service. We&rsquo;ll take care of the rest and keep you updated, asking
+          for approval where it&rsquo;s needed.
         </p>
       </div>
 
@@ -63,17 +64,16 @@ export default function CatalogPage() {
                   <CardBody className="flex flex-1 flex-col">
                     <div className="mb-2 flex items-center gap-2">
                       <h3 className="text-sm font-semibold text-fg">{it.name}</h3>
-                      {it.requires_approval && <Badge tone="warning">approval</Badge>}
-                      {it.security_class !== 'standard' && <Badge tone="danger">{it.security_class}</Badge>}
+                      {it.requires_approval && <Badge tone="warning">Needs approval</Badge>}
                     </div>
                     <p className="flex-1 text-xs leading-relaxed text-muted">
-                      Owned by <span className="text-fg">{it.owning_tier}</span>. Resolution SLA{' '}
-                      {Math.round(it.sla_resolution_min / 60)}h. {it.fulfillment_steps.length} fulfillment steps.
+                      {it.description ?? 'Submit this request and our team will handle it for you.'}
                     </p>
-                    <div className="mt-3 flex items-center justify-between">
-                      <Badge tone={it.default_priority === 'P1' ? 'danger' : it.default_priority === 'P2' ? 'warning' : 'brand'}>
-                        {it.default_priority}
-                      </Badge>
+                    <div className="mt-3 flex items-center justify-between gap-3">
+                      <span className="inline-flex items-center gap-1.5 text-xs text-muted">
+                        <Clock className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+                        Typically done in {Math.round(it.sla_resolution_min / 60)}h
+                      </span>
                       <Button size="sm" onClick={() => setActive(it)}>Request</Button>
                     </div>
                   </CardBody>
@@ -143,7 +143,7 @@ function RequestModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-bg/70 p-4 backdrop-blur-sm" onClick={onClose}>
       <Card className="w-full max-w-lg max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <CardHeader><CardTitle>{item.name}</CardTitle></CardHeader>
         <CardBody>
@@ -169,15 +169,18 @@ function RequestModal({
                     {f.options.map((o) => <option key={o} value={o}>{o}</option>)}
                   </Select>
                 ) : f.data_type === 'checkbox' ? (
-                  <input type="checkbox" checked={!!answers[f.key]} onChange={(e) => set(f.key, e.target.checked)} />
+                  <Checkbox checked={!!answers[f.key]} onChange={(e) => set(f.key, e.target.checked)} />
                 ) : f.data_type === 'user' ? (
                   <UserPicker value={(answers[f.key] as string) ?? null} onChange={(v) => set(f.key, v)} organizationId={searchOrg} />
                 ) : f.data_type === 'user_multi' ? (
                   <UserPicker value={(answers[f.key] as string[]) ?? []} onChange={(v) => set(f.key, v)} organizationId={searchOrg} multiple />
                 ) : f.data_type === 'attachment' ? (
-                  <div className="rounded-md border border-dashed border-border p-3 text-xs text-muted">
-                    <input type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-                    {file && <span className="ml-2 text-fg">{file.name}</span>}
+                  <div className="rounded-md border border-dashed border-border p-3">
+                    <div className="flex items-center gap-2">
+                      <Paperclip className="h-4 w-4 shrink-0 text-muted" strokeWidth={1.75} />
+                      <Input type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="border-0 bg-transparent p-0 text-xs" />
+                    </div>
+                    {file && <span className="mt-1 block text-xs text-fg">{file.name}</span>}
                   </div>
                 ) : (
                   <Input
@@ -195,7 +198,7 @@ function RequestModal({
                   <Input value={subject} onChange={(e) => setSubject(e.target.value)} required minLength={3} />
                 </Field>
                 <Field label="Details">
-                  <Textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Anything the fulfilling tier should know…" />
+                  <Textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Anything the support team should know…" />
                 </Field>
               </>
             )}

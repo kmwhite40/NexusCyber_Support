@@ -5,8 +5,9 @@ import {
   type ServiceRow, type ConfigurationItem, type ConfigurationItemDetail, type CiRelType, type CiRelationship, ApiError,
 } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
-import { Card, CardBody, Badge, Button, Input, Select } from '@/components/ui/primitives';
+import { Card, CardBody, Badge, Button, Input, Select, Label, SegmentedControl } from '@/components/ui/primitives';
 import { DataTable, EmptyState, Skeleton, StatCard } from '@/components/ui/data';
+import { X } from 'lucide-react';
 
 const CRITICALITY_LABEL: Record<number, string> = { 1: 'Low', 2: 'Medium', 3: 'High', 4: 'Critical' };
 const REL_LABEL: Record<CiRelType, string> = {
@@ -35,10 +36,14 @@ export default function ServicesPage() {
         <StatCard label="Services" value={services?.length ?? '—'} />
         <StatCard label="Configuration items" value={cis?.length ?? '—'} />
       </div>
-      <div className="flex gap-2">
-        <button onClick={() => setTab('services')} className={`rounded-md px-3 py-1.5 text-sm ${tab === 'services' ? 'bg-brand/15 text-brand' : 'text-muted hover:bg-surface-2'}`}>Services</button>
-        <button onClick={() => setTab('cis')} className={`rounded-md px-3 py-1.5 text-sm ${tab === 'cis' ? 'bg-brand/15 text-brand' : 'text-muted hover:bg-surface-2'}`}>Configuration items</button>
-      </div>
+      <SegmentedControl<'services' | 'cis'>
+        value={tab}
+        onChange={setTab}
+        options={[
+          { value: 'services', label: 'Services' },
+          { value: 'cis', label: 'Configuration items' },
+        ]}
+      />
       <Card>
         <CardBody>
           {tab === 'services' ? (
@@ -133,7 +138,7 @@ function CiDetailModal({ id, allCis, onClose, onChanged }: { id: string; allCis:
   const RelRow = ({ r, dir }: { r: CiRelationship; dir: 'out' | 'in' }) => (
     <div className="flex items-center justify-between rounded border border-border px-2 py-1 text-xs">
       <span>{dir === 'out' ? <>this <span className="text-muted">{REL_LABEL[r.rel_type]}</span> <span className="font-medium text-fg">{r.name}</span></> : <><span className="font-medium text-fg">{r.name}</span> <span className="text-muted">{REL_LABEL[r.rel_type]}</span> this</>} <Badge tone="neutral">{r.ci_class}</Badge></span>
-      {canManage && <button onClick={() => removeRel(r.id)} className="ml-2 text-muted hover:text-danger">✕</button>}
+      {canManage && <button onClick={() => removeRel(r.id)} aria-label="Remove relationship" className="ml-2 text-muted hover:text-danger"><X className="h-4 w-4" strokeWidth={1.75} /></button>}
     </div>
   );
 
@@ -151,14 +156,14 @@ function CiDetailModal({ id, allCis, onClose, onChanged }: { id: string; allCis:
               </div>
 
               <div className="grid grid-cols-2 gap-2">
-                <div><label className="text-xs text-muted">Owner</label><Input value={owner} onChange={(e) => setOwner(e.target.value)} disabled={!canManage} placeholder="unassigned" /></div>
-                <div><label className="text-xs text-muted">Support group</label><Input value={supportGroup} onChange={(e) => setSupportGroup(e.target.value)} disabled={!canManage} placeholder="unassigned" /></div>
-                <div><label className="text-xs text-muted">Criticality</label>
+                <div><Label className="font-normal">Owner</Label><Input value={owner} onChange={(e) => setOwner(e.target.value)} disabled={!canManage} placeholder="unassigned" /></div>
+                <div><Label className="font-normal">Support group</Label><Input value={supportGroup} onChange={(e) => setSupportGroup(e.target.value)} disabled={!canManage} placeholder="unassigned" /></div>
+                <div><Label className="font-normal">Criticality</Label>
                   <Select value={criticality} onChange={(e) => setCriticality(e.target.value)} disabled={!canManage}>
                     {[['4', 'Critical'], ['3', 'High'], ['2', 'Medium'], ['1', 'Low']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                   </Select>
                 </div>
-                <div><label className="text-xs text-muted">Status</label>
+                <div><Label className="font-normal">Status</Label>
                   <Select value={status} onChange={(e) => setStatus(e.target.value)} disabled={!canManage}>
                     {['active', 'maintenance', 'retired'].map((s) => <option key={s} value={s}>{s}</option>)}
                   </Select>
@@ -173,7 +178,7 @@ function CiDetailModal({ id, allCis, onClose, onChanged }: { id: string; allCis:
                     <div key={i} className="flex gap-2">
                       <Input className="w-1/3" value={k} placeholder="key" disabled={!canManage} onChange={(e) => setAttrs((a) => a.map((p, j) => j === i ? [e.target.value, p[1]] : p))} />
                       <Input className="flex-1" value={v} placeholder="value" disabled={!canManage} onChange={(e) => setAttrs((a) => a.map((p, j) => j === i ? [p[0], e.target.value] : p))} />
-                      {canManage && <button onClick={() => setAttrs((a) => a.filter((_, j) => j !== i))} className="px-1 text-muted hover:text-danger">✕</button>}
+                      {canManage && <button onClick={() => setAttrs((a) => a.filter((_, j) => j !== i))} aria-label="Remove attribute" className="px-1 text-muted hover:text-danger"><X className="h-4 w-4" strokeWidth={1.75} /></button>}
                     </div>
                   ))}
                   {attrs.length === 0 && <p className="text-xs text-muted">No attributes.</p>}
