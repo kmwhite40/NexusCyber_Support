@@ -216,8 +216,8 @@ export const attachmentsApi = {
 };
 
 export const conmon = {
-  runs: () => api.get<{ data: ConMonRun[] }>('/conmon/runs'),
-  run: () => api.post<{ orgs: number; checks: number; findings: number }>('/conmon/run'),
+  runs: (orgId?: string) => api.get<{ data: ConMonRun[] }>(`/conmon/runs${orgId ? `?organizationId=${orgId}` : ''}`),
+  run: (orgId?: string) => api.post<{ orgs: number; checks: number; findings: number }>(`/conmon/run${orgId ? `?organizationId=${orgId}` : ''}`),
 };
 
 export interface OnCallSchedule {
