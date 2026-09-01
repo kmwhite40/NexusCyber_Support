@@ -631,25 +631,49 @@ describe('preview and provision are bound to the provisioning tenant organizatio
 // IMPORTANT 3 — the supervisor lookup is scoped
 // ---------------------------------------------------------------------------
 describe('who may receive a Temporary Access Pass', () => {
-  it('scopes the supervisor lookup to the nexus plane AND the ticket organization', async () => {
+  it('scopes the supervisor lookup to the TICKET organization', async () => {
     await provisionApproved();
     const lookup = find(/FROM users u/)[0];
     expect(lookup).toBeDefined();
-    expect(lookup.text).toMatch(/plane = 'nexus'/);
-    expect(lookup.text).toMatch(/role_assignments/);
     expect(lookup.params).toEqual([SUPERVISOR, TICKET_ORG]);
+    // Both branches of "of this organization": the column a customer-plane user carries, and
+    // the role_assignments scope a nexus-plane user carries instead (organization_id is NULL
+    // for those by construction).
+    expect(lookup.text).toMatch(/u\.organization_id = \$2/);
+    expect(lookup.text).toMatch(/role_assignments/);
+  });
+
+  // The clause that was NOT added, and the assertion that keeps it out. An SBS supervisor is an
+  // SBS employee: accounts.searchUsers, which backs the form's supervisor picker, selects
+  // `WHERE organization_id = $1 AND status = 'active'`, so a supervisor chosen on the form is
+  // always a customer-plane user of the ticket's own org. A `plane = 'nexus'` requirement would
+  // have failed every one of them — after the account, licences and groups were already written.
+  it('ACCEPTS a customer-plane supervisor in the ticket organization', async () => {
+    h.setDbRows(defaultRows({ supervisorRows: [{ email: WORK_EMAIL, status: 'active' }] }));
+    // The DB double answers on the query shape, not on SQL semantics, so the assertion that
+    // actually pins this is on the predicate itself: a plane restriction would exclude every
+    // supervisor the form's picker can offer, since accounts.searchUsers returns only
+    // customer-plane users of the org.
+    const supervisorLookup = () => find(/FROM users u/)[0];
+    const r = await provisionApproved();
+    expect(r.status).toBe('succeeded');
+    expect(r.outcomes.find((o) => o.key === 'issue_tap')?.status).toBe('succeeded');
+    expect(h.sendEmail).toHaveBeenCalledTimes(1);
+    expect((h.sendEmail.mock.calls[0][0] as any).to).toBe(WORK_EMAIL);
+    expect(supervisorLookup().text).not.toMatch(/plane\s*=\s*'nexus'/);
   });
 
   // THE DEFECT. `SELECT email, status FROM users WHERE id = $1` in system context, with a form
-  // layer that validates `supervisor` as "any string": a submitted uuid for a user in another
-  // organization, or a customer-plane end user, was mailed a live credential for a brand-new
-  // federal identity. The scoped query simply does not return them.
-  it('refuses to deliver when the submitted supervisor is out of scope', async () => {
-    h.setDbRows(defaultRows({ supervisorRows: [] }));
+  // layer that validates `supervisor` as "any string": a submitted uuid for a user in ANOTHER
+  // organization was mailed a live credential for a brand-new federal identity. The scoped
+  // query — parameterised on the ticket's org, matching neither that user's organization_id nor
+  // any of their role assignments — simply does not return them.
+  it('refuses a supervisor who belongs to a different organization', async () => {
+    h.setDbRows(defaultRows({ supervisorRows: [] })); // the scoped SELECT matches nothing
     const r = await provisionApproved();
     expect(r.status).toBe('failed');
     expect(r.outcomes.find((o) => o.key === 'issue_tap')?.error)
-      .toMatch(/not a Nexus platform user scoped to this organization/);
+      .toMatch(/not a user of this organization/);
     expect(h.sendEmail).not.toHaveBeenCalled();
   });
 });

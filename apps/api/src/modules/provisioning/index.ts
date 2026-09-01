@@ -340,30 +340,43 @@ async function deliverTapToSupervisor(
     // a missing user — say so instead of letting Postgres raise a uuid cast error.
     throw new Error('supervisor on the request is not a valid Nexus user reference');
   }
-  // SCOPED, not just looked up. The form layer validates the `supervisor` answer as "some
-  // string", so the id reaching here is attacker-controlled in the ordinary sense: whoever
-  // filled the form chose it. An unscoped `WHERE id = $1` in system context (which is what this
-  // was) would happily resolve a user in a DIFFERENT customer organization, or a customer-plane
-  // end user, and mail them a live Temporary Access Pass for a brand-new federal identity.
+  // SCOPED TO THE TICKET'S ORGANIZATION, not just looked up. The form layer validates the
+  // `supervisor` answer as "some string", so the id reaching here is attacker-controlled in the
+  // ordinary sense: whoever filled the form chose it. An unscoped `WHERE id = $1` in system
+  // context (which is what this was) would happily resolve a user in a DIFFERENT customer
+  // organization and mail them a live Temporary Access Pass for a brand-new federal identity.
+  // Cross-org delivery is the whole finding, and org scope is what closes it.
   //
-  // Two constraints, both required:
-  //  - `plane = 'nexus'` — the pass goes to a work mailbox Nexus itself holds for a platform
-  //    operator, never to a customer-plane mailbox this platform merely knows an address for;
-  //  - scoped to the TICKET's organization. Nexus users carry organization_id NULL by
-  //    construction (see modules/platform-users.ts), so their org scope lives in
-  //    role_assignments — an assignment in this org, or the org-NULL all-orgs grant. That is
-  //    the same scoping model the PDP applies, so "can this person be sent this org's
-  //    credential" means the same thing here as it does everywhere else.
+  // The predicate is a UNION of the two ways a user is legitimately "of" this organization,
+  // because the platform models them differently:
+  //  - a customer-plane user carries users.organization_id directly. This is the ordinary case:
+  //    an SBS supervisor is an SBS employee, and accounts.searchUsers — which backs the form's
+  //    supervisor picker — selects `WHERE organization_id = $1 AND status = 'active'`, so a
+  //    supervisor chosen through the form is ALWAYS one of these;
+  //  - a nexus-plane user carries organization_id NULL by construction (see
+  //    modules/platform-users.ts, which hardcodes it), so their scope lives in role_assignments
+  //    — an assignment in this org, or the org-NULL all-orgs grant. Admitted so a platform
+  //    admin standing in as supervisor is not excluded.
+  //
+  // A `plane = 'nexus'` REQUIREMENT was considered and rejected: it is unsatisfiable together
+  // with the org test for the very users the picker offers, so every supervisor chosen on the
+  // form would have failed this step — fail-closed, but only after the account, the licences
+  // and the group memberships were already written to a live federal tenant, which is the worst
+  // possible place to discover it. A user of a different customer org still matches neither
+  // branch (their organization_id and their role assignments are both their own org's), which
+  // is the property that actually mattered.
   const supervisor = await withSystemContext(async (sql) => {
     const { rows } = await sql.query(
       `SELECT u.email, u.status
          FROM users u
         WHERE u.id = $1
-          AND u.plane = 'nexus'
-          AND EXISTS (
-            SELECT 1 FROM role_assignments ra
-             WHERE ra.user_id = u.id
-               AND (ra.organization_id = $2 OR ra.organization_id IS NULL)
+          AND (
+            u.organization_id = $2
+            OR EXISTS (
+              SELECT 1 FROM role_assignments ra
+               WHERE ra.user_id = u.id
+                 AND (ra.organization_id = $2 OR ra.organization_id IS NULL)
+            )
           )`,
       [supervisorId, organizationId],
     );
@@ -371,8 +384,8 @@ async function deliverTapToSupervisor(
   });
   if (!supervisor?.email) {
     throw new Error(
-      'supervisor is not a Nexus platform user scoped to this organization, or has no work '
-      + 'mailbox on file; refusing to deliver the Temporary Access Pass',
+      'supervisor is not a user of this organization, or has no work mailbox on file; '
+      + 'refusing to deliver the Temporary Access Pass',
     );
   }
   // A deactivated or offboarded supervisor must not receive a live credential for a brand-new
