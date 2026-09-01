@@ -18,6 +18,7 @@ export interface Config {
   oidcCustomer: OidcCustomerConfig;
   notifications: NotificationsConfig;
   retention: RetentionConfig;
+  provisioning: ProvisioningConfig;
 }
 
 export interface NotificationsConfig {
@@ -87,6 +88,17 @@ export interface M365Config {
   teamsEnabled: boolean;
 }
 
+export interface ProvisioningConfig {
+  enabled: boolean;
+  tenantId: string;
+  clientId: string;
+  clientSecret: string;
+  cloud: M365Cloud;
+  upnDomain: string;
+  baselineSkus: string[];
+  cloudPcPolicy: string;
+}
+
 const bool = (v: string | undefined): boolean => v === 'true' || v === '1';
 
 export function parseM365Config(env: NodeJS.ProcessEnv): M365Config {
@@ -107,6 +119,23 @@ export function parseM365Config(env: NodeJS.ProcessEnv): M365Config {
     serviceMailbox,
     ingestEnabled: bool(env.M365_INGEST_ENABLED),
     teamsEnabled: bool(env.M365_TEAMS_ENABLED),
+  };
+}
+
+export function parseProvisioningConfig(env: NodeJS.ProcessEnv): ProvisioningConfig {
+  const tenantId = env.M365_PROV_TENANT_ID ?? '';
+  const clientId = env.M365_PROV_CLIENT_ID ?? '';
+  const clientSecret = env.M365_PROV_CLIENT_SECRET ?? '';
+  const upnDomain = (env.M365_PROV_UPN_DOMAIN ?? '').toLowerCase();
+  const baselineSkus = (env.M365_PROV_BASELINE_SKUS ?? '')
+    .split(',').map((s) => s.trim()).filter(Boolean);
+  // Opting in is necessary but not sufficient: a half-configured app must stay dark.
+  const enabled = bool(env.M365_PROV_ENABLED) && Boolean(tenantId && clientId && clientSecret && upnDomain);
+  return {
+    enabled, tenantId, clientId, clientSecret,
+    cloud: (env.M365_PROV_CLOUD as M365Cloud) ?? 'gcchigh',
+    upnDomain, baselineSkus,
+    cloudPcPolicy: env.M365_PROV_CLOUDPC_POLICY ?? 'SBSFederal Cloud PC',
   };
 }
 
@@ -187,4 +216,5 @@ export const config: Config = {
     enabled: process.env.RETENTION_PURGE_ENABLED ? bool(process.env.RETENTION_PURGE_ENABLED) : true,
     days: Number(process.env.RETENTION_DAYS ?? 30),
   },
+  provisioning: parseProvisioningConfig(process.env),
 };

@@ -1,0 +1,17 @@
+import { describe, it, expect } from 'vitest';
+import { parseProvisioningConfig } from '../src/config.js';
+
+describe('parseProvisioningConfig', () => {
+  it('is disabled without explicit opt-in', () => {
+    expect(parseProvisioningConfig({}).enabled).toBe(false);
+  });
+
+  it('splits the baseline SKU list and trims blanks', () => {
+    const c = parseProvisioningConfig({ M365_PROV_BASELINE_SKUS: 'SPE_E3_USGOV_GCCHIGH, MDATP_XPLAT ,' });
+    expect(c.baselineSkus).toEqual(['SPE_E3_USGOV_GCCHIGH', 'MDATP_XPLAT']);
+  });
+
+  it('refuses to report enabled when required settings are missing', () => {
+    expect(parseProvisioningConfig({ M365_PROV_ENABLED: 'true' }).enabled).toBe(false);
+  });
+});
