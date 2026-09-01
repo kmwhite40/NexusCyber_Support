@@ -96,8 +96,11 @@ export function ProvisioningPanel({ ticketId, canProvision }: { ticketId: string
     setExecuteError(null);
     setResult(null);
     try {
-      const res = await api.post<Plan>(`/tickets/${ticketId}/provisioning/preview`);
-      setPlan(res);
+      // Routes wrap every payload as `{ data: ... }` (apps/api/src/http/routes.ts); api.post()
+      // returns the raw parsed body, unwrapped nowhere in lib/api.ts, so the generic here must
+      // model the envelope — claiming <Plan> directly would compile fine and still be wrong.
+      const res = await api.post<{ data: Plan }>(`/tickets/${ticketId}/provisioning/preview`);
+      setPlan(res.data);
     } catch (e) {
       setPlan(null);
       setPlanError(e instanceof ApiError ? e.detail : 'Could not build a provisioning preview.');
@@ -110,8 +113,8 @@ export function ProvisioningPanel({ ticketId, canProvision }: { ticketId: string
     setExecuting(true);
     setExecuteError(null);
     try {
-      const res = await api.post<ExecuteResult>(`/tickets/${ticketId}/provisioning/execute`);
-      setResult(res);
+      const res = await api.post<{ data: ExecuteResult }>(`/tickets/${ticketId}/provisioning/execute`);
+      setResult(res.data);
       // The plan that was approved has now been acted on; drop it so a stale "Provision" button
       // can't be clicked again without a fresh preview of current tenant state.
       setPlan(null);
@@ -160,7 +163,7 @@ export function ProvisioningPanel({ ticketId, canProvision }: { ticketId: string
             </ol>
 
             {blocked && (
-              <div className="rounded-md border border-danger/30 bg-danger/10 p-3">
+              <div id="provisioning-blockers" className="rounded-md border border-danger/30 bg-danger/10 p-3">
                 <div className="mb-1 flex items-center gap-1.5 text-sm font-medium text-danger">
                   <AlertTriangle className="h-4 w-4" strokeWidth={1.75} />
                   This run cannot proceed
@@ -172,7 +175,12 @@ export function ProvisioningPanel({ ticketId, canProvision }: { ticketId: string
             )}
 
             <div className="flex items-center gap-2">
-              <Button size="sm" onClick={provision} disabled={executing || blocked || inFlight}>
+              <Button
+                size="sm"
+                onClick={provision}
+                disabled={executing || blocked || inFlight}
+                aria-describedby={blocked ? 'provisioning-blockers' : undefined}
+              >
                 {executing ? 'Provisioning…' : 'Provision'}
               </Button>
               {inFlight && !blocked && (
