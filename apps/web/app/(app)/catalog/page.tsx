@@ -6,9 +6,10 @@ import { useRouter } from 'next/navigation';
 import { api, catalog, users, attachmentsApi, type CatalogItem, type Ticket, type CatalogForm, type FormFieldDef, ApiError } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
 import { UserPicker } from '@/components/user-picker';
-import { Card, CardBody, CardHeader, CardTitle, Button, Badge, Input, Textarea, Field, Select, Checkbox } from '@/components/ui/primitives';
+import { DynamicFormField, isFieldVisible } from '@/components/dynamic-form-field';
+import { Card, CardBody, CardHeader, CardTitle, Button, Badge, Input, Textarea, Field, Select } from '@/components/ui/primitives';
 import { Skeleton } from '@/components/ui/data';
-import { Clock, Paperclip } from 'lucide-react';
+import { Clock } from 'lucide-react';
 
 export default function CatalogPage() {
   const router = useRouter();
@@ -116,21 +117,55 @@ function RequestModal({
   const [description, setDescription] = React.useState('');
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  // Resolved options for fields with an `options_source` (e.g. cloud_pc_policy), keyed by
+  // field key. Populated by the effect below; falls back to the field's static `options`
+  // until (or unless) that fetch succeeds.
+  const [dynamicOptions, setDynamicOptions] = React.useState<Record<string, string[]>>({});
 
   React.useEffect(() => {
     catalog.form(item.key).then((r) => setForm(r.form)).catch(() => setForm(null)).finally(() => setLoaded(true));
   }, [item.key]);
 
+  // Fetch options for any options_source field once the form loads. The referenced
+  // endpoint (/provisioning/cloud-pc-policies) doesn't exist until Phase 2 (Task 15) —
+  // any failure (network error or 404) is swallowed and the field just keeps using its
+  // static `field.options` (empty array today) instead of breaking the form.
+  React.useEffect(() => {
+    for (const f of form?.fields ?? []) {
+      if (!f.options_source) continue;
+      api.get<{ data: string[] }>('/provisioning/cloud-pc-policies')
+        .then((r) => setDynamicOptions((cur) => ({ ...cur, [f.key]: r.data })))
+        .catch(() => {});
+    }
+  }, [form]);
+
   const searchOrg = isAgent ? orgId : me?.organization_id ?? undefined;
   const set = (key: string, v: unknown) => setAnswers((a) => ({ ...a, [key]: v }));
+  const renderUserPicker = (f: FormFieldDef, multi: boolean) =>
+    multi ? (
+      <UserPicker value={(answers[f.key] as string[]) ?? []} onChange={(v) => set(f.key, v)} organizationId={searchOrg} multiple />
+    ) : (
+      <UserPicker value={(answers[f.key] as string) ?? null} onChange={(v) => set(f.key, v)} organizationId={searchOrg} />
+    );
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
+      // Drop answers for fields the user can't currently see — a value entered before a
+      // condition changed (e.g. answering `end_date` then switching `access_type` away
+      // from "Temporary") must not be submitted as if it were still given.
+      const visibleAnswers = form
+        ? Object.fromEntries(
+            Object.entries(answers).filter(([key]) => {
+              const f = form.fields.find((ff) => ff.key === key);
+              return !f || isFieldVisible(f, answers);
+            }),
+          )
+        : answers;
       const body = form
-        ? { organizationId: isAgent ? orgId : undefined, answers }
+        ? { organizationId: isAgent ? orgId : undefined, answers: visibleAnswers }
         : { subject, description, organizationId: isAgent ? orgId : undefined };
       const t = await catalog.request(item.key, body);
       if (file) await attachmentsApi.upload(t.id, file);
@@ -160,36 +195,17 @@ function RequestModal({
             {!loaded && <p className="text-xs text-muted">Loading…</p>}
 
             {loaded && form && form.fields.map((f: FormFieldDef) => (
-              <Field key={f.key} label={f.required ? `${f.label} *` : f.label}>
-                {f.data_type === 'textarea' ? (
-                  <Textarea value={(answers[f.key] as string) ?? ''} onChange={(e) => set(f.key, e.target.value)} />
-                ) : f.data_type === 'select' ? (
-                  <Select value={(answers[f.key] as string) ?? ''} onChange={(e) => set(f.key, e.target.value)}>
-                    <option value="" disabled>Select…</option>
-                    {f.options.map((o) => <option key={o} value={o}>{o}</option>)}
-                  </Select>
-                ) : f.data_type === 'checkbox' ? (
-                  <Checkbox checked={!!answers[f.key]} onChange={(e) => set(f.key, e.target.checked)} />
-                ) : f.data_type === 'user' ? (
-                  <UserPicker value={(answers[f.key] as string) ?? null} onChange={(v) => set(f.key, v)} organizationId={searchOrg} />
-                ) : f.data_type === 'user_multi' ? (
-                  <UserPicker value={(answers[f.key] as string[]) ?? []} onChange={(v) => set(f.key, v)} organizationId={searchOrg} multiple />
-                ) : f.data_type === 'attachment' ? (
-                  <div className="rounded-md border border-dashed border-border p-3">
-                    <div className="flex items-center gap-2">
-                      <Paperclip className="h-4 w-4 shrink-0 text-muted" strokeWidth={1.75} />
-                      <Input type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="border-0 bg-transparent p-0 text-xs" />
-                    </div>
-                    {file && <span className="mt-1 block text-xs text-fg">{file.name}</span>}
-                  </div>
-                ) : (
-                  <Input
-                    value={(answers[f.key] as string) ?? ''}
-                    placeholder={f.key === 'summary' ? 'e.g. Create an account on Jira' : undefined}
-                    onChange={(e) => set(f.key, e.target.value)}
-                  />
-                )}
-              </Field>
+              <DynamicFormField
+                key={f.key}
+                field={f}
+                value={answers[f.key]}
+                answers={answers}
+                options={dynamicOptions[f.key] ?? f.options}
+                file={file}
+                onChange={set}
+                onFileChange={setFile}
+                renderUserPicker={renderUserPicker}
+              />
             ))}
 
             {loaded && !form && (

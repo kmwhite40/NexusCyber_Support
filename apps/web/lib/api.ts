@@ -120,12 +120,19 @@ export interface CatalogItem {
   fulfillment_steps: Array<{ key: string; label: string; role: string; automatable?: boolean }>;
 }
 
+export type VisibleWhen = { field: string; equals: string } | { field: string; in: string[] };
+
 export interface FormFieldDef {
   key: string;
   label: string;
-  data_type: 'text' | 'textarea' | 'number' | 'select' | 'checkbox' | 'date' | 'user' | 'user_multi' | 'attachment';
+  data_type:
+    | 'text' | 'textarea' | 'number' | 'select' | 'checkbox' | 'date'
+    | 'user' | 'user_multi' | 'attachment' | 'email' | 'phone';
   required: boolean;
   options: string[];
+  visible_when: VisibleWhen | null;
+  sensitive: boolean;
+  options_source: string | null;
 }
 export interface CatalogForm {
   id: string;

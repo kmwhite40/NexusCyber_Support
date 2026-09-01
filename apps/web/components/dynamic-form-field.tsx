@@ -1,0 +1,101 @@
+'use client';
+// Dynamic field renderer for catalog request forms. Extracted from the catalog page's
+// inline `data_type` switch once the SBS onboarding form grew from 15 to 32 fields (four
+// conditionally visible via `visible_when`, four PII marked `sensitive`). Renders a single
+// field per the shape returned by the API (apps/api/src/modules/forms.ts `loadFields`).
+import * as React from 'react';
+import type { FormFieldDef, VisibleWhen } from '@/lib/api';
+import { Field, Input, Select, Textarea, Checkbox } from '@/components/ui/primitives';
+import { Paperclip } from 'lucide-react';
+
+export type { VisibleWhen };
+
+/**
+ * Is this field shown, given the current answers? Fields with no condition are always
+ * shown. This MUST behave identically to the server's `isFieldVisible` in
+ * apps/api/src/modules/forms.ts — keep the two in step:
+ *
+ *   export function isFieldVisible(field: FormField, answers: Record<string, unknown>): boolean {
+ *     const cond = field.visible_when;
+ *     if (!cond) return true;
+ *     const actual = answers[cond.field];
+ *     if (typeof actual !== 'string') return false;
+ *     return 'equals' in cond ? actual === cond.equals : cond.in.includes(actual);
+ *   }
+ *
+ * In particular: a referenced field that is absent from `answers`, or whose value is not
+ * a string, means NOT visible — same as the server.
+ */
+export function isFieldVisible(field: FormFieldDef, answers: Record<string, unknown>): boolean {
+  const cond = field.visible_when;
+  if (!cond) return true;
+  const actual = answers[cond.field];
+  if (typeof actual !== 'string') return false;
+  return 'equals' in cond ? actual === cond.equals : cond.in.includes(actual);
+}
+
+export function DynamicFormField({
+  field, value, answers, options, file, onChange, onFileChange, renderUserPicker,
+}: {
+  field: FormFieldDef;
+  /** answers[field.key] — passed separately so callers can read/derive it however they like. */
+  value: unknown;
+  /** The full answers bag, needed to evaluate this (and other fields') visibility. */
+  answers: Record<string, unknown>;
+  /** Resolved options for a select field — static field.options, or options_source results
+   *  once fetched (callers are responsible for the options_source fetch + fallback). */
+  options: string[];
+  file?: File | null;
+  onChange: (key: string, value: unknown) => void;
+  onFileChange?: (file: File | null) => void;
+  renderUserPicker: (field: FormFieldDef, multi: boolean) => React.ReactNode;
+}) {
+  if (!isFieldVisible(field, answers)) return null;
+  const set = (v: unknown) => onChange(field.key, v);
+  const label = field.required ? `${field.label} *` : field.label;
+  const hint = field.sensitive ? 'Sensitive — handled and stored separately from other request data.' : undefined;
+
+  return (
+    <Field label={label} hint={hint}>
+      {field.data_type === 'textarea' ? (
+        <Textarea value={(value as string) ?? ''} onChange={(e) => set(e.target.value)} />
+      ) : field.data_type === 'select' ? (
+        <Select value={(value as string) ?? ''} onChange={(e) => set(e.target.value)}>
+          <option value="" disabled>Select…</option>
+          {options.map((o) => <option key={o} value={o}>{o}</option>)}
+        </Select>
+      ) : field.data_type === 'checkbox' ? (
+        <Checkbox checked={!!value} onChange={(e) => set(e.target.checked)} />
+      ) : field.data_type === 'user' ? (
+        renderUserPicker(field, false)
+      ) : field.data_type === 'user_multi' ? (
+        renderUserPicker(field, true)
+      ) : field.data_type === 'attachment' ? (
+        <div className="rounded-md border border-dashed border-border p-3">
+          <div className="flex items-center gap-2">
+            <Paperclip className="h-4 w-4 shrink-0 text-muted" strokeWidth={1.75} />
+            <Input
+              type="file"
+              onChange={(e) => onFileChange?.(e.target.files?.[0] ?? null)}
+              className="border-0 bg-transparent p-0 text-xs"
+            />
+          </div>
+          {file && <span className="mt-1 block text-xs text-fg">{file.name}</span>}
+        </div>
+      ) : (
+        <Input
+          type={
+            field.data_type === 'email' ? 'email'
+              : field.data_type === 'phone' ? 'tel'
+              : field.data_type === 'date' ? 'date'
+              : field.data_type === 'number' ? 'number'
+              : 'text'
+          }
+          value={(value as string) ?? ''}
+          placeholder={field.key === 'summary' ? 'e.g. Create an account on Jira' : undefined}
+          onChange={(e) => set(e.target.value)}
+        />
+      )}
+    </Field>
+  );
+}
