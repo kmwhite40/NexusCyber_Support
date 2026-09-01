@@ -11,6 +11,10 @@ BEGIN
   -- The single free-text name is superseded by split legal-name fields.
   DELETE FROM form_fields WHERE form_id=f AND key='new_employee_name';
 
+  -- The original 'manager' picker is superseded by 'supervisor' below, the single
+  -- field carrying maps_to='manager' (required, label-matched to the SBS PDF).
+  DELETE FROM form_fields WHERE form_id=f AND key='manager';
+
   INSERT INTO form_fields (form_id,key,label,data_type,required,options,position,maps_to,visible_when,sensitive,options_source) VALUES
     (f,'legal_last_name','Legal last name','text',true,'[]',15,NULL,NULL,false,NULL),
     (f,'legal_first_name','Legal first name','text',true,'[]',16,'subject',NULL,false,NULL),
