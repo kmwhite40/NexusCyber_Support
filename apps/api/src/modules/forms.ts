@@ -33,7 +33,8 @@ export interface ValidationError {
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const PHONE = /^[+()\-.\s\d]{7,}$/;
+// Intentionally permissive about formatting (spaces, dashes, parens, dots, +), but requires at least one digit.
+const PHONE = /^(?=.*\d)[+()\-.\s\d]{7,}$/;
 
 /** Validate answers against a form's field definitions. Pure. */
 export function validateAgainstForm(fields: FormField[], answers: Record<string, unknown>): { ok: boolean; errors: ValidationError[] } {

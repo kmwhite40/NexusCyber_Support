@@ -86,4 +86,9 @@ describe('email and phone field types', () => {
     expect(validateAgainstForm(fields, { cell_phone: '(555) 123-4567' }).ok).toBe(true);
     expect(validateAgainstForm(fields, { cell_phone: 'call me' }).ok).toBe(false);
   });
+
+  it('rejects a punctuation-only string with no digits', () => {
+    const fields = [{ key: 'cell_phone', label: 'Cell', data_type: 'phone' as const, ...base }];
+    expect(validateAgainstForm(fields, { cell_phone: '-------' }).ok).toBe(false);
+  });
 });
