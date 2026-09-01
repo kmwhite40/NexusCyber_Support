@@ -92,3 +92,34 @@ describe('email and phone field types', () => {
     expect(validateAgainstForm(fields, { cell_phone: '-------' }).ok).toBe(false);
   });
 });
+
+describe('isFieldVisible / conditional required', () => {
+  const endDate = {
+    key: 'end_date', label: 'End date', data_type: 'date' as const, required: true,
+    options: [], maps_to: null, sensitive: false, options_source: null,
+    visible_when: { field: 'access_type', equals: 'Temporary' },
+  };
+  const accessType = {
+    key: 'access_type', label: 'Access type', data_type: 'select' as const, required: true,
+    options: ['Permanent', 'Temporary'], maps_to: null, visible_when: null,
+    sensitive: false, options_source: null,
+  };
+
+  it('does not require a hidden field', () => {
+    const r = validateAgainstForm([accessType, endDate], { access_type: 'Permanent' });
+    expect(r.ok).toBe(true);
+  });
+
+  it('requires the field once its condition is met', () => {
+    const r = validateAgainstForm([accessType, endDate], { access_type: 'Temporary' });
+    expect(r.ok).toBe(false);
+    expect(r.errors.map((e) => e.field)).toContain('end_date');
+  });
+
+  it('supports an "in" condition', () => {
+    const addr = { ...endDate, key: 'home_address_street', data_type: 'text' as const,
+      visible_when: { field: 'work_location', in: ['WFH-Permanent', 'WFH-Temporary'] } };
+    expect(validateAgainstForm([addr], { work_location: 'On Site' }).ok).toBe(true);
+    expect(validateAgainstForm([addr], { work_location: 'WFH-Permanent' }).ok).toBe(false);
+  });
+});

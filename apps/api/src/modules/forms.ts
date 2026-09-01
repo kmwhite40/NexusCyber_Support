@@ -36,11 +36,21 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // Intentionally permissive about formatting (spaces, dashes, parens, dots, +), but requires at least one digit.
 const PHONE = /^(?=.*\d)[+()\-.\s\d]{7,}$/;
 
+/** Is this field shown, given the current answers? Fields with no condition are always shown. */
+export function isFieldVisible(field: FormField, answers: Record<string, unknown>): boolean {
+  const cond = field.visible_when;
+  if (!cond) return true;
+  const actual = answers[cond.field];
+  if (typeof actual !== 'string') return false;
+  return 'equals' in cond ? actual === cond.equals : cond.in.includes(actual);
+}
+
 /** Validate answers against a form's field definitions. Pure. */
 export function validateAgainstForm(fields: FormField[], answers: Record<string, unknown>): { ok: boolean; errors: ValidationError[] } {
   const errors: ValidationError[] = [];
   for (const f of fields) {
     if (f.data_type === 'attachment') continue;
+    if (!isFieldVisible(f, answers)) continue;
     const v = answers[f.key];
     const missing =
       v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0);
