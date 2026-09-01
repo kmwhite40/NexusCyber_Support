@@ -8,7 +8,9 @@ import { audit } from './audit.js';
 import { publish } from '../events/bus.js';
 import { addBusinessMinutes } from './sla.js';
 import { Errors } from '../errors.js';
-import { getFormByCatalogKey, validateAgainstForm, mapFormAnswers } from './forms.js';
+import { getFormByCatalogKey, validateAgainstForm, mapFormAnswers, type MappedAnswers } from './forms.js';
+import { storeSensitiveWith } from './sensitive-fields.js';
+import type { FormField } from './form-fields.js';
 import type { Principal } from '../types.js';
 
 export async function listCatalog() {
@@ -21,6 +23,34 @@ export async function listCatalog() {
     );
     return rows;
   });
+}
+
+/** What `createRequest` persists for a form-backed request. */
+export interface RequestWrite {
+  mapped: MappedAnswers;
+  /** Exactly the object stringified into `tickets.custom_fields`. Contains no answer for a
+   *  `sensitive` field and none for a field the submitter cannot currently see. */
+  customFields: Record<string, unknown>;
+  /** Exactly the bag handed to `storeSensitiveWith` -> ticket_sensitive_fields. */
+  sensitive: Record<string, unknown>;
+}
+
+/** Pure: the whole persistence decision for a form-backed catalog request — the ticket
+ *  columns, the `custom_fields` blob, and the PII routed to `ticket_sensitive_fields`
+ *  instead. Extracted so the PII guarantee on the primary intake path is testable without
+ *  a database (mirrors `customFieldsFor`, which does the same job for `submitAnswers`). */
+export function planRequestWrite(
+  fields: FormField[],
+  answers: Record<string, unknown>,
+  formKey: string | null,
+  opts: { defaultRequesterId?: string | null } = {},
+): RequestWrite {
+  const mapped = mapFormAnswers(fields, answers, opts);
+  return {
+    mapped,
+    customFields: { ...mapped.customFields, _form: formKey },
+    sensitive: mapped.sensitive,
+  };
 }
 
 export interface CreateRequestInput {
@@ -45,20 +75,22 @@ export async function createRequest(actor: Principal, key: string, input: Create
     return { item: it, grpId: (g?.id as string | undefined) ?? null };
   });
 
-  // If the catalog item has a custom form, validate + route its answers.
-  let mapped: import('./forms.js').MappedAnswers | null = null;
+  // If the catalog item has a custom form, validate + route its answers. planRequestWrite
+  // splits PII out of custom_fields and drops hidden-field answers; it is the same decision
+  // the tests assert on directly.
+  let write: RequestWrite | null = null;
   if (item.form_key && input.answers) {
     const form = await getFormByCatalogKey(actor, key);
     if (form) {
       const v = validateAgainstForm(form.fields, input.answers);
       if (!v.ok) throw Errors.validation(v.errors.map((e) => e.message).join('; '));
-      mapped = mapFormAnswers(form.fields, input.answers, {
+      write = planRequestWrite(form.fields, input.answers, item.form_key, {
         defaultRequesterId: actor.plane === 'customer' ? actor.id : null,
       });
       // Require on-behalf-of for agents only when the form actually routes a field to
       // the requester (forms like offboarding have no requester field — agent is requester).
       const hasRequesterField = form.fields.some((ff: { maps_to: string | null }) => ff.maps_to === 'requester');
-      if (actor.plane === 'nexus' && hasRequesterField && !mapped.requesterId) {
+      if (actor.plane === 'nexus' && hasRequesterField && !write.mapped.requesterId) {
         throw Errors.badRequest('on-behalf-of is required for agent-created requests');
       }
     }
@@ -75,9 +107,9 @@ export async function createRequest(actor: Principal, key: string, input: Create
     // Requires approval -> starts 'new' (pending approval). Else routed & owned by the tier.
     const status = item.requires_approval ? 'new' : 'assigned';
 
-    const requesterId = mapped?.requesterId ?? (actor.plane === 'customer' ? actor.id : null);
-    const affectedUserId = mapped?.affectedUserId ?? null;
-    const customFields = mapped ? { ...mapped.customFields, _form: item.form_key } : {};
+    const requesterId = write?.mapped.requesterId ?? (actor.plane === 'customer' ? actor.id : null);
+    const affectedUserId = write?.mapped.affectedUserId ?? null;
+    const customFields = write?.customFields ?? {};
     const ticket = (
       await sql.query(
         `INSERT INTO tickets
@@ -91,8 +123,8 @@ export async function createRequest(actor: Principal, key: string, input: Create
           requesterId,
           affectedUserId,
           actor.plane === 'customer' ? 'portal' : 'agent',
-          mapped?.subject ?? input.subject ?? item.name,
-          mapped?.description ?? input.description ?? null,
+          write?.mapped.subject ?? input.subject ?? item.name,
+          write?.mapped.description ?? input.description ?? null,
           item.key,
           item.default_priority,
           status,
@@ -102,6 +134,13 @@ export async function createRequest(actor: Principal, key: string, input: Create
         ],
       )
     ).rows[0];
+
+    // PII captured on the form goes to the permission-gated, audited, auto-purged store —
+    // never to tickets.custom_fields, which is serialized wholesale onto ticket reads,
+    // notification payloads, and outbound webhooks. Written on THIS transaction's connection
+    // so it commits atomically with the ticket it belongs to (and so its FK does not block
+    // on the still-uncommitted ticket row).
+    if (write) await storeSensitiveWith(sql, ticket.id, orgId, write.sensitive);
 
     // SLA: response (wall-clock) + resolution (business-hours)
     const now = new Date();
@@ -133,7 +172,7 @@ export async function createRequest(actor: Principal, key: string, input: Create
           [orgId, ticket.id],
         )
       ).rows[0];
-      const approverIds = mapped?.approverIds ?? [];
+      const approverIds = write?.mapped.approverIds ?? [];
       for (let i = 0; i < approverIds.length; i++) {
         await sql.query(
           `INSERT INTO approval_steps (organization_id, approval_id, step_order, approver_id)

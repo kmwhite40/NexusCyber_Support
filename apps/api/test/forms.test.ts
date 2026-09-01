@@ -116,10 +116,16 @@ describe('isFieldVisible / conditional required', () => {
     expect(r.errors.map((e) => e.field)).toContain('end_date');
   });
 
+  // These option strings are the ones migration 0054 actually seeds, character-for-character.
+  // An abbreviation like 'WFH-Permanent' passes this test while never matching real data —
+  // exactly the silent-hide failure mode the test exists to catch.
   it('supports an "in" condition', () => {
     const addr = { ...endDate, key: 'home_address_street', data_type: 'text' as const,
-      visible_when: { field: 'work_location', in: ['WFH-Permanent', 'WFH-Temporary'] } };
+      visible_when: { field: 'work_location', in: ['Work from Home - Permanent', 'Work from Home - Temporary'] } };
     expect(validateAgainstForm([addr], { work_location: 'On Site' }).ok).toBe(true);
-    expect(validateAgainstForm([addr], { work_location: 'WFH-Permanent' }).ok).toBe(false);
+    expect(validateAgainstForm([addr], { work_location: 'Work from Home - Permanent' }).ok).toBe(false);
+    expect(validateAgainstForm([addr], { work_location: 'Work from Home - Temporary' }).ok).toBe(false);
+    // A stale abbreviation must NOT match the seeded option.
+    expect(validateAgainstForm([addr], { work_location: 'WFH-Permanent' }).ok).toBe(true);
   });
 });

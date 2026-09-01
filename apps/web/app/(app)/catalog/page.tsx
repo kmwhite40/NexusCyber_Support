@@ -98,6 +98,12 @@ export default function CatalogPage() {
   );
 }
 
+// Provider name (form_fields.options_source) -> the endpoint that lists its choices.
+// Seeded providers: `cloudpc_policies` (0054). Add a row here when a new provider is seeded.
+const OPTIONS_SOURCE_ENDPOINTS: Record<string, string> = {
+  cloudpc_policies: '/provisioning/cloud-pc-policies',
+};
+
 function RequestModal({
   item, orgs, isAgent, onClose, onCreated,
 }: {
@@ -126,14 +132,18 @@ function RequestModal({
     catalog.form(item.key).then((r) => setForm(r.form)).catch(() => setForm(null)).finally(() => setLoaded(true));
   }, [item.key]);
 
-  // Fetch options for any options_source field once the form loads. The referenced
-  // endpoint (/provisioning/cloud-pc-policies) doesn't exist until Phase 2 (Task 15) —
-  // any failure (network error or 404) is swallowed and the field just keeps using its
-  // static `field.options` (empty array today) instead of breaking the form.
+  // Fetch options for any options_source field once the form loads. The endpoint is keyed
+  // off the provider NAME the field declares (form_fields.options_source), not hardcoded —
+  // an unknown provider fetches nothing rather than silently hitting the Cloud PC endpoint.
+  // The referenced endpoint doesn't exist until Phase 2 (Task 15); any failure (network
+  // error or 404) is swallowed and the field just keeps using its static `field.options`
+  // (empty array today) instead of breaking the form.
   React.useEffect(() => {
     for (const f of form?.fields ?? []) {
       if (!f.options_source) continue;
-      api.get<{ data: string[] }>('/provisioning/cloud-pc-policies')
+      const url = OPTIONS_SOURCE_ENDPOINTS[f.options_source];
+      if (!url) continue;
+      api.get<{ data: string[] }>(url)
         .then((r) => setDynamicOptions((cur) => ({ ...cur, [f.key]: r.data })))
         .catch(() => {});
     }

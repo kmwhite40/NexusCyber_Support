@@ -1,10 +1,10 @@
 // PII captured on onboarding requests. Held apart from tickets.custom_fields so it is never
 // serialized onto ticket reads, notification payloads, or outbound webhooks. Reads require
 // `pii.view` and are individually audited; rows cascade-delete with their ticket.
-import { withSystemContext } from '../db/pool.js';
+import { withSystemContext, type Sql } from '../db/pool.js';
 import { authorize } from '../authz/pdp.js';
 import { audit } from './audit.js';
-import { isFieldVisible, type FormField } from './forms.js';
+import { isFieldVisible, type FormField } from './form-fields.js';
 import type { Principal } from '../types.js';
 
 export const MASK = '••••';
@@ -25,8 +25,30 @@ export function splitSensitiveAnswers(
   return { normal, sensitive };
 }
 
-/** Persist sensitive answers for a ticket. System context — called from the ticket-creation
- *  path, not a user-facing route. Empty/null/blank values are dropped, never stored. */
+/** Persist sensitive answers on an ALREADY-OPEN connection/transaction. Required when the
+ *  ticket itself was inserted in that same transaction and is not yet committed: a second
+ *  connection's foreign-key check would block on the uncommitted parent row while that
+ *  transaction waits on us. Empty/null/blank values are dropped, never stored. */
+export async function storeSensitiveWith(
+  sql: Sql,
+  ticketId: string,
+  organizationId: string,
+  values: Record<string, unknown>,
+): Promise<void> {
+  const entries = Object.entries(values).filter(([, v]) => v !== null && v !== undefined && v !== '');
+  if (entries.length === 0) return;
+  for (const [key, value] of entries) {
+    await sql.query(
+      `INSERT INTO ticket_sensitive_fields (ticket_id, organization_id, key, value)
+       VALUES ($1,$2,$3,$4)
+       ON CONFLICT (ticket_id, key) DO UPDATE SET value = EXCLUDED.value`,
+      [ticketId, organizationId, key, String(value)],
+    );
+  }
+}
+
+/** Persist sensitive answers for an existing (committed) ticket. System context — called
+ *  from fulfillment paths, not a user-facing read route. */
 export async function storeSensitive(
   ticketId: string,
   organizationId: string,
@@ -35,14 +57,7 @@ export async function storeSensitive(
   const entries = Object.entries(values).filter(([, v]) => v !== null && v !== undefined && v !== '');
   if (entries.length === 0) return;
   await withSystemContext(async (sql) => {
-    for (const [key, value] of entries) {
-      await sql.query(
-        `INSERT INTO ticket_sensitive_fields (ticket_id, organization_id, key, value)
-         VALUES ($1,$2,$3,$4)
-         ON CONFLICT (ticket_id, key) DO UPDATE SET value = EXCLUDED.value`,
-        [ticketId, organizationId, key, String(value)],
-      );
-    }
+    await storeSensitiveWith(sql, ticketId, organizationId, values);
   });
 }
 

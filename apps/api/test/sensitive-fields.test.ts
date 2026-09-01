@@ -21,10 +21,13 @@ describe('splitSensitiveAnswers', () => {
     expect(out.sensitive).toEqual({});
   });
 
+  // Option strings as migration 0054 seeds them, character-for-character.
   it('drops sensitive answers whose field is not visible', () => {
     const hidden: FormField = { ...f('home_address_street', true),
-      visible_when: { field: 'work_location', in: ['WFH-Permanent'] } };
+      visible_when: { field: 'work_location', in: ['Work from Home - Permanent', 'Work from Home - Temporary'] } };
     const out = splitSensitiveAnswers([hidden], { work_location: 'On Site', home_address_street: '1 Main St' });
     expect(out.sensitive).toEqual({});
+    const shown = splitSensitiveAnswers([hidden], { work_location: 'Work from Home - Permanent', home_address_street: '1 Main St' });
+    expect(shown.sensitive).toEqual({ home_address_street: '1 Main St' });
   });
 });

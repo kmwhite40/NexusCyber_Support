@@ -13,15 +13,10 @@ export type { VisibleWhen };
 /**
  * Is this field shown, given the current answers? Fields with no condition are always
  * shown. This MUST behave identically to the server's `isFieldVisible` in
- * apps/api/src/modules/forms.ts — keep the two in step:
- *
- *   export function isFieldVisible(field: FormField, answers: Record<string, unknown>): boolean {
- *     const cond = field.visible_when;
- *     if (!cond) return true;
- *     const actual = answers[cond.field];
- *     if (typeof actual !== 'string') return false;
- *     return 'equals' in cond ? actual === cond.equals : cond.in.includes(actual);
- *   }
+ * apps/api/src/modules/form-fields.ts. That is no longer a matter of trust: the two
+ * function bodies are pinned to each other character-for-character, and the behaviour is
+ * pinned to a shared case table, by apps/api/test/form-visibility-parity.test.ts —
+ * editing either copy alone fails that test.
  *
  * In particular: a referenced field that is absent from `answers`, or whose value is not
  * a string, means NOT visible — same as the server.

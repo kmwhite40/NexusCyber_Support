@@ -78,3 +78,51 @@ describe('custom_fields never receives a sensitive answer', () => {
     expect(sensitive).toEqual({ ssn: '123-45-6789' });
   });
 });
+
+// mapFormAnswers is where the PII guarantee lives: it is the only function that decides what
+// a form submission writes into tickets.custom_fields on the createRequest path.
+describe('mapFormAnswers — sensitive and hidden answers', () => {
+  it('routes a sensitive answer to `sensitive`, never to customFields', () => {
+    const fields = [F({ key: 'job_title' }), F({ key: 'cell_phone', data_type: 'phone', sensitive: true })];
+    const m = mapFormAnswers(fields, { job_title: 'Analyst', cell_phone: '555-0100' });
+    expect(m.customFields).not.toHaveProperty('cell_phone');
+    expect(m.customFields).toMatchObject({ job_title: 'Analyst' });
+    expect(m.sensitive).toEqual({ cell_phone: '555-0100' });
+  });
+
+  it('drops an answer for a field that is not currently visible', () => {
+    const fields = [
+      F({ key: 'work_location', data_type: 'select', options: ['Work from Home - Permanent', 'On Site'] }),
+      F({ key: 'home_address_street', sensitive: true,
+        visible_when: { field: 'work_location', in: ['Work from Home - Permanent'] } }),
+      F({ key: 'end_date', data_type: 'date', visible_when: { field: 'access_type', equals: 'Temporary' } }),
+    ];
+    const m = mapFormAnswers(fields, {
+      work_location: 'On Site', home_address_street: '1 Main St', access_type: 'Permanent', end_date: '2026-01-01',
+    });
+    expect(m.customFields).not.toHaveProperty('home_address_street');
+    expect(m.customFields).not.toHaveProperty('end_date');
+    expect(m.sensitive).toEqual({});
+  });
+
+  it('never lets a sensitive answer become the subject or description', () => {
+    const m = mapFormAnswers(
+      [F({ key: 'ssn', maps_to: 'subject', sensitive: true }), F({ key: 'notes', maps_to: 'description', sensitive: true })],
+      { ssn: '123-45-6789', notes: 'lives at 1 Main St' },
+    );
+    expect(m.subject).toBeUndefined();
+    expect(m.description).toBeUndefined();
+    expect(m.sensitive).toEqual({ ssn: '123-45-6789', notes: 'lives at 1 Main St' });
+  });
+
+  it('composes multiple subject fields in field order, and still records each as a custom field', () => {
+    const m = mapFormAnswers(
+      [F({ key: 'legal_first_name', maps_to: 'subject' }), F({ key: 'legal_last_name', maps_to: 'subject' })],
+      { legal_first_name: 'John', legal_last_name: 'Doe' },
+    );
+    expect(m.subject).toBe('John Doe');
+    // Phase 2's planner reads these back out of custom_fields (deriveUpn); a composed
+    // subject cannot be split apart again, so the parts must survive individually.
+    expect(m.customFields).toMatchObject({ legal_first_name: 'John', legal_last_name: 'Doe' });
+  });
+});

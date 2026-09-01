@@ -6,26 +6,14 @@ import { authorize, can } from '../authz/pdp.js';
 import { audit } from './audit.js';
 import { Errors } from '../errors.js';
 import { splitSensitiveAnswers, storeSensitive } from './sensitive-fields.js';
+import { isFieldVisible as isVisible, type FieldType, type FormField } from './form-fields.js';
 import type { Principal } from '../types.js';
 
-export type FieldType =
-  | 'text' | 'textarea' | 'number' | 'select' | 'checkbox' | 'date'
-  | 'user' | 'user_multi' | 'attachment'
-  | 'email' | 'phone';
-
-export type VisibleWhen = { field: string; equals: string } | { field: string; in: string[] };
-
-export interface FormField {
-  key: string;
-  label: string;
-  data_type: FieldType;
-  required: boolean;
-  options: string[];
-  maps_to: string | null;
-  visible_when: VisibleWhen | null;
-  sensitive: boolean;
-  options_source: string | null;
-}
+// Field shape + visibility predicate now live in the leaf module `form-fields.ts` so that
+// `sensitive-fields.ts` can use them without importing back into this file. Re-exported here
+// unchanged: every existing `from './forms.js'` import keeps working.
+export { isFieldVisible } from './form-fields.js';
+export type { FieldType, VisibleWhen, FormField } from './form-fields.js';
 
 export interface ValidationError {
   field: string;
@@ -37,21 +25,12 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // Intentionally permissive about formatting (spaces, dashes, parens, dots, +), but requires at least one digit.
 const PHONE = /^(?=.*\d)[+()\-.\s\d]{7,}$/;
 
-/** Is this field shown, given the current answers? Fields with no condition are always shown. */
-export function isFieldVisible(field: FormField, answers: Record<string, unknown>): boolean {
-  const cond = field.visible_when;
-  if (!cond) return true;
-  const actual = answers[cond.field];
-  if (typeof actual !== 'string') return false;
-  return 'equals' in cond ? actual === cond.equals : cond.in.includes(actual);
-}
-
 /** Validate answers against a form's field definitions. Pure. */
 export function validateAgainstForm(fields: FormField[], answers: Record<string, unknown>): { ok: boolean; errors: ValidationError[] } {
   const errors: ValidationError[] = [];
   for (const f of fields) {
     if (f.data_type === 'attachment') continue;
-    if (!isFieldVisible(f, answers)) continue;
+    if (!isVisible(f, answers)) continue;
     const v = answers[f.key];
     const missing =
       v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0);
@@ -187,20 +166,48 @@ export interface MappedAnswers {
   affectedUserId?: string;
   customFields: Record<string, unknown>;
   approverIds: string[];
+  /** Answers for fields flagged `sensitive`. NEVER present in `customFields` — callers must
+   *  hand these to `storeSensitive` (ticket_sensitive_fields), which is permission-gated,
+   *  audited on read, and purged on closure. */
+  sensitive: Record<string, unknown>;
 }
 
-/** Route a form's answers to ticket columns, approval steps, and custom_fields. Pure. */
+/**
+ * Route a form's answers to ticket columns, approval steps, and custom_fields. Pure.
+ *
+ * The PII guarantee lives HERE, not at the call sites, because this is the only function
+ * that decides what a form submission writes into `tickets.custom_fields`:
+ *   - answers for fields that are not currently visible are dropped entirely (a direct API
+ *     client cannot smuggle in a conditional field's value by omitting its condition;
+ *     `validateAgainstForm` skips hidden fields, so they are never validated either);
+ *   - answers for `sensitive` fields go to `out.sensitive` only — never into `customFields`
+ *     and never onto a ticket column, so PII cannot ride along on a ticket read, a
+ *     notification payload, or an outbound webhook.
+ */
 export function mapFormAnswers(
   fields: FormField[],
   answers: Record<string, unknown>,
   opts: { defaultRequesterId?: string | null } = {},
 ): MappedAnswers {
-  const out: MappedAnswers = { customFields: {}, approverIds: [] };
+  // `normal` holds only the answered, currently-visible, non-sensitive keys; everything the
+  // routing below can legitimately persist. `sensitive` is routed out of band.
+  const { normal, sensitive } = splitSensitiveAnswers(fields, answers);
+  const out: MappedAnswers = { customFields: {}, approverIds: [], sensitive };
   for (const f of fields) {
-    const v = answers[f.key];
+    if (!(f.key in normal)) continue; // unanswered, hidden, or sensitive
+    const v = normal[f.key];
     switch (f.maps_to) {
       case 'subject':
-        if (v) out.subject = String(v);
+        // Several fields may carry maps_to='subject' (e.g. legal first + last name); they
+        // compose, in field order, into one subject rather than the last one winning.
+        // The value is ALSO kept as a custom field: maps_to routes a value onto a ticket
+        // column, it does not erase it from the request record. The provisioning planner
+        // reads legal_first_name / legal_last_name back out of custom_fields, and a
+        // composed subject cannot be split apart again. Same precedent as 'manager'/'affected'.
+        if (v) {
+          out.subject = out.subject ? `${out.subject} ${String(v)}` : String(v);
+          out.customFields[f.key] = v;
+        }
         break;
       case 'description':
         if (v) out.description = String(v);
