@@ -34,6 +34,7 @@ import * as alerts from '../modules/alerts.js';
 import * as channels from '../modules/channels.js';
 import * as dashboards from '../modules/dashboards.js';
 import * as forms from '../modules/forms.js';
+import * as sensitiveFields from '../modules/sensitive-fields.js';
 import * as escalationPolicies from '../modules/escalation-policies.js';
 import { computeScore, grade } from '../modules/posture.js';
 import { audit, verifyChain, formatExport, type ExportableRow } from '../modules/audit.js';
@@ -569,6 +570,13 @@ export async function registerRoutes(app: FastifyInstance) {
     const p = await requirePrincipal(req);
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     return { data: await attachments.listForTicket(p, id) };
+  });
+
+  // Audited PII read — readSensitive itself enforces `pii.view` and writes the audit entry.
+  app.get('/api/v1/tickets/:id/sensitive', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return { data: await sensitiveFields.readSensitive(p, id) };
   });
 
   app.get('/api/v1/attachments/:id', async (req, reply) => {

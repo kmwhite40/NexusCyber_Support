@@ -5,6 +5,7 @@ import { orgContextFor } from '../auth/principal.js';
 import { authorize, can } from '../authz/pdp.js';
 import { audit } from './audit.js';
 import { Errors } from '../errors.js';
+import { splitSensitiveAnswers, storeSensitive } from './sensitive-fields.js';
 import type { Principal } from '../types.js';
 
 export type FieldType =
@@ -231,7 +232,21 @@ export function mapFormAnswers(
   return out;
 }
 
-/** Validate answers against a form and merge them into a ticket's custom_fields. */
+/** Pure: decides what a form submission writes into `tickets.custom_fields` vs. what gets
+ *  routed to the sensitive-fields store instead. Sensitive answers (per each field's
+ *  `sensitive` flag) never appear in `customFields` — this is the single source of truth
+ *  `submitAnswers` uses, so testing it directly proves the routing without touching the DB. */
+export function customFieldsFor(
+  fields: FormField[],
+  answers: Record<string, unknown>,
+  formId: string,
+): { customFields: Record<string, unknown>; sensitive: Record<string, unknown> } {
+  const { normal, sensitive } = splitSensitiveAnswers(fields, answers);
+  return { customFields: { ...normal, _form: formId }, sensitive };
+}
+
+/** Validate answers against a form and merge the non-sensitive ones into a ticket's
+ *  custom_fields; sensitive answers are persisted separately via storeSensitive (Task 3). */
 export async function submitAnswers(actor: Principal, ticketId: string, formId: string, answers: Record<string, unknown>) {
   return withOrgContext(orgContextFor(actor), async (sql) => {
     const t = (await sql.query('SELECT organization_id, custom_fields FROM tickets WHERE id=$1', [ticketId])).rows[0];
@@ -241,8 +256,10 @@ export async function submitAnswers(actor: Principal, ticketId: string, formId: 
     if (fields.length === 0) throw Errors.notFound('form not found or has no fields');
     const result = validateAgainstForm(fields, answers);
     if (!result.ok) throw Errors.validation(result.errors.map((e) => e.message).join('; '));
-    const merged = { ...(t.custom_fields ?? {}), ...answers, _form: formId };
+    const { customFields, sensitive } = customFieldsFor(fields, answers, formId);
+    const merged = { ...(t.custom_fields ?? {}), ...customFields };
     await sql.query('UPDATE tickets SET custom_fields=$1 WHERE id=$2', [JSON.stringify(merged), ticketId]);
+    await storeSensitive(ticketId, t.organization_id, sensitive);
     await audit(actor, { action: 'form.submit', organizationId: t.organization_id, resourceType: 'ticket', resourceId: ticketId, detail: { form: formId } });
     return { ok: true, custom_fields: merged };
   });

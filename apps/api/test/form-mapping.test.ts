@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { mapFormAnswers, type FormField } from '../src/modules/forms.js';
+import { mapFormAnswers, customFieldsFor, type FormField } from '../src/modules/forms.js';
+import { splitSensitiveAnswers } from '../src/modules/sensitive-fields.js';
 
 const F = (over: Partial<FormField>): FormField => ({
   key: 'k', label: 'K', data_type: 'text', required: false, options: [], maps_to: null,
@@ -46,5 +47,34 @@ describe('mapFormAnswers', () => {
     expect(m.affectedUserId).toBe('usr-leaving'); // the departing person
     expect(m.requesterId).toBe('mgr-1'); // the manager raising it (submitter)
     expect(m.customFields).toMatchObject({ departing_user: 'usr-leaving' });
+  });
+});
+
+describe('custom_fields never receives a sensitive answer', () => {
+  it('splitSensitiveAnswers keeps sensitive keys out of the normal bag', () => {
+    const fields = [
+      { key: 'job_title', label: 'Job title', data_type: 'text' as const, required: false, options: [], maps_to: null, visible_when: null, sensitive: false, options_source: null },
+      { key: 'personal_email', label: 'Personal email', data_type: 'email' as const, required: false, options: [], maps_to: null, visible_when: null, sensitive: true, options_source: null },
+    ];
+    const { normal } = splitSensitiveAnswers(fields, { job_title: 'Analyst', personal_email: 'a@b.com' });
+    expect(Object.keys(normal)).not.toContain('personal_email');
+  });
+
+  // submitAnswers itself calls customFieldsFor to decide what merges into
+  // tickets.custom_fields; this exercises that exact routing decision (not just the
+  // lower-level split helper) without needing a database.
+  it('customFieldsFor (used by submitAnswers) excludes sensitive answers from custom_fields and routes them to `sensitive`', () => {
+    const fields: FormField[] = [
+      F({ key: 'job_title', data_type: 'text', sensitive: false }),
+      F({ key: 'ssn', data_type: 'text', sensitive: true }),
+    ];
+    const { customFields, sensitive } = customFieldsFor(
+      fields,
+      { job_title: 'Analyst', ssn: '123-45-6789' },
+      'form-onboarding',
+    );
+    expect(customFields).toMatchObject({ job_title: 'Analyst', _form: 'form-onboarding' });
+    expect(customFields).not.toHaveProperty('ssn');
+    expect(sensitive).toEqual({ ssn: '123-45-6789' });
   });
 });
