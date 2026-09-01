@@ -2,11 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { validateAgainstForm, type FormField } from '../src/modules/forms.js';
 
 const fields: FormField[] = [
-  { key: 'full_name', label: 'Full name', data_type: 'text', required: true, options: [], maps_to: null },
-  { key: 'department', label: 'Department', data_type: 'select', required: true, options: ['Engineering', 'Sales'], maps_to: null },
-  { key: 'start_date', label: 'Start date', data_type: 'date', required: true, options: [], maps_to: null },
-  { key: 'seats', label: 'Seats', data_type: 'number', required: false, options: [], maps_to: null },
-  { key: 'needs_admin', label: 'Admin', data_type: 'checkbox', required: false, options: [], maps_to: null },
+  { key: 'full_name', label: 'Full name', data_type: 'text', required: true, options: [], maps_to: null, visible_when: null, sensitive: false, options_source: null },
+  { key: 'department', label: 'Department', data_type: 'select', required: true, options: ['Engineering', 'Sales'], maps_to: null, visible_when: null, sensitive: false, options_source: null },
+  { key: 'start_date', label: 'Start date', data_type: 'date', required: true, options: [], maps_to: null, visible_when: null, sensitive: false, options_source: null },
+  { key: 'seats', label: 'Seats', data_type: 'number', required: false, options: [], maps_to: null, visible_when: null, sensitive: false, options_source: null },
+  { key: 'needs_admin', label: 'Admin', data_type: 'checkbox', required: false, options: [], maps_to: null, visible_when: null, sensitive: false, options_source: null },
 ];
 
 describe('validateAgainstForm', () => {
@@ -40,7 +40,8 @@ describe('validateAgainstForm', () => {
 });
 
 const F = (over: Partial<FormField>): FormField => ({
-  key: 'k', label: 'K', data_type: 'text', required: false, options: [], maps_to: null, ...over,
+  key: 'k', label: 'K', data_type: 'text', required: false, options: [], maps_to: null,
+  visible_when: null, sensitive: false, options_source: null, ...over,
 });
 
 describe('validateAgainstForm — people + attachment types', () => {
@@ -68,5 +69,21 @@ describe('validateAgainstForm — people + attachment types', () => {
   it('does not validate attachment fields (handled out of band)', () => {
     const r = validateAgainstForm([F({ key: 'f', label: 'File', data_type: 'attachment', required: true })], {});
     expect(r.ok).toBe(true);
+  });
+});
+
+const base = { required: true, options: [], maps_to: null, visible_when: null, sensitive: false, options_source: null };
+
+describe('email and phone field types', () => {
+  it('rejects a malformed email and accepts a valid one', () => {
+    const fields = [{ key: 'personal_email', label: 'Personal email', data_type: 'email' as const, ...base }];
+    expect(validateAgainstForm(fields, { personal_email: 'nope' }).ok).toBe(false);
+    expect(validateAgainstForm(fields, { personal_email: 'a@b.gov' }).ok).toBe(true);
+  });
+
+  it('accepts common phone formats and rejects letters', () => {
+    const fields = [{ key: 'cell_phone', label: 'Cell', data_type: 'phone' as const, ...base }];
+    expect(validateAgainstForm(fields, { cell_phone: '(555) 123-4567' }).ok).toBe(true);
+    expect(validateAgainstForm(fields, { cell_phone: 'call me' }).ok).toBe(false);
   });
 });

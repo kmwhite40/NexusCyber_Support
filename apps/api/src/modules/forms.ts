@@ -9,7 +9,10 @@ import type { Principal } from '../types.js';
 
 export type FieldType =
   | 'text' | 'textarea' | 'number' | 'select' | 'checkbox' | 'date'
-  | 'user' | 'user_multi' | 'attachment';
+  | 'user' | 'user_multi' | 'attachment'
+  | 'email' | 'phone';
+
+export type VisibleWhen = { field: string; equals: string } | { field: string; in: string[] };
 
 export interface FormField {
   key: string;
@@ -18,6 +21,9 @@ export interface FormField {
   required: boolean;
   options: string[];
   maps_to: string | null;
+  visible_when: VisibleWhen | null;
+  sensitive: boolean;
+  options_source: string | null;
 }
 
 export interface ValidationError {
@@ -26,6 +32,8 @@ export interface ValidationError {
 }
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PHONE = /^[+()\-.\s\d]{7,}$/;
 
 /** Validate answers against a form's field definitions. Pure. */
 export function validateAgainstForm(fields: FormField[], answers: Record<string, unknown>): { ok: boolean; errors: ValidationError[] } {
@@ -60,6 +68,16 @@ export function validateAgainstForm(fields: FormField[], answers: Record<string,
       case 'user_multi':
         if (!Array.isArray(v) || v.some((x) => typeof x !== 'string')) errors.push({ field: f.key, message: `${f.label} must be a list of users` });
         break;
+      case 'email':
+        if (typeof v !== 'string' || !EMAIL.test(v)) {
+          errors.push({ field: f.key, message: 'must be a valid email address' });
+        }
+        break;
+      case 'phone':
+        if (typeof v !== 'string' || !PHONE.test(v)) {
+          errors.push({ field: f.key, message: 'must be a valid phone number' });
+        }
+        break;
     }
   }
   return { ok: errors.length === 0, errors };
@@ -83,12 +101,13 @@ export async function listForms(actor: Principal) {
 
 async function loadFields(sql: import('../db/pool.js').Sql, formId: string): Promise<FormField[]> {
   const { rows } = await sql.query(
-    'SELECT key, label, data_type, required, options, maps_to FROM form_fields WHERE form_id=$1 ORDER BY position',
+    'SELECT key, label, data_type, required, options, maps_to, visible_when, sensitive, options_source FROM form_fields WHERE form_id=$1 ORDER BY position',
     [formId],
   );
   return rows.map((r) => ({
     key: r.key, label: r.label, data_type: r.data_type, required: r.required,
     options: (r.options as string[]) ?? [], maps_to: r.maps_to ?? null,
+    visible_when: r.visible_when ?? null, sensitive: r.sensitive ?? false, options_source: r.options_source ?? null,
   }));
 }
 

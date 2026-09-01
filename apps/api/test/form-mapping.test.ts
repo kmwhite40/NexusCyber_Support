@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { mapFormAnswers, type FormField } from '../src/modules/forms.js';
 
 const F = (over: Partial<FormField>): FormField => ({
-  key: 'k', label: 'K', data_type: 'text', required: false, options: [], maps_to: null, ...over,
+  key: 'k', label: 'K', data_type: 'text', required: false, options: [], maps_to: null,
+  visible_when: null, sensitive: false, options_source: null, ...over,
 });
 
 const FIELDS: FormField[] = [
