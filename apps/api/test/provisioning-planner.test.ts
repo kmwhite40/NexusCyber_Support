@@ -102,4 +102,30 @@ describe('planRun', () => {
     expect(a).toEqual(b);
     expect(a).not.toBe(b);
   });
+
+  // --- Fix round 1: a CJK/punctuation-only name reduces to an empty slug, which must block
+  // rather than silently plan to create "@sbsfederal.com" or ".@sbsfederal.com". ---
+
+  it('blocks a CJK name that reduces to an empty UPN local part', () => {
+    const p = planRun({ ...base, answers: { ...answers, legal_first_name: '李', legal_last_name: '明' } });
+    expect(p.blockers.map((b) => b.code)).toContain('upn_local_part_empty');
+  });
+
+  it('blocks a punctuation-only name that reduces to an empty UPN local part', () => {
+    const p = planRun({ ...base, answers: { ...answers, legal_first_name: '...', legal_last_name: '---' } });
+    expect(p.blockers.map((b) => b.code)).toContain('upn_local_part_empty');
+  });
+
+  it('still derives a valid UPN for a diacritic name (stripping, not blocking)', () => {
+    const p = planRun({ ...base, answers: { ...answers, legal_first_name: 'Renée', legal_last_name: 'Dupont' } });
+    expect(p.upn).toBe('rene.dupont@sbsfederal.com');
+    expect(p.blockers).toEqual([]);
+  });
+
+  it("does not alias the caller's baselineSkus array into the returned Plan", () => {
+    const p = planRun(base);
+    const step = p.steps.find((s) => s.key === 'assign_licenses');
+    expect(step?.detail.skuPartNumbers).not.toBe(base.baselineSkus);
+    expect(step?.detail.skuPartNumbers).toEqual(base.baselineSkus);
+  });
 });
