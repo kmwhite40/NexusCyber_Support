@@ -20,6 +20,7 @@ import { subscribe } from './events/bus.js';
 import { incCounter, renderMetrics, statusClass } from './metrics.js';
 import { startMailIngest } from './jobs/mail-ingest.js';
 import { startRetentionPurge } from './jobs/retention-purge.js';
+import { startCloudPcPoller } from './jobs/cloudpc-poller.js';
 
 async function main() {
   // Optional in-boundary migrations on boot (set RUN_MIGRATIONS_ON_BOOT=true). Runs
@@ -127,6 +128,13 @@ async function main() {
   if (config.retention.enabled) {
     startRetentionPurge();
     logger.info(`Retention purge enabled (${config.retention.days}d)`);
+  }
+
+  // Cloud PC provisioning poller: advances runs parked in awaiting_cloudpc (no-op unless
+  // provisioning is enabled — startCloudPcPoller itself guards on config.provisioning.enabled).
+  if (config.provisioning.enabled) {
+    startCloudPcPoller();
+    logger.info('Cloud PC poller enabled');
   }
 
   await app.listen({ port: config.port, host: '0.0.0.0' });
