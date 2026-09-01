@@ -65,9 +65,12 @@ let graphClientPromise: Promise<GraphClient> | null = null;
  * cloud_environments row keyed by config.provisioning.cloud rather than a hardcoded host.
  *
  * The `/deviceManagement/virtualEndpoint/*` family (which includes the cloudPCs resource
- * getCloudPcStatus reads) currently requires the Graph `beta` API version — see the comment on
- * readTenantState in ../integrations/m365/provisioning-graph.ts, which documents the same
- * requirement for the sibling /provisioningPolicies call in this family.
+ * getCloudPcStatus reads) requires the Graph `beta` API version per the comment on
+ * readTenantState in ../integrations/m365/provisioning-graph.ts — but whether that holds for
+ * GCC High specifically is an unverified open item in the spec, so the version is read from
+ * config.provisioning.cloudPcApiVersion (M365_PROV_CLOUDPC_API_VERSION, default 'beta') rather
+ * than hardcoded here, so a real answer from probing the tenant is a config change, not a
+ * source edit.
  */
 async function buildProvisioningGraphClient(): Promise<GraphClient> {
   const env = await withSystemContext((sql) => loadCloudEnv(sql, config.provisioning.cloud));
@@ -84,7 +87,7 @@ async function buildProvisioningGraphClient(): Promise<GraphClient> {
     graphEndpoint: env.graph_endpoint,
     getToken: tokenProvider.getToken,
     fetchImpl: fetch as any,
-    apiVersion: 'beta',
+    apiVersion: config.provisioning.cloudPcApiVersion,
   });
 }
 

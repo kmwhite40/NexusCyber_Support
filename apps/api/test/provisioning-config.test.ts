@@ -14,4 +14,16 @@ describe('parseProvisioningConfig', () => {
   it('refuses to report enabled when required settings are missing', () => {
     expect(parseProvisioningConfig({ M365_PROV_ENABLED: 'true' }).enabled).toBe(false);
   });
+
+  it('defaults cloudPcApiVersion to beta when the env var is unset', () => {
+    expect(parseProvisioningConfig({}).cloudPcApiVersion).toBe('beta');
+  });
+
+  it('honours cloudPcApiVersion when explicitly set to v1.0', () => {
+    expect(parseProvisioningConfig({ M365_PROV_CLOUDPC_API_VERSION: 'v1.0' }).cloudPcApiVersion).toBe('v1.0');
+  });
+
+  it('falls back to the default cloudPcApiVersion on a garbage value', () => {
+    expect(parseProvisioningConfig({ M365_PROV_CLOUDPC_API_VERSION: 'v2.0-nonsense' }).cloudPcApiVersion).toBe('beta');
+  });
 });

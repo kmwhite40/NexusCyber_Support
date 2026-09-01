@@ -97,6 +97,16 @@ export interface ProvisioningConfig {
   upnDomain: string;
   baselineSkus: string[];
   cloudPcPolicy: string;
+  /**
+   * Graph API version for the `/deviceManagement/virtualEndpoint/*` family (Cloud PC status
+   * lookups). Whether GCC High specifically requires `beta` there vs `v1.0` is an open item in
+   * the onboarding-provisioning spec — unverified against the real SBS tenant — so this is a
+   * config flip (M365_PROV_CLOUDPC_API_VERSION), not a source-code literal, on purpose: whoever
+   * probes the tenant and gets a real answer should be able to set it here without a code change.
+   * Defaults to 'beta', per the family-wide requirement documented on readTenantState in
+   * integrations/m365/provisioning-graph.ts.
+   */
+  cloudPcApiVersion: 'v1.0' | 'beta';
 }
 
 const bool = (v: string | undefined): boolean => v === 'true' || v === '1';
@@ -131,11 +141,17 @@ export function parseProvisioningConfig(env: NodeJS.ProcessEnv): ProvisioningCon
     .split(',').map((s) => s.trim()).filter(Boolean);
   // Opting in is necessary but not sufficient: a half-configured app must stay dark.
   const enabled = bool(env.M365_PROV_ENABLED) && Boolean(tenantId && clientId && clientSecret && upnDomain);
+  const rawApiVersion = env.M365_PROV_CLOUDPC_API_VERSION;
+  // A garbage value must never reach the Graph client as a path segment — fall back to the
+  // (verified-safe) default rather than passing it through.
+  const cloudPcApiVersion: 'v1.0' | 'beta' =
+    rawApiVersion === 'v1.0' || rawApiVersion === 'beta' ? rawApiVersion : 'beta';
   return {
     enabled, tenantId, clientId, clientSecret,
     cloud: (env.M365_PROV_CLOUD as M365Cloud) ?? 'gcchigh',
     upnDomain, baselineSkus,
     cloudPcPolicy: env.M365_PROV_CLOUDPC_POLICY ?? 'SBSFederal Cloud PC',
+    cloudPcApiVersion,
   };
 }
 
