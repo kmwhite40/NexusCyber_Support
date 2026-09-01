@@ -9,6 +9,16 @@ import { config } from '../config.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** PII is retained only for the duration of fulfillment: once the ticket reaches a terminal
+ *  status the captured values are deleted, leaving the audit trail as the only record that
+ *  they ever existed. */
+export function sensitivePurgeSql(): string {
+  return `DELETE FROM ticket_sensitive_fields
+          WHERE ticket_id IN (
+            SELECT id FROM tickets WHERE status IN ('resolved','closed')
+          )`;
+}
+
 export function startRetentionPurge(intervalMs = DAY_MS): NodeJS.Timeout {
   const days = config.retention.days;
 
@@ -38,6 +48,8 @@ export function startRetentionPurge(intervalMs = DAY_MS): NodeJS.Timeout {
             `DELETE FROM changes WHERE status IN ('closed','rejected') AND updated_at < ${cutoff}`,
             [days],
           );
+          const pii = await sql.query(sensitivePurgeSql());
+          if (pii.rowCount) logger.info({ purged: pii.rowCount }, 'purged ticket PII');
 
           await sql.query('COMMIT');
           const total = (inc.rowCount ?? 0) + (prob.rowCount ?? 0) + (chg.rowCount ?? 0);
