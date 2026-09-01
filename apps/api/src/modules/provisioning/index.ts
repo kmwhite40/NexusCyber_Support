@@ -113,6 +113,19 @@ function requestedGroupNames(plan: Plan): string[] {
 // The single planning path
 // ---------------------------------------------------------------------------
 
+/**
+ * The run statuses that mean a run is STILL IN FLIGHT for its ticket, and therefore block a
+ * second one from starting.
+ *
+ * `awaiting_cloudpc` belongs here and its omission was a real hole: a Cloud PC build takes
+ * 30-90 minutes and this codebase documents that wait as a NORMAL resting state (see
+ * ../../jobs/cloudpc-poller.ts), so it is BY FAR the longest window in which an impatient admin
+ * re-clicks "Provision". A second run started then mints a second Temporary Access Pass and
+ * repeats the group adds against the same identity — exactly what this guard exists to prevent.
+ * Only a finished run ('succeeded' / 'failed', and a never-started 'planned') may be retried.
+ */
+export const IN_FLIGHT_RUN_STATUSES = ['running', 'awaiting_cloudpc'] as const;
+
 interface TicketRow { id: string; organization_id: string; custom_fields: Record<string, unknown> | null }
 
 function requireEnabled(): void {
@@ -215,13 +228,22 @@ async function deliverTapToSupervisor(
   }
   const supervisor = await withSystemContext(async (sql) => {
     const { rows } = await sql.query(
-      'SELECT email, display_name, status FROM users WHERE id = $1',
+      'SELECT email, status FROM users WHERE id = $1',
       [supervisorId],
     );
-    return rows[0] as { email: string; display_name: string | null; status: string } | undefined;
+    return rows[0] as { email: string; status: string } | undefined;
   });
   if (!supervisor?.email) {
     throw new Error('supervisor has no Nexus work mailbox on file; cannot deliver the Temporary Access Pass');
+  }
+  // A deactivated or offboarded supervisor must not receive a live credential for a brand-new
+  // account: their mailbox may be delegated, forwarded, shared with a successor, or simply
+  // unattended. The onboarding request outlived the supervisor's account — that needs a human
+  // to redirect it, so fail the step rather than send the pass somewhere nobody is accountable.
+  if (supervisor.status !== 'active') {
+    throw new Error(
+      `supervisor's Nexus account is ${supervisor.status}, not active; refusing to send the Temporary Access Pass`,
+    );
   }
 
   const adapter = await getNotificationAdapter();
@@ -328,10 +350,10 @@ async function recordRun(
       `INSERT INTO provisioning_runs (ticket_id, organization_id, status, plan, started_by, started_at)
        SELECT $1,$2,'running',$3::jsonb,$4, now()
         WHERE NOT EXISTS (
-          SELECT 1 FROM provisioning_runs WHERE ticket_id = $1 AND status = 'running'
+          SELECT 1 FROM provisioning_runs WHERE ticket_id = $1 AND status = ANY($5)
         )
        RETURNING id`,
-      [ticket.id, ticket.organization_id, JSON.stringify(plan), actorId],
+      [ticket.id, ticket.organization_id, JSON.stringify(plan), actorId, [...IN_FLIGHT_RUN_STATUSES]],
     );
     if (!rows[0]) throw Errors.conflict('a provisioning run is already in progress for this ticket');
     const runId: string = rows[0].id;
@@ -435,13 +457,21 @@ export async function provision(
   } catch (err) {
     // executePlan only throws for a refused plan (blockers) — but if it ever throws for any
     // other reason, the run row must not be left claiming 'running' forever.
+    //
+    // The stored text is a FIXED string, never err.message. This path is by definition the one
+    // whose error content this code does not control (the executor redacts the secrets it holds,
+    // but an unexpected throw from anywhere else carries whatever text it likes), and
+    // provisioning_runs.error is read back into the UI. Same class as the TAP-in-an-error-message
+    // leak already closed in the executor: the detail goes to the log, which is not a data sink
+    // the way a run row is.
+    logger.error({ err, runId, ticketId }, 'provisioning run aborted with an unexpected error');
     outcomes = [];
     status = 'failed';
     await recordOutcomes(runId, outcomes, status);
     await withSystemContext(async (sql) => {
       await sql.query('UPDATE provisioning_runs SET error = $2 WHERE id = $1', [
         runId,
-        err instanceof Error ? err.message : String(err),
+        'the provisioning run stopped with an unexpected error; see the server log for details',
       ]);
     });
     throw err;
@@ -510,21 +540,48 @@ export async function listRuns(actor: Principal, ticketId: string) {
 }
 
 /**
+ * The organization that OWNS the provisioning tenant, matched on organizations.entra_tenant_id
+ * (migration 0027) = config.provisioning.tenantId. Null when no organization claims that tenant.
+ *
+ * This is what gives the policy list an org to be scoped to. Without it, `ticket.create` is an
+ * org-agnostic check (the PDP treats a null organizationId as "org-agnostic resource" and skips
+ * the scope test), so in the multi-org model any requester in any customer org could enumerate
+ * this tenant's Cloud PC policy names.
+ */
+async function provisioningOrganizationId(): Promise<string | null> {
+  // entra_tenant_id is a uuid column; a non-uuid configured tenant id must not reach it as a
+  // cast error. It also cannot match anything, so there is nothing to scope to.
+  if (!UUID_RE.test(config.provisioning.tenantId)) return null;
+  return withSystemContext(async (sql) => {
+    const { rows } = await sql.query(
+      'SELECT id FROM organizations WHERE entra_tenant_id = $1',
+      [config.provisioning.tenantId],
+    );
+    return (rows[0]?.id as string | undefined) ?? null;
+  });
+}
+
+/**
  * Cloud PC provisioning policy names, for the `cloud_pc_policy` picker on the onboarding form
  * (form_fields.options_source = 'cloudpc_policies').
  *
  * Gated on `ticket.create` — the same permission that opens the form these options belong to —
  * rather than on `provisioning.execute`, which only SuperAdmin/ServiceDeskManager hold; gating
  * an option list on the execute permission would leave the picker empty for exactly the people
- * who fill the form in.
+ * who fill the form in. But it is `ticket.create` SCOPED TO THE ORGANIZATION THAT OWNS THE
+ * PROVISIONING TENANT, so a requester in some other customer org cannot enumerate this tenant's
+ * policy names just by holding a permission every requester holds.
  *
- * Returns [] when provisioning is disabled instead of raising: this is an options provider, and
- * with no tenant to enumerate the honest answer is "no dynamic options" — the field then falls
- * back to its static list. The action routes (preview/execute) refuse loudly instead.
+ * Returns [] when provisioning is disabled, or when no organization claims the tenant, instead
+ * of raising: this is an options provider, and with no tenant to enumerate the honest answer is
+ * "no dynamic options" — the field then falls back to its static list, and an empty constant
+ * discloses nothing. The action routes (preview/execute) refuse loudly instead.
  */
 export async function listCloudPcPolicies(actor: Principal): Promise<string[]> {
-  authorize(actor, 'ticket.create');
   if (!config.provisioning.enabled) return [];
+  const organizationId = await provisioningOrganizationId();
+  if (!organizationId) return [];
+  authorize(actor, 'ticket.create', { organizationId });
   const g = await getProvisioningGraph();
   const res = await g.cloudPc.get(
     '/deviceManagement/virtualEndpoint/provisioningPolicies?$select=id,displayName',

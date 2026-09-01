@@ -11,6 +11,7 @@ import {
   addToGroup,
   issueTap,
   getCloudPcStatus,
+  listGroupsByDisplayName,
 } from '../src/integrations/m365/provisioning-graph.js';
 
 describe('normalizeSkus', () => {
@@ -212,5 +213,66 @@ describe('getCloudPcStatus', () => {
     await getCloudPcStatus(g, "o'brien@x.gov");
     const url = get.mock.calls[0][0] as string;
     expect(url).toContain(encodeURIComponent("userPrincipalName eq 'o''brien@x.gov'"));
+  });
+});
+
+describe('listGroupsByDisplayName', () => {
+  it('filters by the names it is given and projects id/displayName', async () => {
+    const get = vi.fn(async () => ({ value: [{ id: 'g1', displayName: 'All Staff' }] }));
+    const g = { get, post: vi.fn(), patch: vi.fn() } as any;
+    const out = await listGroupsByDisplayName(g, ['All Staff']);
+    expect(out).toEqual([{ id: 'g1', displayName: 'All Staff' }]);
+    const url = get.mock.calls[0][0] as string;
+    expect(url).toContain('/groups?$filter=');
+    expect(url).toContain('$select=id,displayName');
+    expect(url).toContain(encodeURIComponent("displayName eq 'All Staff'"));
+  });
+
+  it('joins several names into one filter', async () => {
+    const get = vi.fn(async () => ({ value: [] }));
+    const g = { get, post: vi.fn(), patch: vi.fn() } as any;
+    await listGroupsByDisplayName(g, ['All Staff', 'Engineering']);
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(get.mock.calls[0][0] as string)
+      .toContain(encodeURIComponent("displayName eq 'All Staff' or displayName eq 'Engineering'"));
+  });
+
+  // Group names are FREE TEXT typed on a request form — strictly more attacker-reachable than a
+  // UPN — so the same OData literal escaping the upn filters get is pinned here too. Without
+  // the doubled quote, everything after the apostrophe is parsed as filter syntax.
+  it('doubles embedded single quotes instead of injecting filter syntax', async () => {
+    const get = vi.fn(async () => ({ value: [] }));
+    const g = { get, post: vi.fn(), patch: vi.fn() } as any;
+    await listGroupsByDisplayName(g, ["O'Brien's Team"]);
+    expect(get.mock.calls[0][0] as string)
+      .toContain(encodeURIComponent("displayName eq 'O''Brien''s Team'"));
+  });
+
+  it('chunks long name lists into several requests and concatenates the results', async () => {
+    const names = Array.from({ length: 16 }, (_, i) => `Group ${i}`);
+    const get = vi.fn(async (url: string) =>
+      url.includes(encodeURIComponent('Group 15'))
+        ? { value: [{ id: 'g15', displayName: 'Group 15' }] }
+        : { value: [{ id: 'g0', displayName: 'Group 0' }] });
+    const g = { get, post: vi.fn(), patch: vi.fn() } as any;
+    const out = await listGroupsByDisplayName(g, names);
+    expect(get).toHaveBeenCalledTimes(2); // 15 per chunk
+    expect(out).toEqual([
+      { id: 'g0', displayName: 'Group 0' },
+      { id: 'g15', displayName: 'Group 15' },
+    ]);
+  });
+
+  it('de-duplicates and drops blank names, and makes no request at all for none', async () => {
+    const get = vi.fn(async () => ({ value: [] }));
+    const g = { get, post: vi.fn(), patch: vi.fn() } as any;
+    await listGroupsByDisplayName(g, ['All Staff', ' All Staff ', '']);
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(get.mock.calls[0][0] as string).toContain(encodeURIComponent("displayName eq 'All Staff'"));
+    expect(get.mock.calls[0][0] as string).not.toContain(' or ');
+
+    const get2 = vi.fn(async () => ({ value: [] }));
+    await listGroupsByDisplayName({ get: get2, post: vi.fn(), patch: vi.fn() } as any, ['', '  ']);
+    expect(get2).not.toHaveBeenCalled();
   });
 });
