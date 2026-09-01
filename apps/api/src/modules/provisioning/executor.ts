@@ -58,25 +58,37 @@ export async function executePlan(
           if (existing) {
             userId = existing.id;
           } else {
-            const created = await ops.createUser({
-              accountEnabled: true,
-              displayName: plan.displayName,
-              userPrincipalName: plan.upn,
-              mailNickname: plan.upn.split('@')[0],
-              passwordProfile: {
-                forceChangePasswordNextSignIn: true,
-                // Never read back: assigned to Graph and immediately discarded. See
-                // generateInitialPassword() below for why this exists and why it is safe to
-                // throw away.
-                password: generateInitialPassword(),
-              },
-            });
+            const password = generateInitialPassword();
+            let created: { id: string };
+            try {
+              created = await ops.createUser({
+                accountEnabled: true,
+                displayName: plan.displayName,
+                userPrincipalName: plan.upn,
+                mailNickname: plan.upn.split('@')[0],
+                passwordProfile: {
+                  forceChangePasswordNextSignIn: true,
+                  // Never read back: assigned to Graph and immediately discarded. See
+                  // generateInitialPassword() below for why this exists and why it is safe to
+                  // throw away.
+                  password,
+                },
+              });
+            } catch (err) {
+              // createUser adapters (especially validation-rejection paths) commonly echo the
+              // request body — including this password — back in their error text. Redact it
+              // using the value we hold in scope before it can reach the outer catch and land in
+              // a StepOutcome. See redactSecret() for why this is done here, locally, rather than
+              // by pattern-matching "known sensitive fields" somewhere central.
+              throw new Error(redactSecret(toErrorMessage(err), password));
+            }
             userId = created.id;
           }
           outcomes.push({ key: step.key, status: 'succeeded', graphObjectId: userId });
           break;
         }
         case 'assign_licenses': {
+          requireUserId(userId, step.key);
           const want = (step.detail.skuIds as string[] | undefined) ?? [];
           const have = await ops.currentLicenses(userId);
           const missing = want.filter((s) => !have.includes(s)); // assign only the delta
@@ -85,24 +97,51 @@ export async function executePlan(
           break;
         }
         case 'add_groups': {
+          requireUserId(userId, step.key);
           // Seam: the planner (Task 11) only ever knows group NAMES (detail.groups) because it
           // is a pure function with no directory access. Task 15's service layer resolves those
           // names to ids and writes detail.groupIds before calling executePlan. Read groupIds
           // here — do not resolve names in this file; that would require I/O and break the
           // preview/execute purity guarantee the planner depends on.
+          const groupNames = (step.detail.groups as string[] | undefined) ?? [];
           const groupIds = (step.detail.groupIds as string[] | undefined) ?? [];
+          // The planner (planner.ts) only ever emits an add_groups step when it has group
+          // names to add, so an add_groups step with names present but no ids means Task 15's
+          // resolution pass did not run (or silently produced nothing). Failing loudly here
+          // beats reporting "succeeded" while the user quietly never gets the access.
+          if (groupNames.length > 0 && groupIds.length === 0) {
+            throw new Error(
+              `add_groups: detail.groupIds is empty but detail.groups has ${groupNames.length} name(s) ` +
+                '— group id resolution did not run; refusing to silently skip group membership.',
+            );
+          }
           for (const groupId of groupIds) await ops.addToGroup(groupId, userId);
           outcomes.push({ key: step.key, status: 'succeeded' });
           break;
         }
         case 'assign_cloudpc': {
-          await ops.addToGroup(step.detail.groupId as string, userId);
+          requireUserId(userId, step.key);
+          const groupId = step.detail.groupId;
+          if (typeof groupId !== 'string' || groupId.length === 0) {
+            throw new Error('assign_cloudpc: detail.groupId is missing or not a non-empty string');
+          }
+          await ops.addToGroup(groupId, userId);
           outcomes.push({ key: step.key, status: 'succeeded' });
           break;
         }
         case 'issue_tap': {
-          const tap = await ops.issueTap(userId);
-          await ops.deliverTap(String(step.detail.supervisor ?? ''), plan.upn, tap.temporaryAccessPass);
+          requireUserId(userId, step.key);
+          let pass: string | undefined;
+          try {
+            const tap = await ops.issueTap(userId);
+            pass = tap.temporaryAccessPass;
+            await ops.deliverTap(String(step.detail.supervisor ?? ''), plan.upn, pass);
+          } catch (err) {
+            // Same rationale as create_user above: issueTap/deliverTap adapters (HTTP, SMTP,
+            // ...) commonly echo request content — including the TAP itself — into thrown error
+            // messages. Redact using the value this step actually holds before it can propagate.
+            throw new Error(redactSecret(toErrorMessage(err), pass));
+          }
           // The TAP value (tap.temporaryAccessPass) is a live credential. It is used exactly
           // once, above, to hand it to deliverTap, and then goes out of scope. It must never be
           // placed on the outcome — not as graphObjectId, not as error text, not anywhere — since
@@ -139,6 +178,40 @@ export async function executePlan(
 
 function toErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Guards every step that depends on a directory object id having already been established by
+ * create_user. If a plan is ever malformed (missing create_user, or reordered ahead of it),
+ * `userId` is still `''` here — without this guard that empty string would reach
+ * `ops.currentLicenses('')` / `ops.addToGroup(g, '')` / `ops.issueTap('')` and be sent to a live
+ * tenant. Graph would likely reject an empty subject, but this file should fail locally, before
+ * the network call, rather than rely on the far side of a real GCC High API to catch its own bug.
+ */
+function requireUserId(userId: string, stepKey: StepKey): void {
+  if (!userId) {
+    throw new Error(`${stepKey}: no user id available — a prior create_user step must run and succeed first`);
+  }
+}
+
+/**
+ * Strips a known secret value out of an error message before it is allowed to reach a
+ * StepOutcome (and from there, potentially a ticket worklog or audit detail blob).
+ *
+ * Deliberately NOT implemented as a central deny-list of "sensitive step keys" or a regex over
+ * known secret *shapes*: adapters (HTTP clients, SMTP libraries, Graph SDKs) commonly echo
+ * request payloads back into thrown error text, and there is no reliable way to enumerate every
+ * shape that could take. Instead, each step that generates or receives a secret redacts using the
+ * literal value it already holds in scope at the moment it catches an error — see the try/catch
+ * around createUser (secret: the generated password) and around issueTap/deliverTap (secret: the
+ * TAP). This pattern generalizes cleanly: a future step that introduces a new secret must catch
+ * its own errors and redact with the value it holds, the same way — there is no separate list
+ * anywhere else that a reviewer could forget to update, because the redaction lives right next to
+ * the code that received the secret in the first place.
+ */
+function redactSecret(message: string, secret: string | undefined): string {
+  if (!secret) return message;
+  return message.split(secret).join('[redacted]');
 }
 
 /**

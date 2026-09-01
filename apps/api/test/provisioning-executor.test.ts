@@ -52,6 +52,21 @@ describe('executePlan', () => {
     expect(requested).toEqual([]);
   });
 
+  it('assigns exactly the missing delta when some, but not all, licences are already held', async () => {
+    const withTwoSkus: Plan = {
+      ...plan,
+      steps: plan.steps.map((s) => (s.key === 'assign_licenses' ? { ...s, detail: { skuIds: ['e3', 'p1'] } } : s)),
+    };
+    let requested: string[] = [];
+    let calls = 0;
+    await executePlan(withTwoSkus, ops({
+      currentLicenses: async () => ['e3'],
+      assignLicenses: async (_id, skuIds) => { calls += 1; requested = skuIds; return {}; },
+    }));
+    expect(requested).toEqual(['p1']);
+    expect(calls).toBe(1);
+  });
+
   it('stops at the failing step and does not run later ones', async () => {
     const r = await executePlan(plan, ops({
       assignLicenses: async () => { throw new Error('seat exhausted'); },
@@ -158,5 +173,86 @@ describe('executePlan', () => {
     }));
     expect(r.status).toBe('failed');
     expect(r.outcomes.find((o) => o.key === 'assign_licenses')?.error).toContain('quota service unavailable');
+  });
+
+  // --- Fix round 1 ---
+
+  it('redacts the TAP out of a deliverTap failure message instead of letting it reach the outcome', async () => {
+    const r = await executePlan(plan, ops({
+      issueTap: async () => ({ temporaryAccessPass: 'TAP123' }),
+      deliverTap: async () => { throw new Error('smtp rejected: pass=TAP123'); },
+    }));
+    expect(r.status).toBe('failed');
+    const serialized = JSON.stringify(r.outcomes);
+    expect(serialized).not.toContain('TAP123');
+    const failed = r.outcomes.find((o) => o.key === 'issue_tap');
+    expect(failed?.error).toContain('smtp rejected');
+    expect(failed?.error).toContain('[redacted]');
+  });
+
+  it('redacts the initial password out of a createUser failure message instead of letting it reach the outcome', async () => {
+    let capturedPassword = '';
+    const r = await executePlan(plan, ops({
+      createUser: async (body) => {
+        const profile = body.passwordProfile as { password: string };
+        capturedPassword = profile.password;
+        throw new Error(`invalid password: rejected value "${capturedPassword}"`);
+      },
+    }));
+    expect(r.status).toBe('failed');
+    expect(capturedPassword.length).toBeGreaterThan(0);
+    const serialized = JSON.stringify(r.outcomes);
+    expect(serialized).not.toContain(capturedPassword);
+    const failed = r.outcomes.find((o) => o.key === 'create_user');
+    expect(failed?.error).toContain('invalid password');
+    expect(failed?.error).toContain('[redacted]');
+  });
+
+  it('fails add_groups loudly when group names are present but groupIds were never resolved', async () => {
+    const unresolved: Plan = {
+      ...plan,
+      steps: [
+        plan.steps[0],
+        { key: 'add_groups', label: '', detail: { groups: ['All Staff'] } }, // no groupIds
+      ],
+    };
+    let addToGroupCalls = 0;
+    const r = await executePlan(unresolved, ops({
+      addToGroup: async (g, u) => { addToGroupCalls += 1; return { g, u }; },
+    }));
+    expect(r.status).toBe('failed');
+    expect(addToGroupCalls).toBe(0);
+    expect(r.outcomes.find((o) => o.key === 'add_groups')?.error).toMatch(/groupIds is empty/i);
+  });
+
+  it('refuses a step that depends on the user id when create_user never ran', async () => {
+    const noCreateUser: Plan = {
+      ...plan,
+      steps: [{ key: 'assign_licenses', label: '', detail: { skuIds: ['e3'] } }],
+    };
+    let currentLicensesCalls = 0;
+    const r = await executePlan(noCreateUser, ops({
+      currentLicenses: async () => { currentLicensesCalls += 1; return []; },
+    }));
+    expect(r.status).toBe('failed');
+    expect(currentLicensesCalls).toBe(0); // failed locally, before any network call
+    expect(r.outcomes[0].error).toMatch(/no user id available/i);
+  });
+
+  it('rejects an assign_cloudpc step with a missing or non-string groupId before calling Graph', async () => {
+    const badGroupId: Plan = {
+      ...plan,
+      steps: [
+        plan.steps[0],
+        { key: 'assign_cloudpc', label: '', detail: {} }, // no groupId
+      ],
+    };
+    let addToGroupCalls = 0;
+    const r = await executePlan(badGroupId, ops({
+      addToGroup: async () => { addToGroupCalls += 1; return {}; },
+    }));
+    expect(r.status).toBe('failed');
+    expect(addToGroupCalls).toBe(0);
+    expect(r.outcomes.find((o) => o.key === 'assign_cloudpc')?.error).toMatch(/groupId/i);
   });
 });
