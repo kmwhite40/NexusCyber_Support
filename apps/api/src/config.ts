@@ -140,7 +140,18 @@ export function parseProvisioningConfig(env: NodeJS.ProcessEnv): ProvisioningCon
   const baselineSkus = (env.M365_PROV_BASELINE_SKUS ?? '')
     .split(',').map((s) => s.trim()).filter(Boolean);
   // Opting in is necessary but not sufficient: a half-configured app must stay dark.
-  const enabled = bool(env.M365_PROV_ENABLED) && Boolean(tenantId && clientId && clientSecret && upnDomain);
+  //
+  // baselineSkus is part of that "configured" test, and its omission was a fail-OPEN hole rather
+  // than a cosmetic one: with an empty baseline the planner's licence loop produces no blockers
+  // and no sku ids, so `assign_licenses` no-ops while `assign_cloudpc` still adds the account to
+  // the Cloud PC policy group — creating a live, unlicensed federal identity whose Cloud PC
+  // silently never builds. That is the hard ordering constraint the whole feature exists to
+  // protect, so an empty M365_PROV_BASELINE_SKUS keeps the feature dark. (The planner carries a
+  // matching `baseline_empty` blocker so the same misconfiguration is also visible in a preview,
+  // rather than only in whether the process started with the feature on.)
+  const enabled = bool(env.M365_PROV_ENABLED)
+    && Boolean(tenantId && clientId && clientSecret && upnDomain)
+    && baselineSkus.length > 0;
   const rawApiVersion = env.M365_PROV_CLOUDPC_API_VERSION;
   // A garbage value must never reach the Graph client as a path segment — fall back to the
   // (verified-safe) default rather than passing it through.

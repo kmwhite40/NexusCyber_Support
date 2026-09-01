@@ -16,7 +16,14 @@ import { AlertTriangle, Clock3 } from 'lucide-react';
 
 interface Blocker { code: string; message: string }
 interface PlanStep { key: string; label: string; detail: Record<string, unknown> }
-interface Plan { upn: string; displayName: string; steps: PlanStep[]; blockers: Blocker[] }
+interface Plan {
+  upn: string;
+  displayName: string;
+  steps: PlanStep[];
+  blockers: Blocker[];
+  /** Binds this exact preview to the run it authorises — see provision() below. */
+  fingerprint: string;
+}
 interface StepOutcome { key: string; status: string; error?: string }
 interface ExecuteResult { runId: string; status: string; outcomes: StepOutcome[] }
 interface RunRow {
@@ -113,14 +120,26 @@ export function ProvisioningPanel({ ticketId, canProvision }: { ticketId: string
     setExecuting(true);
     setExecuteError(null);
     try {
-      const res = await api.post<{ data: ExecuteResult }>(`/tickets/${ticketId}/provisioning/execute`);
+      // The fingerprint of the plan RENDERED ABOVE, which is the plan the admin just read. The
+      // server rebuilds the plan from current data and refuses (412) unless it still hashes to
+      // this — so an answer edited, a group renamed or a licence pool exhausted between Preview
+      // and Provision stops the run instead of quietly changing what gets created.
+      const res = await api.post<{ data: ExecuteResult }>(
+        `/tickets/${ticketId}/provisioning/execute`,
+        { fingerprint: plan?.fingerprint },
+      );
       setResult(res.data);
       // The plan that was approved has now been acted on; drop it so a stale "Provision" button
       // can't be clicked again without a fresh preview of current tenant state.
       setPlan(null);
       loadRuns();
     } catch (e) {
-      if (e instanceof ApiError && e.status === 409) {
+      if (e instanceof ApiError && e.status === 412) {
+        // The previewed plan no longer matches what would be created. Drop it, so the only way
+        // forward is a fresh Preview the admin has to read and approve again.
+        setPlan(null);
+        setExecuteError('The plan changed since you previewed it, so nothing was provisioned. Preview again and review the new plan before provisioning.');
+      } else if (e instanceof ApiError && e.status === 409) {
         setExecuteError('A provisioning run is already in progress for this ticket. Wait for it to finish before starting another.');
       } else {
         setExecuteError(e instanceof ApiError ? e.detail : 'Provisioning failed to start.');
@@ -178,7 +197,10 @@ export function ProvisioningPanel({ ticketId, canProvision }: { ticketId: string
               <Button
                 size="sm"
                 onClick={provision}
-                disabled={executing || blocked || inFlight}
+                // No plan in hand means no fingerprint to send, and the server refuses an
+                // execute with no fingerprint. Mirror that here so the button never issues a
+                // request that cannot succeed.
+                disabled={executing || blocked || inFlight || !plan.fingerprint}
                 aria-describedby={blocked ? 'provisioning-blockers' : undefined}
               >
                 {executing ? 'Provisioning…' : 'Provision'}

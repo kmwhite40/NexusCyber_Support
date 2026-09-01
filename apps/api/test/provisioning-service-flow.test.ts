@@ -19,6 +19,7 @@
 // with which arguments.
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { Principal } from '../src/types.js';
+import { GraphError } from '../src/integrations/m365/graph-client.js';
 
 const TICKET = '11111111-1111-1111-1111-111111111111';
 const TICKET_ORG = '22222222-2222-2222-2222-222222222222';
@@ -132,19 +133,62 @@ function graphDouble(opts: { groups?: any[] } = {}) {
   return { graph, cloudPc, graphEndpoint: 'https://graph.microsoft.us' };
 }
 
-/** Default DB responder: ticket exists, no PII rows, run insert succeeds, supervisor active. */
-function defaultRows(over: { runInsert?: any[]; supervisorStatus?: string } = {}) {
+/**
+ * Default DB responder: an APPROVED `user.provisioning` ticket in the organization that owns
+ * the provisioning tenant, no PII rows, run insert succeeds, and a supervisor who is an active
+ * Nexus platform user scoped to that org.
+ *
+ * Every one of those clauses is now load-bearing — the service refuses on each of them
+ * independently — so the overrides exist to knock exactly one out at a time.
+ */
+function defaultRows(over: {
+  runInsert?: any[];
+  supervisorStatus?: string;
+  supervisorRows?: any[];
+  ticketOrg?: string;
+  ticketCategory?: string | null;
+  catalogItem?: any[];
+  approvals?: any[];
+  tenantOrgRows?: any[];
+} = {}) {
   return (text: string) => {
     if (/FROM tickets WHERE id/.test(text)) {
-      return [{ id: TICKET, organization_id: TICKET_ORG, custom_fields: ANSWERS }];
+      return [{
+        id: TICKET,
+        organization_id: over.ticketOrg ?? TICKET_ORG,
+        category: over.ticketCategory === undefined ? 'user.provisioning' : over.ticketCategory,
+        custom_fields: ANSWERS,
+      }];
+    }
+    if (/FROM organizations WHERE entra_tenant_id/.test(text)) {
+      return over.tenantOrgRows ?? [{ id: TICKET_ORG }];
+    }
+    if (/FROM service_catalog_items WHERE key/.test(text)) {
+      return over.catalogItem ?? [{ key: 'user.provisioning', form_key: 'user_onboarding' }];
+    }
+    if (/FROM approvals WHERE subject_type/.test(text)) {
+      return over.approvals ?? [{ status: 'approved' }];
     }
     if (/ticket_sensitive_fields/.test(text)) return [{ key: 'personal_email', value: PERSONAL_EMAIL }];
     if (/INSERT INTO provisioning_runs/.test(text)) return over.runInsert ?? [{ id: RUN }];
-    if (/FROM users WHERE id/.test(text)) {
-      return [{ email: WORK_EMAIL, status: over.supervisorStatus ?? 'active' }];
+    if (/FROM users u/.test(text)) {
+      return over.supervisorRows
+        ?? [{ email: WORK_EMAIL, status: over.supervisorStatus ?? 'active' }];
     }
     return [];
   };
+}
+
+/**
+ * Preview, then execute with the fingerprint that preview returned — the ONLY legitimate way to
+ * provision, and therefore what every test that is not about the binding itself must do.
+ * Deliberately not a shortcut that computes the fingerprint some other way: a helper that
+ * bypassed preview would let the binding rot without a single test noticing.
+ */
+async function provisionApproved(ticketId = TICKET) {
+  const plan = await provisioning.preview(actor, ticketId);
+  h.queries.length = 0;
+  return provisioning.provision(actor, ticketId, plan.fingerprint);
 }
 
 const find = (re: RegExp) => h.queries.filter((q) => re.test(q.text));
@@ -189,13 +233,15 @@ beforeEach(() => {
 
 describe('(a) preview and provision share ONE planning path', () => {
   it('persists exactly the plan preview returned', async () => {
-    const previewed = await provisioning.preview(actor, TICKET);
+    const { fingerprint, ...previewed } = await provisioning.preview(actor, TICKET);
     h.queries.length = 0;
 
-    await provisioning.provision(actor, TICKET);
+    await provisioning.provision(actor, TICKET, fingerprint);
     const insert = find(/INSERT INTO provisioning_runs/)[0];
     expect(insert).toBeDefined();
     // params[2] is the plan jsonb. If provision ever grew its own planning path, this diverges.
+    // The fingerprint is not part of the plan — it is the token that BINDS this plan to this
+    // run — so it is destructured off rather than stored.
     expect(JSON.parse(insert.params[2] as string)).toEqual(previewed);
   });
 
@@ -214,7 +260,7 @@ describe('(b) a blocker-carrying plan is refused before any write', () => {
   });
 
   it('rejects, inserts no run, and never issues a Graph write', async () => {
-    await expect(provisioning.provision(actor, TICKET)).rejects.toThrow(/blocker/);
+    await expect(provisionApproved()).rejects.toThrow(/blocker/);
     expect(find(/INSERT INTO provisioning_runs/)).toHaveLength(0);
     expect(find(/INSERT INTO provisioning_steps/)).toHaveLength(0);
     expect(g.graph.post).not.toHaveBeenCalled();
@@ -238,7 +284,7 @@ describe('(c) authorization is scoped to the TICKET organization', () => {
 
 describe('(d) the audit row is org-scoped', () => {
   it('audits with the ticket organization_id, not null', async () => {
-    await provisioning.provision(actor, TICKET);
+    await provisionApproved();
     expect(h.audit).toHaveBeenCalledTimes(1);
     const [auditActor, input] = h.audit.mock.calls[0] as any[];
     expect(auditActor).toBe(actor);
@@ -250,7 +296,7 @@ describe('(d) the audit row is org-scoped', () => {
 
 describe('(e) provisioning_steps carries its own organization_id', () => {
   it('supplies the org on every step insert (RLS is not inherited through the FK)', async () => {
-    await provisioning.provision(actor, TICKET);
+    await provisionApproved();
     const steps = find(/INSERT INTO provisioning_steps/);
     expect(steps.length).toBeGreaterThan(0);
     for (const s of steps) {
@@ -261,7 +307,7 @@ describe('(e) provisioning_steps carries its own organization_id', () => {
   });
 
   it('supplies the org on the run insert too', async () => {
-    await provisioning.provision(actor, TICKET);
+    await provisionApproved();
     expect(find(/INSERT INTO provisioning_runs/)[0].params[1]).toBe(TICKET_ORG);
   });
 });
@@ -277,7 +323,7 @@ describe('(f) the feature stays dark when disabled', () => {
   });
 
   it('refuses provision clearly, before ANY I/O', async () => {
-    await expect(provisioning.provision(actor, TICKET)).rejects.toThrow(/not enabled/);
+    await expect(provisionApproved()).rejects.toThrow(/not enabled/);
     expect(h.withSystemContext).not.toHaveBeenCalled();
     expect(h.getProvisioningGraph).not.toHaveBeenCalled();
   });
@@ -290,7 +336,7 @@ describe('(f) the feature stays dark when disabled', () => {
 
 describe('the in-flight run guard', () => {
   it('treats awaiting_cloudpc as in flight — the 30-90 minute window, not just running', async () => {
-    await provisioning.provision(actor, TICKET);
+    await provisionApproved();
     const statuses = find(/INSERT INTO provisioning_runs/)[0].params[4] as string[];
     expect(statuses).toContain('running');
     // Regression: omitting this let an admin re-click Provision during a Cloud PC build and
@@ -300,7 +346,7 @@ describe('the in-flight run guard', () => {
 
   it('conflicts, and starts nothing, when the conditional insert matches an in-flight run', async () => {
     h.setDbRows(defaultRows({ runInsert: [] }));
-    await expect(provisioning.provision(actor, TICKET)).rejects.toThrow(/already in progress/);
+    await expect(provisionApproved()).rejects.toThrow(/already in progress/);
     expect(find(/INSERT INTO provisioning_steps/)).toHaveLength(0);
     expect(g.graph.post).not.toHaveBeenCalled();
     expect(h.audit).not.toHaveBeenCalled();
@@ -312,7 +358,7 @@ describe('the in-flight run guard', () => {
   // because the alternative is a second Temporary Access Pass on a brand-new identity.
   it('translates the unique-violation race into the same 409 as the guard', async () => {
     h.setDbRows(defaultRows({ runInsert: [] }));
-    const fromGuard: any = await provisioning.provision(actor, TICKET).catch((e) => e);
+    const fromGuard: any = await provisionApproved().catch((e) => e);
 
     h.queries.length = 0;
     g.graph.post.mockClear();
@@ -321,7 +367,7 @@ describe('the in-flight run guard', () => {
       if (/INSERT INTO provisioning_runs/.test(text)) throw pgError('23505', IN_FLIGHT_INDEX);
       return defaultRows()(text, params);
     });
-    const fromIndex: any = await provisioning.provision(actor, TICKET).catch((e) => e);
+    const fromIndex: any = await provisionApproved().catch((e) => e);
 
     expect(fromIndex.status).toBe(409);
     expect(fromIndex.status).toBe(fromGuard.status);
@@ -337,7 +383,7 @@ describe('the in-flight run guard', () => {
       if (/INSERT INTO provisioning_runs/.test(text)) throw pgError('23505', 'some_other_unique_index');
       return defaultRows()(text, params);
     });
-    await expect(provisioning.provision(actor, TICKET)).rejects.toThrow(/duplicate key/);
+    await expect(provisionApproved()).rejects.toThrow(/duplicate key/);
   });
 
   it('does not swallow a non-unique-violation database error', async () => {
@@ -345,13 +391,13 @@ describe('the in-flight run guard', () => {
       if (/INSERT INTO provisioning_runs/.test(text)) throw pgError('23502'); // not_null_violation
       return defaultRows()(text, params);
     });
-    await expect(provisioning.provision(actor, TICKET)).rejects.toThrow(/duplicate key/);
+    await expect(provisionApproved()).rejects.toThrow(/duplicate key/);
   });
 });
 
 describe('Temporary Access Pass containment across the write paths', () => {
   it('delivers to the supervisor WORK mailbox, never the personal address on the form', async () => {
-    await provisioning.provision(actor, TICKET);
+    await provisionApproved();
     expect(h.sendEmail).toHaveBeenCalledTimes(1);
     const env = h.sendEmail.mock.calls[0][0] as any;
     expect(env.to).toBe(WORK_EMAIL);
@@ -360,7 +406,7 @@ describe('Temporary Access Pass containment across the write paths', () => {
   });
 
   it('never lets the pass reach the database, the audit detail, or the run plan', async () => {
-    await provisioning.provision(actor, TICKET);
+    await provisionApproved();
     for (const q of h.queries) {
       expect(JSON.stringify(q.params)).not.toContain(TAP);
     }
@@ -369,14 +415,14 @@ describe('Temporary Access Pass containment across the write paths', () => {
 
   it('refuses to hand a live credential to a deactivated supervisor', async () => {
     h.setDbRows(defaultRows({ supervisorStatus: 'disabled' }));
-    const r = await provisioning.provision(actor, TICKET);
+    const r = await provisionApproved();
     expect(r.status).toBe('failed');
     expect(r.outcomes.find((o) => o.key === 'issue_tap')?.error).toMatch(/not active/);
     expect(h.sendEmail).not.toHaveBeenCalled();
   });
 
   it('records the delivery without recording the pass', async () => {
-    await provisioning.provision(actor, TICKET);
+    await provisionApproved();
     const rec = find(/INSERT INTO notification_deliveries/)[0];
     expect(rec.params).toEqual([TICKET_ORG, WORK_EMAIL, 'sent', 'graph:1']);
   });
@@ -384,7 +430,7 @@ describe('Temporary Access Pass containment across the write paths', () => {
 
 describe('a successful run', () => {
   it('creates the account, licenses it, adds the resolved group, and closes the run', async () => {
-    const r = await provisioning.provision(actor, TICKET);
+    const r = await provisionApproved();
     expect(r.status).toBe('succeeded');
     expect(r.runId).toBe(RUN);
     expect(r.outcomes.map((o) => o.key)).toEqual(['create_user', 'assign_licenses', 'add_groups', 'issue_tap']);
@@ -398,7 +444,7 @@ describe('a successful run', () => {
   });
 
   it('notes the outcome on the ticket as an internal comment', async () => {
-    await provisioning.provision(actor, TICKET);
+    await provisionApproved();
     const note = find(/INSERT INTO ticket_comments/)[0];
     expect(note.params[0]).toBe(TICKET_ORG);
     expect(note.params[1]).toBe(TICKET);
@@ -419,5 +465,265 @@ describe('listCloudPcPolicies scoping', () => {
     h.setDbRows(() => []);
     expect(await provisioning.listCloudPcPolicies(actor)).toEqual([]);
     expect(h.getProvisioningGraph).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CRITICAL 1 — the preview guarantee is BOUND, not merely shared
+// ---------------------------------------------------------------------------
+describe('binding an execute to the plan that was previewed', () => {
+  it('refuses an execute with no fingerprint — silence is not consent', async () => {
+    await expect(provisioning.provision(actor, TICKET)).rejects.toThrow(/fingerprint is required/);
+    expect(find(/INSERT INTO provisioning_runs/)).toHaveLength(0);
+    expect(g.graph.post).not.toHaveBeenCalled();
+    expect(h.audit).not.toHaveBeenCalled();
+  });
+
+  it('refuses an execute with an empty fingerprint', async () => {
+    await expect(provisioning.provision(actor, TICKET, '')).rejects.toThrow(/fingerprint is required/);
+    expect(g.graph.post).not.toHaveBeenCalled();
+  });
+
+  it('refuses a fingerprint that was never issued', async () => {
+    await expect(provisioning.provision(actor, TICKET, 'deadbeef')).rejects.toMatchObject({ status: 412 });
+    expect(find(/INSERT INTO provisioning_runs/)).toHaveLength(0);
+    expect(g.graph.post).not.toHaveBeenCalled();
+  });
+
+  // THE DEFECT, reproduced. The admin previews a plan for ada.lovelace with one group; the
+  // ticket's answers are then edited; the previously-approved click now creates a DIFFERENT
+  // federal identity with a different group list. Before the binding this succeeded silently.
+  it('refuses when the ticket answers changed between preview and execute', async () => {
+    const approved = await provisioning.preview(actor, TICKET);
+    expect(approved.upn).toBe('ada.lovelace@sbsfederal.com');
+
+    h.setDbRows((text, params) => {
+      if (/FROM tickets WHERE id/.test(text)) {
+        return [{
+          id: TICKET, organization_id: TICKET_ORG, category: 'user.provisioning',
+          custom_fields: { ...ANSWERS, legal_last_name: 'Byron', security_groups: 'All Staff, Finance' },
+        }];
+      }
+      return defaultRows()(text, params);
+    });
+    h.queries.length = 0;
+
+    const err: any = await provisioning.provision(actor, TICKET, approved.fingerprint).catch((e) => e);
+    expect(err.status).toBe(412);
+    expect(err.detail).toMatch(/changed since it was previewed/);
+    expect(find(/INSERT INTO provisioning_runs/)).toHaveLength(0);
+    expect(g.graph.post).not.toHaveBeenCalled();   // no identity created
+    expect(h.audit).not.toHaveBeenCalled();
+  });
+
+  // The same class of drift, but on the TENANT side rather than the ticket: the previewed plan
+  // resolved "All Staff" to g1, and by execute time the name resolves to a different object.
+  it('refuses when a resolved group id changed under the same name', async () => {
+    const approved = await provisioning.preview(actor, TICKET);
+    g = graphDouble({ groups: [{ id: 'g-different', displayName: 'All Staff' }] });
+    h.queries.length = 0;
+
+    await expect(provisioning.provision(actor, TICKET, approved.fingerprint))
+      .rejects.toMatchObject({ status: 412 });
+    expect(g.graph.post).not.toHaveBeenCalled();
+  });
+
+  it('proceeds when the plan is unchanged', async () => {
+    const r = await provisionApproved();
+    expect(r.status).toBe('succeeded');
+  });
+
+  // 412, not 409: the panel has to tell "your approval is stale, preview again" apart from
+  // "a run is already in progress, wait", and both would otherwise be a bare Conflict.
+  it('reports a stale approval distinctly from an in-flight run', async () => {
+    const stale: any = await provisioning.provision(actor, TICKET, 'not-the-plan').catch((e) => e);
+    h.setDbRows(defaultRows({ runInsert: [] }));
+    const inFlight: any = await provisionApproved().catch((e) => e);
+    expect(stale.status).toBe(412);
+    expect(inFlight.status).toBe(409);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// IMPORTANT 6 — the approval gate, server-side
+// ---------------------------------------------------------------------------
+describe('the human-in-the-loop gate is enforced by the server', () => {
+  /** Preview always succeeds here, so each refusal below is provably the gate and not the plan. */
+  async function executeWithCurrentPlan() {
+    const plan = await provisioning.preview(actor, TICKET);
+    h.queries.length = 0;
+    return provisioning.provision(actor, TICKET, plan.fingerprint);
+  }
+
+  it('refuses a ticket whose approval is still outstanding', async () => {
+    h.setDbRows(defaultRows({ approvals: [{ status: 'requested' }] }));
+    await expect(executeWithCurrentPlan()).rejects.toThrow(/every approval to be approved/);
+    expect(find(/INSERT INTO provisioning_runs/)).toHaveLength(0);
+    expect(g.graph.post).not.toHaveBeenCalled();
+  });
+
+  it('refuses a ticket whose approval was REJECTED', async () => {
+    h.setDbRows(defaultRows({ approvals: [{ status: 'rejected' }] }));
+    await expect(executeWithCurrentPlan()).rejects.toThrow(/every approval to be approved/);
+    expect(g.graph.post).not.toHaveBeenCalled();
+  });
+
+  it('refuses when one of several approvals is not approved', async () => {
+    h.setDbRows(defaultRows({ approvals: [{ status: 'approved' }, { status: 'requested' }] }));
+    await expect(executeWithCurrentPlan()).rejects.toThrow(/every approval to be approved/);
+  });
+
+  // The client's rule was the opposite: it treated "no approvals" as passed. The catalog item
+  // is requires_approval, so a ticket with no approval record did not come through this intake.
+  it('refuses a ticket with NO approval record at all', async () => {
+    h.setDbRows(defaultRows({ approvals: [] }));
+    await expect(executeWithCurrentPlan()).rejects.toThrow(/no approval record/);
+    expect(g.graph.post).not.toHaveBeenCalled();
+  });
+
+  it('refuses a ticket that is not a user.provisioning catalog request', async () => {
+    h.setDbRows(defaultRows({ ticketCategory: 'incident.general' }));
+    await expect(executeWithCurrentPlan()).rejects.toThrow(/user\.provisioning catalog request/);
+    expect(g.graph.post).not.toHaveBeenCalled();
+  });
+
+  it('refuses a ticket with no catalog category at all', async () => {
+    h.setDbRows(defaultRows({ ticketCategory: null, catalogItem: [] }));
+    await expect(executeWithCurrentPlan()).rejects.toThrow(/user\.provisioning catalog request/);
+  });
+
+  it('refuses when the catalog item no longer carries a form', async () => {
+    h.setDbRows(defaultRows({ catalogItem: [{ key: 'user.provisioning', form_key: null }] }));
+    await expect(executeWithCurrentPlan()).rejects.toThrow(/user\.provisioning catalog request/);
+  });
+
+  it('lets an approved onboarding request through', async () => {
+    await expect(executeWithCurrentPlan()).resolves.toMatchObject({ status: 'succeeded' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// IMPORTANT 3 — writes are bound to the tenant-owning organization
+// ---------------------------------------------------------------------------
+describe('preview and provision are bound to the provisioning tenant organization', () => {
+  it('refuses a ticket in some OTHER organization', async () => {
+    const OTHER = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+    h.setDbRows(defaultRows({ ticketOrg: OTHER }));
+    await expect(provisioning.preview(actor, TICKET)).rejects.toThrow(/owns the provisioning tenant/);
+    expect(h.getProvisioningGraph).not.toHaveBeenCalled();
+  });
+
+  it('refuses to write from a ticket in some OTHER organization', async () => {
+    const OTHER = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+    h.setDbRows(defaultRows({ ticketOrg: OTHER }));
+    await expect(provisioning.provision(actor, TICKET, 'anything')).rejects.toThrow(/owns the provisioning tenant/);
+    expect(find(/INSERT INTO provisioning_runs/)).toHaveLength(0);
+  });
+
+  it('refuses when no organization claims the tenant, rather than provisioning anyway', async () => {
+    h.setDbRows(defaultRows({ tenantOrgRows: [] }));
+    await expect(provisioning.preview(actor, TICKET)).rejects.toThrow(/no organization is mapped/);
+    expect(h.getProvisioningGraph).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// IMPORTANT 3 — the supervisor lookup is scoped
+// ---------------------------------------------------------------------------
+describe('who may receive a Temporary Access Pass', () => {
+  it('scopes the supervisor lookup to the nexus plane AND the ticket organization', async () => {
+    await provisionApproved();
+    const lookup = find(/FROM users u/)[0];
+    expect(lookup).toBeDefined();
+    expect(lookup.text).toMatch(/plane = 'nexus'/);
+    expect(lookup.text).toMatch(/role_assignments/);
+    expect(lookup.params).toEqual([SUPERVISOR, TICKET_ORG]);
+  });
+
+  // THE DEFECT. `SELECT email, status FROM users WHERE id = $1` in system context, with a form
+  // layer that validates `supervisor` as "any string": a submitted uuid for a user in another
+  // organization, or a customer-plane end user, was mailed a live credential for a brand-new
+  // federal identity. The scoped query simply does not return them.
+  it('refuses to deliver when the submitted supervisor is out of scope', async () => {
+    h.setDbRows(defaultRows({ supervisorRows: [] }));
+    const r = await provisionApproved();
+    expect(r.status).toBe('failed');
+    expect(r.outcomes.find((o) => o.key === 'issue_tap')?.error)
+      .toMatch(/not a Nexus platform user scoped to this organization/);
+    expect(h.sendEmail).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MINOR 8 — the mail call is wrapped, so containment does not rest on one layer
+// ---------------------------------------------------------------------------
+describe('a mail adapter that throws', () => {
+  it('cannot carry the pass out in its error message', async () => {
+    h.sendEmail.mockImplementation(async () => {
+      // Exactly what a mail adapter that echoes the envelope it failed to send looks like.
+      throw new Error(`SMTP 550 rejected message: Pass: ${TAP}`);
+    });
+    const r = await provisionApproved();
+
+    expect(r.status).toBe('failed');
+    const outcome = r.outcomes.find((o) => o.key === 'issue_tap');
+    // A FIXED string, the same shape the issueTap wrapper already used — not the adapter's text.
+    expect(outcome?.error).toBe('sending the Temporary Access Pass to the supervisor failed');
+    expect(JSON.stringify(r)).not.toContain(TAP);
+    for (const q of h.queries) expect(JSON.stringify(q.params)).not.toContain(TAP);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// IMPORTANT 5 — the skipped TAP has to be unmistakable on the TICKET too
+// ---------------------------------------------------------------------------
+describe('a run against a tenant with no Temporary Access Pass policy', () => {
+  beforeEach(() => {
+    g.graph.post.mockImplementation(async (path: string) => {
+      if (path.includes('temporaryAccessPassMethods')) {
+        throw new GraphError(400, '{"error":{"code":"badRequest","message":"Temporary Access Pass is not enabled for the tenant."}}');
+      }
+      if (path === '/users') return { id: 'u-new' };
+      return {};
+    });
+  });
+
+  it('succeeds with issue_tap skipped rather than failing after the account exists', async () => {
+    const r = await provisionApproved();
+    expect(r.status).toBe('succeeded');
+    expect(r.outcomes.find((o) => o.key === 'issue_tap')?.status).toBe('skipped');
+    // The account and its licences really were written — which is exactly why failing the run
+    // here would have been the wrong answer.
+    expect(r.outcomes.find((o) => o.key === 'create_user')?.status).toBe('succeeded');
+    expect(h.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('says on the ticket that no credential was delivered', async () => {
+    await provisionApproved();
+    const note = String(find(/INSERT INTO ticket_comments/)[0].params[3]);
+    expect(note).toMatch(/issue_tap=skipped/);
+    expect(note).toMatch(/NO CREDENTIAL WAS DELIVERED/);
+    expect(note).toMatch(/out of band/);
+  });
+
+  it('records the skip on the step row', async () => {
+    await provisionApproved();
+    const stepUpdate = find(/UPDATE provisioning_steps/).find((q) => q.params[1] === 'issue_tap');
+    expect(stepUpdate?.params[2]).toBe('skipped');
+    expect(String(stepUpdate?.params[4])).toMatch(/NO CREDENTIAL WAS DELIVERED/);
+  });
+
+  // A different Graph 403 is a real failure and must stay one.
+  it('still fails the run for an ordinary Graph authorization error', async () => {
+    g.graph.post.mockImplementation(async (path: string) => {
+      if (path.includes('temporaryAccessPassMethods')) {
+        throw new GraphError(403, '{"error":{"code":"Authorization_RequestDenied","message":"Insufficient privileges."}}');
+      }
+      if (path === '/users') return { id: 'u-new' };
+      return {};
+    });
+    const r = await provisionApproved();
+    expect(r.status).toBe('failed');
+    expect(r.outcomes.find((o) => o.key === 'issue_tap')?.status).toBe('failed');
   });
 });

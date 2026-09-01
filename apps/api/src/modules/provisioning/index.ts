@@ -8,6 +8,15 @@
 // table. If preview and provision could ever disagree, the admin's approval would be
 // meaningless and this whole design collapses.
 //
+// One code path was necessary but NOT sufficient, and that gap was a real defect. Both calls
+// ran the same code over DIFFERENT DATA: any write to tickets.custom_fields, the sensitive
+// store, or the tenant's own groups and policies between the two clicks silently changed the
+// UPN, the group list and the Cloud PC policy that got created, with the admin's approval
+// still attached to a plan nobody ever saw executed. `preview` therefore returns a
+// `fingerprint` (planner.ts: planFingerprint), `provision` REQUIRES it, and a fresh plan that
+// does not hash to the same value is refused with 412 rather than executed. An execute with no
+// fingerprint at all is refused too — silence is not consent.
+//
 // Layering: the planner is pure (no I/O), the executor is pure-with-injected-ops (no Graph
 // imports). All the I/O — DB reads, Graph reads, Graph writes, notification delivery — lives
 // here.
@@ -21,6 +30,7 @@ import { logger } from '../../logger.js';
 import { readSensitiveForEngine } from '../sensitive-fields.js';
 import { getProvisioningGraph, type ProvisioningGraph } from '../../integrations/m365/provisioning-runtime.js';
 import { getNotificationAdapter } from '../../integrations/m365/runtime.js';
+import type { DeliveryResult } from '../../integrations/m365/adapter.js';
 import {
   readTenantState,
   findUserByUpn,
@@ -32,10 +42,14 @@ import {
   issueTap,
   listGroupsByDisplayName,
   normalizePolicies,
+  isTapPolicyDisabledError,
   type DirectoryGroup,
 } from '../../integrations/m365/provisioning-graph.js';
-import { planRun, deriveUpn, type Plan } from './planner.js';
-import { executePlan, type ProvisioningOps, type StepOutcome } from './executor.js';
+import { planRun, deriveUpn, planFingerprint, type Plan } from './planner.js';
+import {
+  executePlan, TapPolicyUnavailableError, TAP_SKIPPED_NOTICE,
+  type ProvisioningOps, type StepOutcome,
+} from './executor.js';
 import type { Principal } from '../../types.js';
 
 // ---------------------------------------------------------------------------
@@ -126,7 +140,13 @@ function requestedGroupNames(plan: Plan): string[] {
  */
 export const IN_FLIGHT_RUN_STATUSES = ['running', 'awaiting_cloudpc'] as const;
 
-interface TicketRow { id: string; organization_id: string; custom_fields: Record<string, unknown> | null }
+interface TicketRow {
+  id: string;
+  organization_id: string;
+  /** service_catalog_items.key this request was raised from (catalog.ts writes it here). */
+  category: string | null;
+  custom_fields: Record<string, unknown> | null;
+}
 
 function requireEnabled(): void {
   // A clear, typed refusal — not a Graph auth crash or an "unknown cloud environment" 500 —
@@ -139,13 +159,98 @@ function requireEnabled(): void {
 async function loadTicket(ticketId: string): Promise<TicketRow> {
   const ticket = await withSystemContext(async (sql) => {
     const { rows } = await sql.query(
-      'SELECT id, organization_id, custom_fields FROM tickets WHERE id = $1',
+      'SELECT id, organization_id, category, custom_fields FROM tickets WHERE id = $1',
       [ticketId],
     );
     return rows[0] as TicketRow | undefined;
   });
   if (!ticket) throw Errors.notFound('ticket not found');
   return ticket;
+}
+
+/** The catalog item this engine provisions for. Nothing else may drive a directory write. */
+const ONBOARDING_CATALOG_KEY = 'user.provisioning';
+
+/**
+ * Binds a run to the ONE organization that owns the provisioning tenant.
+ *
+ * `listCloudPcPolicies` already scopes its read this way, but preview/provision — the calls that
+ * actually WRITE to a live federal directory — did not: they authorized `provisioning.execute`
+ * against whatever organization the ticket happened to belong to. A holder of that permission
+ * scoped to some other customer org could therefore drive account creation, licence assignment
+ * and Cloud PC group membership into the SBS tenant from a ticket in their own org. The tenant
+ * is single (see the spec's "Tenant scope" decision), so the owning org is single too, and any
+ * other org is simply not a place a provisioning run can come from.
+ *
+ * Unlike the options provider, this REFUSES rather than degrading: an options list with nothing
+ * to offer is an honest empty list, but a write request from the wrong org is a request that
+ * must not proceed quietly.
+ */
+async function requireProvisioningTenantOrg(ticket: TicketRow): Promise<void> {
+  const tenantOrg = await provisioningOrganizationId();
+  if (!tenantOrg) {
+    throw Errors.badRequest(
+      'no organization is mapped to the provisioning tenant (organizations.entra_tenant_id), '
+      + 'so there is no tenant this ticket could provision into',
+    );
+  }
+  if (ticket.organization_id !== tenantOrg) {
+    throw Errors.badRequest(
+      'this ticket does not belong to the organization that owns the provisioning tenant',
+    );
+  }
+}
+
+/**
+ * THE HUMAN-IN-THE-LOOP GATE, server-side.
+ *
+ * "Approval completes, an admin reviews a preview, then clicks Provision" is the decision the
+ * entire design rests on (spec, "Automation boundary") — and it was enforced only in React:
+ * the ticket page computed `approvalsPassed` and hid the panel, while the API executed on any
+ * ticket, in any approval state, for any holder of `provisioning.execute`. A hidden button is
+ * not an authorization control; anything that can call the endpoint bypassed it entirely.
+ *
+ * Three things are checked here, all of them state the client cannot assert:
+ *  1. the ticket really is a `user.provisioning` catalog request — the only intake whose form
+ *     answers this planner knows how to read — and that item still carries a form;
+ *  2. an approval record EXISTS. The catalog item is `requires_approval`, so a request with no
+ *     approvals at all did not come through the intake this gate governs. (The client's rule
+ *     was the opposite: no approvals meant "passed".)
+ *  3. every approval on it is `approved` — none requested, none rejected.
+ */
+async function requireApprovedOnboardingRequest(ticket: TicketRow): Promise<void> {
+  const { item, approvals } = await withSystemContext(async (sql) => {
+    const { rows: itemRows } = await sql.query(
+      'SELECT key, form_key FROM service_catalog_items WHERE key = $1 AND active',
+      [ticket.category ?? ''],
+    );
+    const { rows: approvalRows } = await sql.query(
+      "SELECT status FROM approvals WHERE subject_type = 'ticket' AND subject_id = $1",
+      [ticket.id],
+    );
+    return {
+      item: itemRows[0] as { key: string; form_key: string | null } | undefined,
+      approvals: approvalRows as Array<{ status: string }>,
+    };
+  });
+
+  if (ticket.category !== ONBOARDING_CATALOG_KEY || !item?.form_key) {
+    throw Errors.badRequest(
+      `only an active ${ONBOARDING_CATALOG_KEY} catalog request can be provisioned`,
+    );
+  }
+  if (approvals.length === 0) {
+    throw Errors.badRequest(
+      'this request carries no approval record; provisioning requires a completed approval',
+    );
+  }
+  const outstanding = approvals.filter((a) => a.status !== 'approved');
+  if (outstanding.length > 0) {
+    throw Errors.badRequest(
+      `provisioning requires every approval to be approved; ${outstanding.length} is not `
+      + `(${[...new Set(outstanding.map((a) => a.status))].join(', ')})`,
+    );
+  }
 }
 
 /**
@@ -161,6 +266,7 @@ async function buildPlan(actor: Principal, ticketId: string): Promise<{ plan: Pl
   requireEnabled();
   const ticket = await loadTicket(ticketId);
   authorize(actor, 'provisioning.execute', { organizationId: ticket.organization_id });
+  await requireProvisioningTenantOrg(ticket);
 
   // PII lives outside custom_fields; the engine reads it in system context. The sensitive bag
   // wins on a key collision — it is the authoritative store for any field marked sensitive.
@@ -188,10 +294,18 @@ async function buildPlan(actor: Principal, ticketId: string): Promise<{ plan: Pl
   return { plan: applyGroupResolution(planned, directory), ticket };
 }
 
-/** Dry run. Same plan, same blockers, same group resolution as provision() — by construction. */
-export async function preview(actor: Principal, ticketId: string): Promise<Plan> {
+/** A previewed plan plus the token that binds it to the run the admin then approves. */
+export type PreviewedPlan = Plan & { fingerprint: string };
+
+/**
+ * Dry run. Same plan, same blockers, same group resolution as provision() — by construction.
+ *
+ * Returns the plan's fingerprint alongside it. That value is what the caller must hand back to
+ * `provision`; it is what turns "the same code path" into "the same plan". See the file header.
+ */
+export async function preview(actor: Principal, ticketId: string): Promise<PreviewedPlan> {
   const { plan } = await buildPlan(actor, ticketId);
-  return plan;
+  return { ...plan, fingerprint: planFingerprint(plan) };
 }
 
 // ---------------------------------------------------------------------------
@@ -226,15 +340,40 @@ async function deliverTapToSupervisor(
     // a missing user — say so instead of letting Postgres raise a uuid cast error.
     throw new Error('supervisor on the request is not a valid Nexus user reference');
   }
+  // SCOPED, not just looked up. The form layer validates the `supervisor` answer as "some
+  // string", so the id reaching here is attacker-controlled in the ordinary sense: whoever
+  // filled the form chose it. An unscoped `WHERE id = $1` in system context (which is what this
+  // was) would happily resolve a user in a DIFFERENT customer organization, or a customer-plane
+  // end user, and mail them a live Temporary Access Pass for a brand-new federal identity.
+  //
+  // Two constraints, both required:
+  //  - `plane = 'nexus'` — the pass goes to a work mailbox Nexus itself holds for a platform
+  //    operator, never to a customer-plane mailbox this platform merely knows an address for;
+  //  - scoped to the TICKET's organization. Nexus users carry organization_id NULL by
+  //    construction (see modules/platform-users.ts), so their org scope lives in
+  //    role_assignments — an assignment in this org, or the org-NULL all-orgs grant. That is
+  //    the same scoping model the PDP applies, so "can this person be sent this org's
+  //    credential" means the same thing here as it does everywhere else.
   const supervisor = await withSystemContext(async (sql) => {
     const { rows } = await sql.query(
-      'SELECT email, status FROM users WHERE id = $1',
-      [supervisorId],
+      `SELECT u.email, u.status
+         FROM users u
+        WHERE u.id = $1
+          AND u.plane = 'nexus'
+          AND EXISTS (
+            SELECT 1 FROM role_assignments ra
+             WHERE ra.user_id = u.id
+               AND (ra.organization_id = $2 OR ra.organization_id IS NULL)
+          )`,
+      [supervisorId, organizationId],
     );
     return rows[0] as { email: string; status: string } | undefined;
   });
   if (!supervisor?.email) {
-    throw new Error('supervisor has no Nexus work mailbox on file; cannot deliver the Temporary Access Pass');
+    throw new Error(
+      'supervisor is not a Nexus platform user scoped to this organization, or has no work '
+      + 'mailbox on file; refusing to deliver the Temporary Access Pass',
+    );
   }
   // A deactivated or offboarded supervisor must not receive a live credential for a brand-new
   // account: their mailbox may be delegated, forwarded, shared with a successor, or simply
@@ -272,7 +411,18 @@ async function deliverTapToSupervisor(
     + '<p>It is single-use and expires in 8 hours. Give it to the new user in person or by phone —'
     + ' do not forward this email. They will be asked to set up their own sign-in method with it.</p>';
 
-  const result = await adapter.sendEmail({ to: supervisor.email, subject, html, text });
+  // Wrapped for the same reason issueTap's adapter wrapper is: a mail adapter that throws
+  // commonly echoes the message it was asked to send — and this message's body IS the pass.
+  // Unwrapped, containment rested entirely on the executor's second, by-literal-value redaction
+  // layer; one layer is not a control. Rethrow a fixed string, and log the real error where a
+  // log is the sink rather than a step row and a ticket note.
+  let result: DeliveryResult;
+  try {
+    result = await adapter.sendEmail({ to: supervisor.email, subject, html, text });
+  } catch (err) {
+    logger.error({ err, organizationId }, 'sending the Temporary Access Pass to the supervisor threw');
+    throw new Error('sending the Temporary Access Pass to the supervisor failed');
+  }
 
   // Same delivery ledger every other notification lands in — recipient and status only, so the
   // compliance record shows the pass was handed over without recording the pass itself.
@@ -317,6 +467,16 @@ function buildOps(g: ProvisioningGraph, organizationId: string): ProvisioningOps
       try {
         res = await issueTap(g.graph, userId);
       } catch (err) {
+        // Spec open item #4. The one Graph failure here that is a TENANT CONFIGURATION fact
+        // rather than a run failure is "the Temporary Access Pass method is not enabled".
+        // Classified HERE, where the Graph error is still intact, and re-raised as the
+        // executor's own marker type — the executor never reads a Graph error body, and every
+        // other failure keeps failing the run exactly as before. No pass exists yet at this
+        // point, so nothing needs redacting on this path.
+        if (isTapPolicyDisabledError(err)) {
+          logger.warn({ userId }, 'tenant has no Temporary Access Pass policy; skipping issue_tap');
+          throw new TapPolicyUnavailableError();
+        }
         const status = (err as { status?: number })?.status;
         throw new Error(`issuing the Temporary Access Pass failed${status ? ` (Graph ${status})` : ''}`);
       }
@@ -450,7 +610,14 @@ async function noteRunOutcome(
   status: string,
   outcomes: StepOutcome[],
 ): Promise<void> {
-  const body = `Provisioning run ${status}: ${outcomes.map((o) => `${o.key}=${o.status}`).join(', ')}`;
+  const lines = [`Provisioning run ${status}: ${outcomes.map((o) => `${o.key}=${o.status}`).join(', ')}`];
+  // A skipped issue_tap means the account exists and is licensed but NOBODY CAN SIGN INTO IT.
+  // That cannot be left implicit in a comma-separated list of step verdicts next to the word
+  // "succeeded" — the ticket is the place a human finds out they have work left to do.
+  if (outcomes.some((o) => o.key === 'issue_tap' && o.status === 'skipped')) {
+    lines.push('', TAP_SKIPPED_NOTICE);
+  }
+  const body = lines.join('\n');
   try {
     await withSystemContext(async (sql) => {
       await sql.query(
@@ -465,15 +632,44 @@ async function noteRunOutcome(
 }
 
 /**
- * Executes the plan. Builds it through the SAME buildPlan() as preview(), so what runs is what
- * was previewed. A plan carrying blockers is refused here (and again, independently, inside
- * executePlan) before any tenant write happens.
+ * Executes the plan.
+ *
+ * `approvedFingerprint` is the value `preview` returned for the plan the admin actually read
+ * and approved. It is REQUIRED. The plan is rebuilt here through the same buildPlan() as
+ * preview — that has not changed — and then checked against that fingerprint, so a plan whose
+ * inputs moved underneath the admin (an edit to the ticket's answers or its PII, a group
+ * renamed or deleted in the tenant, a licence pool exhausted, a Cloud PC policy reassigned) is
+ * REFUSED rather than executed under an approval that was given for something else.
+ *
+ * An absent fingerprint is refused too, and deliberately not treated as "no preference": every
+ * write this function performs is irreversible against a live federal directory, and consent
+ * has to be something the caller demonstrably gave.
+ *
+ * Order of refusals, all before any run row or tenant write:
+ *   feature enabled -> permission -> right tenant org -> approved onboarding request ->
+ *   fingerprint matches -> plan carries no blockers.
  */
 export async function provision(
   actor: Principal,
   ticketId: string,
+  approvedFingerprint?: string,
 ): Promise<{ runId: string; status: string; outcomes: StepOutcome[] }> {
   const { plan, ticket } = await buildPlan(actor, ticketId);
+  await requireApprovedOnboardingRequest(ticket);
+
+  if (!approvedFingerprint) {
+    throw Errors.badRequest(
+      'a previewed plan fingerprint is required to provision; preview the plan and approve it first',
+    );
+  }
+  const current = planFingerprint(plan);
+  if (current !== approvedFingerprint) {
+    throw Errors.preconditionFailed(
+      'the provisioning plan has changed since it was previewed; review the new preview and '
+      + 'approve it before provisioning',
+    );
+  }
+
   if (plan.blockers.length) {
     throw Errors.badRequest(
       `plan has ${plan.blockers.length} blocker(s): ${plan.blockers.map((b) => b.message).join(' ')}`,

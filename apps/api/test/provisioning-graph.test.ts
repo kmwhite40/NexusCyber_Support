@@ -12,7 +12,10 @@ import {
   issueTap,
   getCloudPcStatus,
   listGroupsByDisplayName,
+  isAlreadyMemberError,
+  isTapPolicyDisabledError,
 } from '../src/integrations/m365/provisioning-graph.js';
+import { GraphError } from '../src/integrations/m365/graph-client.js';
 
 describe('normalizeSkus', () => {
   it('projects the seat counts used for availability checks', () => {
@@ -274,5 +277,93 @@ describe('listGroupsByDisplayName', () => {
     const get2 = vi.fn(async () => ({ value: [] }));
     await listGroupsByDisplayName({ get: get2, post: vi.fn(), patch: vi.fn() } as any, ['', '  ']);
     expect(get2).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// IMPORTANT 4 — group steps must be idempotent, or retry is broken
+// ---------------------------------------------------------------------------
+
+/** The response Graph actually returns for a duplicate `members/$ref` reference. */
+const DUPLICATE_MEMBER_BODY = JSON.stringify({
+  error: {
+    code: 'Request_BadRequest',
+    message: "One or more added object references already exist for the following modified properties: 'members'.",
+  },
+});
+
+describe('isAlreadyMemberError', () => {
+  it('recognises the duplicate-reference 400 Graph returns for members/$ref', () => {
+    expect(isAlreadyMemberError(new GraphError(400, DUPLICATE_MEMBER_BODY))).toBe(true);
+  });
+
+  it('is tolerant of how the condition is worded', () => {
+    expect(isAlreadyMemberError(new GraphError(400, '{"error":{"message":"Object already exists in members"}}'))).toBe(true);
+    expect(isAlreadyMemberError(new GraphError(400, '{"error":{"message":"User is already a member of this group"}}'))).toBe(true);
+    expect(isAlreadyMemberError(new GraphError(400, '{"error":{"message":"ALREADY EXIST"}}'))).toBe(true);
+  });
+
+  // The dangerous direction. Request_BadRequest is the code Graph uses for malformed bodies, a
+  // wrong @odata.id host and invalid GUIDs alike. Accepting the CODE would let a group add that
+  // genuinely failed report success and hand the new hire an account missing its access.
+  it('does NOT accept a Request_BadRequest that says something else', () => {
+    expect(isAlreadyMemberError(new GraphError(400, JSON.stringify({
+      error: { code: 'Request_BadRequest', message: 'Invalid object identifier.' },
+    })))).toBe(false);
+  });
+
+  it('does NOT accept other statuses, or non-Graph errors', () => {
+    expect(isAlreadyMemberError(new GraphError(403, DUPLICATE_MEMBER_BODY))).toBe(false);
+    expect(isAlreadyMemberError(new GraphError(404, DUPLICATE_MEMBER_BODY))).toBe(false);
+    expect(isAlreadyMemberError(new Error('already exists'))).toBe(false);
+    expect(isAlreadyMemberError(null)).toBe(false);
+  });
+});
+
+describe('addToGroup idempotency', () => {
+  // THE REGRESSION. A run that failed at issue_tap (or anywhere after add_groups) could not be
+  // retried: the retry hit the duplicate-reference 400 AT add_groups and stopped there, never
+  // reaching the step that actually needed re-running — directly contradicting the "completed
+  // steps adopt existing objects" guarantee the whole retry story rests on.
+  it('adopts an existing membership instead of failing the retry', async () => {
+    const g = { get: vi.fn(), patch: vi.fn(), post: vi.fn(async () => { throw new GraphError(400, DUPLICATE_MEMBER_BODY); }) };
+    await expect(addToGroup(g as any, 'group-1', 'user-1', 'https://graph.microsoft.us')).resolves.toBeNull();
+    expect(g.post).toHaveBeenCalledTimes(1); // it really did attempt the write
+  });
+
+  it('still propagates a group add that genuinely failed', async () => {
+    const g = { get: vi.fn(), patch: vi.fn(), post: vi.fn(async () => { throw new GraphError(403, '{"error":{"message":"Insufficient privileges"}}'); }) };
+    await expect(addToGroup(g as any, 'group-1', 'user-1', 'https://graph.microsoft.us')).rejects.toThrow(/403/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// IMPORTANT 5 — spec open item #4: TAP policy not enabled is a SKIP, not a failure
+// ---------------------------------------------------------------------------
+describe('isTapPolicyDisabledError', () => {
+  it('recognises a tenant with the Temporary Access Pass method turned off', () => {
+    expect(isTapPolicyDisabledError(new GraphError(400, JSON.stringify({
+      error: { code: 'badRequest', message: 'Temporary Access Pass is not enabled for the tenant.' },
+    })))).toBe(true);
+    expect(isTapPolicyDisabledError(new GraphError(403, JSON.stringify({
+      error: { message: 'The temporaryAccessPass authentication method policy is disabled.' },
+    })))).toBe(true);
+    expect(isTapPolicyDisabledError(new GraphError(400, JSON.stringify({
+      error: { message: 'Temporary Access Pass is not allowed for this user.' },
+    })))).toBe(true);
+  });
+
+  // The dangerous direction again: a missing app permission is also a 403, and downgrading it
+  // to "skipped" would report a run as fine while nobody can sign in and nobody was told why.
+  it('does NOT treat an ordinary authorization failure as a disabled policy', () => {
+    expect(isTapPolicyDisabledError(new GraphError(403, JSON.stringify({
+      error: { code: 'Authorization_RequestDenied', message: 'Insufficient privileges to complete the operation.' },
+    })))).toBe(false);
+  });
+
+  it('does NOT treat an unrelated failure that merely mentions the method as disabled', () => {
+    expect(isTapPolicyDisabledError(new GraphError(400, '{"error":{"message":"Temporary Access Pass length is invalid."}}'))).toBe(false);
+    expect(isTapPolicyDisabledError(new GraphError(500, '{"error":{"message":"Temporary Access Pass is not enabled."}}'))).toBe(false);
+    expect(isTapPolicyDisabledError(new Error('not enabled'))).toBe(false);
   });
 });

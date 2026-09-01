@@ -15,6 +15,38 @@
 import type { Plan, StepKey } from './planner.js';
 import { randomBytes } from 'node:crypto';
 
+/**
+ * Spec open item #4's fallback, made representable.
+ *
+ * The tenant either has the Temporary Access Pass authentication method enabled or it does not,
+ * and that is a TENANT CONFIGURATION fact, not a failure of this run. The spec's ruling is that
+ * `issue_tap` is then marked `skipped` and the rest of the run is unaffected — anything else
+ * fails the run AFTER the account, the licences and the group memberships are already written,
+ * which leaves a live federal identity behind and reports it as a failure.
+ *
+ * The TYPE lives here, in the executor, and the Graph classification that raises it lives in the
+ * service layer's ops adapter: this file must never import the Graph client, and the executor
+ * must never learn to read a Graph error body. An ops implementation says "this specific tenant
+ * state" by throwing this; every other error keeps failing the run exactly as before.
+ */
+export class TapPolicyUnavailableError extends Error {
+  constructor(message = 'the tenant has no Temporary Access Pass policy enabled') {
+    super(message);
+    this.name = 'TapPolicyUnavailableError';
+  }
+}
+
+/**
+ * The text recorded on the SKIPPED `issue_tap` step, and echoed into the ticket note.
+ *
+ * Written to be unmistakable in a list of green ticks: a run that reaches this point SUCCEEDED
+ * at creating a live account that NOBODY CAN SIGN INTO until an administrator sets its first
+ * credential by hand. "skipped" alone does not say that.
+ */
+export const TAP_SKIPPED_NOTICE =
+  'NO CREDENTIAL WAS DELIVERED — the Temporary Access Pass method is not enabled in the tenant. '
+  + 'An administrator must set this account\'s first sign-in credential out of band.';
+
 export interface StepOutcome {
   key: StepKey;
   status: 'succeeded' | 'failed' | 'skipped';
@@ -137,6 +169,15 @@ export async function executePlan(
             pass = tap.temporaryAccessPass;
             await ops.deliverTap(String(step.detail.supervisor ?? ''), plan.upn, pass);
           } catch (err) {
+            // Spec open item #4: a tenant with no TAP policy is a configuration fact, not a run
+            // failure. Skip the step, keep going, and say loudly on the outcome that no
+            // credential was delivered. Checked BEFORE the redact/rethrow below because this is
+            // the one error here that must not become a failure — and it can only be raised
+            // before a pass exists, so there is nothing to redact.
+            if (err instanceof TapPolicyUnavailableError) {
+              outcomes.push({ key: step.key, status: 'skipped', error: TAP_SKIPPED_NOTICE });
+              break;
+            }
             // Same rationale as create_user above: issueTap/deliverTap adapters (HTTP, SMTP,
             // ...) commonly echo request content — including the TAP itself — into thrown error
             // messages. Redact using the value this step actually holds before it can propagate.

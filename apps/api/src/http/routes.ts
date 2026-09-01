@@ -590,10 +590,16 @@ export async function registerRoutes(app: FastifyInstance) {
     return { data: await provisioning.preview(p, id) };
   });
 
+  // The body carries the fingerprint of the plan the admin previewed and approved. It is
+  // required: the service refuses an execute without one rather than treating silence as
+  // consent, and refuses a stale one with 412 rather than executing a plan nobody approved.
+  // Parsed as optional here so the refusal comes from the service (one place, one message)
+  // instead of splitting into a 422 for "no body" and a 400 for "empty string".
   app.post('/api/v1/tickets/:id/provisioning/execute', async (req) => {
     const p = await requirePrincipal(req);
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
-    return { data: await provisioning.provision(p, id) };
+    const body = z.object({ fingerprint: z.string().optional() }).parse(req.body ?? {});
+    return { data: await provisioning.provision(p, id, body.fingerprint) };
   });
 
   app.get('/api/v1/tickets/:id/provisioning', async (req) => {

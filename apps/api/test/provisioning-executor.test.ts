@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { executePlan, type ProvisioningOps } from '../src/modules/provisioning/executor.js';
+import {
+  executePlan, TapPolicyUnavailableError, TAP_SKIPPED_NOTICE,
+  type ProvisioningOps,
+} from '../src/modules/provisioning/executor.js';
 import type { Plan } from '../src/modules/provisioning/planner.js';
 
 const plan: Plan = {
@@ -254,5 +257,67 @@ describe('executePlan', () => {
     expect(r.status).toBe('failed');
     expect(addToGroupCalls).toBe(0);
     expect(r.outcomes.find((o) => o.key === 'assign_cloudpc')?.error).toMatch(/groupId/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// IMPORTANT 5 — spec open item #4: "issue_tap is marked skipped and the rest of the run is
+// unaffected". There was no skip path at all: issueTap threw and the run failed AFTER the
+// account, the licences and the group memberships were already written to a live tenant.
+// ---------------------------------------------------------------------------
+describe('a tenant with no Temporary Access Pass policy', () => {
+  const tapDown = ops({
+    issueTap: async () => { throw new TapPolicyUnavailableError(); },
+  });
+
+  it('marks issue_tap skipped instead of failing the run', async () => {
+    const r = await executePlan(plan, tapDown);
+    const tap = r.outcomes.find((o) => o.key === 'issue_tap');
+    expect(tap?.status).toBe('skipped');
+    expect(r.status).toBe('awaiting_cloudpc'); // i.e. NOT 'failed'
+  });
+
+  it('leaves the rest of the run unaffected — later steps still run', async () => {
+    const r = await executePlan(plan, tapDown);
+    expect(r.outcomes.map((o) => o.key)).toEqual([
+      'create_user', 'assign_licenses', 'assign_cloudpc', 'issue_tap', 'await_cloudpc',
+    ]);
+    expect(r.outcomes.filter((o) => o.status === 'failed')).toEqual([]);
+  });
+
+  it('says on the outcome, unmistakably, that no credential was delivered', async () => {
+    const r = await executePlan(plan, tapDown);
+    const tap = r.outcomes.find((o) => o.key === 'issue_tap');
+    expect(tap?.error).toBe(TAP_SKIPPED_NOTICE);
+    expect(tap?.error).toMatch(/NO CREDENTIAL WAS DELIVERED/);
+    expect(tap?.error).toMatch(/out of band/);
+  });
+
+  it('never delivers anything when the pass could not be issued', async () => {
+    let delivered = 0;
+    await executePlan(plan, ops({
+      issueTap: async () => { throw new TapPolicyUnavailableError(); },
+      deliverTap: async () => { delivered += 1; },
+    }));
+    expect(delivered).toBe(0);
+  });
+
+  // The skip is for ONE specific tenant state. Every other issue_tap failure must still fail
+  // the run — silently "skipping" a delivery failure would report success while the supervisor
+  // never received the credential.
+  it('does not skip for any other issue_tap failure', async () => {
+    const r = await executePlan(plan, ops({
+      issueTap: async () => { throw new Error('issuing the Temporary Access Pass failed (Graph 403)'); },
+    }));
+    expect(r.status).toBe('failed');
+    expect(r.outcomes.find((o) => o.key === 'issue_tap')?.status).toBe('failed');
+  });
+
+  it('does not skip when DELIVERY fails, only when the tenant has no policy', async () => {
+    const r = await executePlan(plan, ops({
+      deliverTap: async () => { throw new Error('sending the Temporary Access Pass to the supervisor failed'); },
+    }));
+    expect(r.status).toBe('failed');
+    expect(r.outcomes.find((o) => o.key === 'issue_tap')?.status).toBe('failed');
   });
 });

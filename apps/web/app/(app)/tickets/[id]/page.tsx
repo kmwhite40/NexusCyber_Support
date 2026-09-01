@@ -114,10 +114,18 @@ export default function TicketDetailPage() {
   const tasks = ticket.tasks ?? [];
   const pendingApproval = ticket.approvals?.find((a) => a.status === 'requested');
   const canApprove = can('customer.admin.manage_users') || can('ticket.assign');
-  // Provisioning writes to a live directory, so it only ever appears once this ticket's
-  // approvals have actually passed — no approvals at all (not every ticket needs one) counts
-  // as passed, but anything still requested or ever rejected does not.
-  const approvalsPassed = !ticket.approvals?.length || ticket.approvals.every((a) => a.status === 'approved');
+  // Provisioning writes to a live directory, so the panel only appears once this ticket's
+  // approvals have actually passed. This is presentation, NOT the control: the same rule is
+  // enforced in the provisioning service (apps/api/src/modules/provisioning/index.ts), because
+  // a hidden button is not an authorization check — the execute endpoint is reachable without
+  // this page. Mirrored here so the panel matches what the server will accept.
+  //
+  // "No approvals at all" is NOT passed: user.provisioning is a requires_approval catalog item,
+  // so a request with no approval record did not come through that intake, and the server
+  // refuses it. The previous rule said the opposite and would have offered a button that
+  // always failed.
+  const approvalsPassed = Boolean(ticket.approvals?.length)
+    && ticket.approvals!.every((a) => a.status === 'approved');
   const nextStates: Record<string, string[]> = {
     new: ['assigned'], triage: ['assigned', 'in_progress'], assigned: ['in_progress'],
     in_progress: ['waiting_customer', 'resolved'], waiting_customer: ['in_progress', 'resolved'],

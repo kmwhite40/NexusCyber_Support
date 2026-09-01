@@ -2,6 +2,7 @@
 // approves is exactly what runs. No I/O here — everything the plan needs is passed in via
 // PlanInput. Do not add lookups (DB, Graph, config, Date.now(), randomness) to this file or to
 // deriveUpn: a missing value must become a blocker, never something the planner fetches itself.
+import { createHash } from 'node:crypto';
 import type { TenantState } from '../../integrations/m365/provisioning-graph.js';
 
 export type StepKey =
@@ -73,6 +74,21 @@ export function planRun(input: PlanInput): Plan {
     blockers.push({ code: 'privileged_account', message: `${upn} already exists and holds a directory role. Refusing to modify it.` });
   }
 
+  // An EMPTY baseline is not "no licences requested" — it is a misconfiguration, and it is the
+  // one that fails OPEN: with nothing to iterate, the loop below emits no blocker and no sku id,
+  // so `assign_licenses` no-ops while `assign_cloudpc` still adds the account to the Cloud PC
+  // policy group. That produces a live, unlicensed federal identity whose Cloud PC silently
+  // never builds — precisely the hard ordering constraint this planner exists to protect
+  // (see the spec's "Tenant facts"). config.ts also refuses to report the feature `enabled`
+  // with an empty baseline; this blocker is the second layer, so the misconfiguration is
+  // VISIBLE in the dry run rather than only at process start.
+  if (baselineSkus.length === 0) {
+    blockers.push({
+      code: 'baseline_empty',
+      message: 'No baseline license SKUs are configured (M365_PROV_BASELINE_SKUS is empty). '
+        + 'An unlicensed account added to the Cloud PC policy group never builds a Cloud PC.',
+    });
+  }
   // Resolve the baseline by SKU part number; a missing SKU or an exhausted pool fails the
   // dry run closed rather than leaving a half-licensed account behind.
   const skuIds: string[] = [];
@@ -112,4 +128,64 @@ export function planRun(input: PlanInput): Plan {
   if (policyGroupId) steps.push({ key: 'await_cloudpc', label: 'Wait for the Cloud PC to finish building', detail: { policyName } });
 
   return { upn, displayName, steps, blockers };
+}
+
+// ---------------------------------------------------------------------------
+// The plan fingerprint — what binds an approved preview to the run that executes
+// ---------------------------------------------------------------------------
+
+/**
+ * Canonical JSON: object keys sorted recursively, no whitespace.
+ *
+ * This is the ONLY normalisation applied. Array ORDER is preserved everywhere except the
+ * blocker list (see below), because order is material almost everywhere a plan uses an array:
+ * `steps` encodes the hard "licences before the Cloud PC group" ordering constraint, and a
+ * future step could reasonably carry an ordered detail array too. Sorting those would let a
+ * genuinely different plan hash the same — the exact failure this fingerprint exists to catch.
+ * What IS normalised is the stuff that carries no meaning: property order and serialisation
+ * whitespace, which differ between a plan built in memory and the same plan round-tripped
+ * through JSONB.
+ */
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value ?? null) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => v !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(',')}}`;
+}
+
+/**
+ * A stable hash of everything about a plan that determines what gets WRITTEN to the tenant.
+ *
+ * THIS IS THE PREVIEW GUARANTEE. `preview` returns it; `provision` re-plans from current data
+ * and refuses unless the fresh plan hashes to the same value. Without it, "the plan you
+ * approved is the plan that runs" was only ever a claim about the code path, not about the
+ * DATA: any write to tickets.custom_fields (or the sensitive store, or the tenant's groups and
+ * policies) between the two clicks silently changed the UPN, the group list and the Cloud PC
+ * policy that got created, with the admin's approval still attached.
+ *
+ * Covered, deliberately:
+ *  - `upn` and `displayName` — the identity itself;
+ *  - every step, IN ORDER, by key, human-readable label, and full material detail (sku ids,
+ *    resolved group ids, the Cloud PC policy group, the supervisor who receives the credential);
+ *  - `blockers` — a plan that acquired a blocker between preview and execute is a DIFFERENT
+ *    plan, and one an admin never approved. Blockers are sorted first because they are a set of
+ *    reasons, not a sequence: two planners emitting the same reasons in a different order
+ *    describe the same refusal.
+ *
+ * Everything in Plan is covered; there is nothing in a Plan that is not material. If a field is
+ * ever added to Plan, it lands in this hash automatically — that is why this hashes the whole
+ * object rather than a hand-picked projection.
+ */
+export function planFingerprint(plan: Plan): string {
+  const canonical = {
+    upn: plan.upn,
+    displayName: plan.displayName,
+    steps: plan.steps.map((s) => ({ key: s.key, label: s.label, detail: s.detail })),
+    blockers: [...plan.blockers].sort((a, b) =>
+      a.code === b.code ? (a.message < b.message ? -1 : a.message > b.message ? 1 : 0)
+        : a.code < b.code ? -1 : 1),
+  };
+  return createHash('sha256').update(canonicalJson(canonical)).digest('hex');
 }

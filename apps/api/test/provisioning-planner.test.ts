@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deriveUpn, planRun } from '../src/modules/provisioning/planner.js';
+import { deriveUpn, planRun, planFingerprint } from '../src/modules/provisioning/planner.js';
 
 const tenant = {
   skus: [
@@ -127,5 +127,113 @@ describe('planRun', () => {
     const step = p.steps.find((s) => s.key === 'assign_licenses');
     expect(step?.detail.skuPartNumbers).not.toBe(base.baselineSkus);
     expect(step?.detail.skuPartNumbers).toEqual(base.baselineSkus);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CRITICAL 2 — an empty baseline must be VISIBLE in the dry run, not silent
+// ---------------------------------------------------------------------------
+describe('an empty licence baseline', () => {
+  // Without the blocker: the licence loop has nothing to iterate, so it emits no blocker and
+  // no sku id. The plan then reads as perfectly healthy while `assign_licenses` no-ops and
+  // `assign_cloudpc` still adds the account to the Cloud PC policy group — a live, unlicensed
+  // federal identity whose Cloud PC silently never builds.
+  it('blocks the run rather than planning an unlicensed account into the Cloud PC group', () => {
+    const plan = planRun({ ...base, baselineSkus: [] });
+    expect(plan.blockers.map((b) => b.code)).toContain('baseline_empty');
+  });
+
+  it('still plans zero licences — the blocker is the only thing standing between it and a run', () => {
+    const plan = planRun({ ...base, baselineSkus: [] });
+    expect(plan.steps.find((s) => s.key === 'assign_licenses')?.detail.skuIds).toEqual([]);
+    // ...and the Cloud PC step is still there, which is exactly why the blocker has to be.
+    expect(plan.steps.map((s) => s.key)).toContain('assign_cloudpc');
+  });
+
+  it('does not fire when a baseline is configured', () => {
+    expect(planRun(base).blockers.map((b) => b.code)).not.toContain('baseline_empty');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CRITICAL 1 — the fingerprint that binds an approved preview to the run
+// ---------------------------------------------------------------------------
+describe('planFingerprint', () => {
+  const plan = planRun(base);
+
+  it('is stable for the same plan', () => {
+    expect(planFingerprint(planRun(base))).toBe(planFingerprint(planRun(base)));
+  });
+
+  it('survives a JSON round-trip — the plan is stored as jsonb and read back', () => {
+    expect(planFingerprint(JSON.parse(JSON.stringify(plan)))).toBe(planFingerprint(plan));
+  });
+
+  it('ignores property order, which carries no meaning in an object', () => {
+    const reordered = {
+      blockers: plan.blockers,
+      steps: plan.steps.map((s) => ({ detail: s.detail, label: s.label, key: s.key })) as typeof plan.steps,
+      displayName: plan.displayName,
+      upn: plan.upn,
+    };
+    expect(planFingerprint(reordered)).toBe(planFingerprint(plan));
+  });
+
+  it('ignores blocker ORDER — a set of reasons, not a sequence', () => {
+    const withBlockers = planRun({ ...base, baselineSkus: [], answers: { ...answers, legal_last_name: '' } });
+    expect(withBlockers.blockers.length).toBeGreaterThan(1);
+    expect(planFingerprint({ ...withBlockers, blockers: [...withBlockers.blockers].reverse() }))
+      .toBe(planFingerprint(withBlockers));
+  });
+
+  // Each of these is a real edit that could land on tickets.custom_fields, the sensitive store
+  // or the tenant between the admin reading a preview and clicking Provision. Every one changes
+  // what would be WRITTEN to a live federal directory, so every one must break the binding.
+  it('changes when the identity changes', () => {
+    const other = planRun({ ...base, answers: { ...answers, legal_last_name: 'Byron' } });
+    expect(planFingerprint(other)).not.toBe(planFingerprint(plan));
+  });
+
+  it('changes when the group list changes', () => {
+    const other = planRun({ ...base, answers: { ...answers, security_groups: 'All Staff, Finance' } });
+    expect(planFingerprint(other)).not.toBe(planFingerprint(plan));
+  });
+
+  it('changes when the Cloud PC policy changes', () => {
+    const other = planRun({
+      ...base,
+      answers: { ...answers, cloud_pc_policy: '' },
+    });
+    expect(planFingerprint(other)).not.toBe(planFingerprint(plan));
+  });
+
+  it('changes when the licence baseline changes', () => {
+    const other = planRun({ ...base, baselineSkus: ['SPE_E3_USGOV_GCCHIGH'] });
+    expect(planFingerprint(other)).not.toBe(planFingerprint(plan));
+  });
+
+  it('changes when the supervisor who receives the credential changes', () => {
+    const other = planRun({ ...base, answers: { ...answers, supervisor: 'sup-2' } });
+    expect(planFingerprint(other)).not.toBe(planFingerprint(plan));
+  });
+
+  it('changes when resolved group IDS change even though the NAMES did not', () => {
+    // What applyGroupResolution writes onto the plan. A group deleted and recreated under the
+    // same name is a different directory object, and a different thing to be added to.
+    const resolved = (id: string) => ({
+      ...plan,
+      steps: plan.steps.map((s) =>
+        s.key === 'add_groups' ? { ...s, detail: { ...s.detail, groupIds: [id] } } : s),
+    });
+    expect(planFingerprint(resolved('g-1'))).not.toBe(planFingerprint(resolved('g-2')));
+  });
+
+  it('changes when a blocker appears', () => {
+    const blocked = planRun({ ...base, existingUser: { id: 'u', userPrincipalName: plan.upn }, existingRoleCount: 1 });
+    expect(planFingerprint(blocked)).not.toBe(planFingerprint(plan));
+  });
+
+  it('changes when the steps are reordered — licences before the Cloud PC group is material', () => {
+    expect(planFingerprint({ ...plan, steps: [...plan.steps].reverse() })).not.toBe(planFingerprint(plan));
   });
 });
