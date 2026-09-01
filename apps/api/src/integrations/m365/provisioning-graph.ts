@@ -119,3 +119,43 @@ export async function getCloudPcStatus(g: GraphClient, upn: string): Promise<str
   const res = await g.get(`/deviceManagement/virtualEndpoint/cloudPCs?$filter=${encodeURIComponent(filter)}`);
   return res?.value?.[0]?.status ?? null;
 }
+
+export interface DirectoryGroup { id: string; displayName: string }
+
+/** Pure. Reduces a `/groups` payload to id/displayName pairs, dropping any entry missing
+ *  either half — a group with no id cannot be joined and one with no name cannot be matched
+ *  against the request form's free-text group list, so neither belongs in the lookup table. */
+export function normalizeGroups(res: any): DirectoryGroup[] {
+  return (res?.value ?? [])
+    .filter((g: any) => typeof g?.id === 'string' && typeof g?.displayName === 'string')
+    .map((g: any) => ({ id: g.id, displayName: g.displayName }));
+}
+
+/**
+ * Looks up directory groups BY NAME, server-side, rather than enumerating every group in the
+ * tenant and filtering locally: `/groups` pages at 100-999 rows, so a "list them all" approach
+ * silently truncates in a large tenant and would report a perfectly real group as missing.
+ * Filtering by the handful of names the request actually asked for has no pagination to get
+ * wrong. Names are chunked because an OData `$filter` is a URL, and a URL has a length limit.
+ *
+ * Graph compares directory string properties case-insensitively, and the caller matches
+ * case-insensitively again over the result, so the admin's capitalization does not matter.
+ * Names that match nothing simply do not come back — the caller turns that into a blocker.
+ */
+export async function listGroupsByDisplayName(
+  g: GraphClient,
+  names: string[],
+  chunkSize = 15,
+): Promise<DirectoryGroup[]> {
+  const wanted = [...new Set(names.map((n) => n.trim()).filter(Boolean))];
+  const out: DirectoryGroup[] = [];
+  for (let i = 0; i < wanted.length; i += chunkSize) {
+    const filter = wanted
+      .slice(i, i + chunkSize)
+      .map((n) => `displayName eq ${odataStringLiteral(n)}`)
+      .join(' or ');
+    const res = await g.get(`/groups?$filter=${encodeURIComponent(filter)}&$select=id,displayName`);
+    out.push(...normalizeGroups(res));
+  }
+  return out;
+}

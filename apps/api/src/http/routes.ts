@@ -36,6 +36,7 @@ import * as dashboards from '../modules/dashboards.js';
 import * as forms from '../modules/forms.js';
 import * as sensitiveFields from '../modules/sensitive-fields.js';
 import * as escalationPolicies from '../modules/escalation-policies.js';
+import * as provisioning from '../modules/provisioning/index.js';
 import { computeScore, grade } from '../modules/posture.js';
 import { audit, verifyChain, formatExport, type ExportableRow } from '../modules/audit.js';
 import { authorize, can } from '../authz/pdp.js';
@@ -577,6 +578,35 @@ export async function registerRoutes(app: FastifyInstance) {
     const p = await requirePrincipal(req);
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     return { data: await sensitiveFields.readSensitive(p, id) };
+  });
+
+  // ---------------- Entra account provisioning (onboarding fulfillment) ----------------
+  // preview and execute go through the SAME planning path in the service, so the dry run an
+  // admin approves here is provably the plan the execute call runs. Both refuse with a clear
+  // 400 when the feature is not enabled on this deployment.
+  app.post('/api/v1/tickets/:id/provisioning/preview', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return { data: await provisioning.preview(p, id) };
+  });
+
+  app.post('/api/v1/tickets/:id/provisioning/execute', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return { data: await provisioning.provision(p, id) };
+  });
+
+  app.get('/api/v1/tickets/:id/provisioning', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return { data: await provisioning.listRuns(p, id) };
+  });
+
+  // Options provider for the onboarding form's cloud_pc_policy field
+  // (form_fields.options_source = 'cloudpc_policies'). Empty list when provisioning is off.
+  app.get('/api/v1/provisioning/cloud-pc-policies', async (req) => {
+    const p = await requirePrincipal(req);
+    return { data: await provisioning.listCloudPcPolicies(p) };
   });
 
   app.get('/api/v1/attachments/:id', async (req, reply) => {

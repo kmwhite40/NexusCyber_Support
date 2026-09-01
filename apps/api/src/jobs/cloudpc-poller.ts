@@ -9,8 +9,7 @@
 // tick take down the interval, and is a no-op unless its feature flag is on.
 import { config } from '../config.js';
 import { withSystemContext } from '../db/pool.js';
-import { createTokenProvider } from '../integrations/m365/token.js';
-import { createGraphClient, type GraphClient } from '../integrations/m365/graph-client.js';
+import { getProvisioningGraph } from '../integrations/m365/provisioning-runtime.js';
 import { getCloudPcStatus } from '../integrations/m365/provisioning-graph.js';
 import { logger } from '../logger.js';
 
@@ -45,67 +44,6 @@ export function nextRunState(
   return { status: 'awaiting_cloudpc', error: null };
 }
 
-interface CloudEnv { login_authority: string; graph_endpoint: string }
-
-async function loadCloudEnv(sql: { query: (text: string, params?: unknown[]) => Promise<{ rows: any[] }> }, cloud: string): Promise<CloudEnv> {
-  const { rows } = await sql.query(
-    'SELECT login_authority, graph_endpoint FROM cloud_environments WHERE cloud = $1',
-    [cloud],
-  );
-  if (!rows[0]) throw new Error(`unknown cloud environment: ${cloud}`);
-  return rows[0] as CloudEnv;
-}
-
-let graphClientPromise: Promise<GraphClient> | null = null;
-
-/**
- * Builds (and memoizes) the Graph client used to check Cloud PC status, mirroring
- * ../integrations/m365/runtime.ts's buildGraphClient — same token-provider/client-builder
- * shape, but sourced from config.provisioning instead of config.m365, and reading the
- * cloud_environments row keyed by config.provisioning.cloud rather than a hardcoded host.
- *
- * The `/deviceManagement/virtualEndpoint/*` family (which includes the cloudPCs resource
- * getCloudPcStatus reads) requires the Graph `beta` API version per the comment on
- * readTenantState in ../integrations/m365/provisioning-graph.ts — but whether that holds for
- * GCC High specifically is an unverified open item in the spec, so the version is read from
- * config.provisioning.cloudPcApiVersion (M365_PROV_CLOUDPC_API_VERSION, default 'beta') rather
- * than hardcoded here, so a real answer from probing the tenant is a config change, not a
- * source edit.
- */
-async function buildProvisioningGraphClient(): Promise<GraphClient> {
-  const env = await withSystemContext((sql) => loadCloudEnv(sql, config.provisioning.cloud));
-  const tokenProvider = createTokenProvider({
-    loginAuthority: env.login_authority,
-    graphEndpoint: env.graph_endpoint,
-    tenantId: config.provisioning.tenantId,
-    clientId: config.provisioning.clientId,
-    clientSecret: config.provisioning.clientSecret,
-    fetchImpl: fetch as any,
-    now: () => Date.now(),
-  });
-  return createGraphClient({
-    graphEndpoint: env.graph_endpoint,
-    getToken: tokenProvider.getToken,
-    fetchImpl: fetch as any,
-    apiVersion: config.provisioning.cloudPcApiVersion,
-  });
-}
-
-function getProvisioningGraphClient(): Promise<GraphClient> {
-  if (!graphClientPromise) {
-    graphClientPromise = buildProvisioningGraphClient().catch((err) => {
-      graphClientPromise = null; // don't poison the runtime: allow a retry next tick
-      throw err;
-    });
-  }
-  return graphClientPromise;
-}
-
-/** Test seam: drop the memoized client so config/env changes take effect. */
-export function __resetCloudPcPollerRuntime(): void {
-  graphClientPromise = null;
-}
-
 /**
  * Looks up a run's Cloud PC status. Inert (returns null, no client, no tenant call) when the
  * feature is disabled or the run's plan carries no UPN. A transient Graph error (network,
@@ -117,8 +55,8 @@ export function __resetCloudPcPollerRuntime(): void {
 async function lookupCloudPcStatus(upn: string | undefined): Promise<string | null> {
   if (!config.provisioning.enabled || !upn) return null;
   try {
-    const graph = await getProvisioningGraphClient();
-    return await getCloudPcStatus(graph, upn);
+    const { cloudPc } = await getProvisioningGraph();
+    return await getCloudPcStatus(cloudPc, upn);
   } catch (err) {
     logger.warn({ err, upn }, 'cloud pc status lookup failed; leaving run parked');
     return null;

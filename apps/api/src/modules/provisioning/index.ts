@@ -1,0 +1,533 @@
+// Provisioning service layer: the one place the planner, the executor, Microsoft Graph and the
+// database meet.
+//
+// THE GUARANTEE THIS FILE EXISTS TO KEEP: `preview` and `provision` build their plan through
+// the SAME buildPlan() call. There is exactly one planning path, so the dry run an admin
+// approves is provably the plan that executes. Do not add a second way to construct a Plan —
+// not "a quick preview that skips the group lookup", not a cached plan replayed from the runs
+// table. If preview and provision could ever disagree, the admin's approval would be
+// meaningless and this whole design collapses.
+//
+// Layering: the planner is pure (no I/O), the executor is pure-with-injected-ops (no Graph
+// imports). All the I/O — DB reads, Graph reads, Graph writes, notification delivery — lives
+// here.
+import { withSystemContext, withOrgContext, type Sql } from '../../db/pool.js';
+import { orgContextFor } from '../../auth/principal.js';
+import { authorize } from '../../authz/pdp.js';
+import { audit } from '../audit.js';
+import { Errors } from '../../errors.js';
+import { config } from '../../config.js';
+import { logger } from '../../logger.js';
+import { readSensitiveForEngine } from '../sensitive-fields.js';
+import { getProvisioningGraph, type ProvisioningGraph } from '../../integrations/m365/provisioning-runtime.js';
+import { getNotificationAdapter } from '../../integrations/m365/runtime.js';
+import {
+  readTenantState,
+  findUserByUpn,
+  directoryRoleCount,
+  createUser,
+  assignLicenses,
+  userLicenseSkuIds,
+  addToGroup,
+  issueTap,
+  listGroupsByDisplayName,
+  normalizePolicies,
+  type DirectoryGroup,
+} from '../../integrations/m365/provisioning-graph.js';
+import { planRun, deriveUpn, type Plan } from './planner.js';
+import { executePlan, type ProvisioningOps, type StepOutcome } from './executor.js';
+import type { Principal } from '../../types.js';
+
+// ---------------------------------------------------------------------------
+// Pure decision functions (unit-tested directly in test/provisioning-service.test.ts)
+// ---------------------------------------------------------------------------
+
+/**
+ * Maps requested group NAMES to directory ids. Pure.
+ *
+ * Matching is case- and whitespace-insensitive because these names are free text typed on a
+ * request form, not picked from a list. A name that does not resolve is REPORTED, never
+ * dropped: silently skipping it would hand the new hire an account missing the access their
+ * supervisor asked for, with nothing anywhere saying so.
+ */
+export function resolveGroupIds(
+  names: string[],
+  directory: DirectoryGroup[],
+): { groupIds: string[]; missing: string[] } {
+  const byName = new Map(directory.map((g) => [g.displayName.trim().toLowerCase(), g.id]));
+  const groupIds: string[] = [];
+  const missing: string[] = [];
+  for (const n of names) {
+    const id = byName.get(n.trim().toLowerCase());
+    if (!id) { missing.push(n); continue; }
+    // The same group can be named twice (e.g. "All Staff" and "all staff" on one form).
+    // Adding a member twice is an error in Graph, so de-duplicate here rather than in the
+    // executor, which should only ever see a clean list.
+    if (!groupIds.includes(id)) groupIds.push(id);
+  }
+  return { groupIds, missing };
+}
+
+/**
+ * THE SEAM between the pure planner (Task 11) and the executor (Task 13). Pure.
+ *
+ * The planner cannot do I/O, so its `add_groups` step carries group *names*. The executor
+ * consumes group *ids* — and, as of its latest revision, throws outright if names are present
+ * with no ids, precisely so this step can never be skipped by accident. This function is the
+ * bridge: it writes `detail.groupIds`, and turns every unresolved name into a `group_missing`
+ * blocker (which the executor then refuses to run at all).
+ *
+ * Returns a NEW plan rather than mutating the input: a Plan is the record of what an admin
+ * approved, and something that has been handed out should not change under the holder.
+ */
+export function applyGroupResolution(plan: Plan, directory: DirectoryGroup[]): Plan {
+  const groupStep = plan.steps.find((s) => s.key === 'add_groups');
+  if (!groupStep) return plan;
+  const names = Array.isArray(groupStep.detail.groups)
+    ? (groupStep.detail.groups as unknown[]).map(String)
+    : [];
+  const { groupIds, missing } = resolveGroupIds(names, directory);
+  return {
+    ...plan,
+    steps: plan.steps.map((s) =>
+      s === groupStep ? { ...s, detail: { ...s.detail, groupIds } } : s,
+    ),
+    blockers: [
+      ...plan.blockers,
+      ...missing.map((name) => ({
+        code: 'group_missing',
+        message: `Group "${name}" was not found in the directory.`,
+      })),
+    ],
+  };
+}
+
+/** Group names the plan asks for, or [] when it has no group step. Pure. */
+function requestedGroupNames(plan: Plan): string[] {
+  const step = plan.steps.find((s) => s.key === 'add_groups');
+  if (!step || !Array.isArray(step.detail.groups)) return [];
+  return (step.detail.groups as unknown[]).map(String);
+}
+
+// ---------------------------------------------------------------------------
+// The single planning path
+// ---------------------------------------------------------------------------
+
+interface TicketRow { id: string; organization_id: string; custom_fields: Record<string, unknown> | null }
+
+function requireEnabled(): void {
+  // A clear, typed refusal — not a Graph auth crash or an "unknown cloud environment" 500 —
+  // is what "the feature stays dark" has to look like from the outside.
+  if (!config.provisioning.enabled) {
+    throw Errors.badRequest('provisioning is not enabled on this deployment');
+  }
+}
+
+async function loadTicket(ticketId: string): Promise<TicketRow> {
+  const ticket = await withSystemContext(async (sql) => {
+    const { rows } = await sql.query(
+      'SELECT id, organization_id, custom_fields FROM tickets WHERE id = $1',
+      [ticketId],
+    );
+    return rows[0] as TicketRow | undefined;
+  });
+  if (!ticket) throw Errors.notFound('ticket not found');
+  return ticket;
+}
+
+/**
+ * Builds the plan for a ticket. THE ONLY planning path — see the file header.
+ *
+ * Reads the ticket in system context (the PII half of the answers lives outside
+ * tickets.custom_fields and is deliberately unreadable through a normal ticket read), then
+ * enforces the caller's permission against the ticket's own organization before any Graph
+ * traffic. Everything the planner needs is gathered here and handed in; the planner itself
+ * stays pure.
+ */
+async function buildPlan(actor: Principal, ticketId: string): Promise<{ plan: Plan; ticket: TicketRow }> {
+  requireEnabled();
+  const ticket = await loadTicket(ticketId);
+  authorize(actor, 'provisioning.execute', { organizationId: ticket.organization_id });
+
+  // PII lives outside custom_fields; the engine reads it in system context. The sensitive bag
+  // wins on a key collision — it is the authoritative store for any field marked sensitive.
+  const answers = { ...(ticket.custom_fields ?? {}), ...(await readSensitiveForEngine(ticketId)) };
+
+  const g = await getProvisioningGraph();
+  const tenant = await readTenantState(g.graph, g.cloudPc);
+  const upn = deriveUpn(answers, config.provisioning.upnDomain);
+  const existingUser = await findUserByUpn(g.graph, upn);
+  const existingRoleCount = existingUser ? await directoryRoleCount(g.graph, existingUser.id) : 0;
+
+  const planned = planRun({
+    answers,
+    tenant,
+    upnDomain: config.provisioning.upnDomain,
+    baselineSkus: config.provisioning.baselineSkus,
+    existingUser,
+    existingRoleCount,
+  });
+
+  // Resolve group names -> ids. Only the names this plan actually asks for are looked up, so
+  // the size of the tenant's directory is irrelevant and there is no pagination to truncate.
+  const names = requestedGroupNames(planned);
+  const directory = names.length ? await listGroupsByDisplayName(g.graph, names) : [];
+  return { plan: applyGroupResolution(planned, directory), ticket };
+}
+
+/** Dry run. Same plan, same blockers, same group resolution as provision() — by construction. */
+export async function preview(actor: Principal, ticketId: string): Promise<Plan> {
+  const { plan } = await buildPlan(actor, ticketId);
+  return plan;
+}
+
+// ---------------------------------------------------------------------------
+// Graph + notification ops for the executor
+// ---------------------------------------------------------------------------
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Hands the Temporary Access Pass to the supervisor's WORK mailbox — the address Nexus holds
+ * for them as a user of this platform — and never to the personal email address captured on
+ * the onboarding form, which is PII about the *new hire* and not a credential channel.
+ *
+ * TAP containment rules observed here:
+ *  - the pass is placed in the message body and nowhere else; it is never logged (both mail
+ *    adapters log only `to` and `subject`), never written to notification_deliveries (which
+ *    stores no body), never returned to the caller;
+ *  - errors thrown from here carry no message content, so the pass cannot ride out on one
+ *    (the executor also redacts by literal value as a second layer).
+ */
+async function deliverTapToSupervisor(
+  organizationId: string,
+  supervisorId: string,
+  upn: string,
+  pass: string,
+): Promise<void> {
+  if (!supervisorId) {
+    throw new Error('no supervisor on the request; the Temporary Access Pass has nowhere to go');
+  }
+  if (!UUID_RE.test(supervisorId)) {
+    // The form's supervisor field is a user picker, so this is a malformed request rather than
+    // a missing user — say so instead of letting Postgres raise a uuid cast error.
+    throw new Error('supervisor on the request is not a valid Nexus user reference');
+  }
+  const supervisor = await withSystemContext(async (sql) => {
+    const { rows } = await sql.query(
+      'SELECT email, display_name, status FROM users WHERE id = $1',
+      [supervisorId],
+    );
+    return rows[0] as { email: string; display_name: string | null; status: string } | undefined;
+  });
+  if (!supervisor?.email) {
+    throw new Error('supervisor has no Nexus work mailbox on file; cannot deliver the Temporary Access Pass');
+  }
+
+  const adapter = await getNotificationAdapter();
+  // The console adapter reports `sent` without sending anything — that is correct for ordinary
+  // notifications in dev, and completely wrong here: a TAP has already been minted against a
+  // live tenant by this point, and reporting a run as succeeded while the pass went nowhere
+  // would leave an account nobody can sign into and no record of why. Fail the step instead;
+  // the admin re-runs, which issues a fresh pass.
+  if (adapter.name !== 'graph' || !adapter.capabilities().email) {
+    throw new Error(
+      'no real email transport is configured (M365 mail is not enabled), so the Temporary Access Pass could not be delivered',
+    );
+  }
+
+  const subject = `Temporary Access Pass for ${upn}`;
+  const text = [
+    `A Temporary Access Pass has been issued for the new account ${upn}.`,
+    '',
+    `Pass: ${pass}`,
+    '',
+    'It is single-use and expires in 8 hours. Give it to the new user in person or by phone —',
+    'do not forward this email. They will be asked to set up their own sign-in method with it.',
+  ].join('\n');
+  const html = `<p>A Temporary Access Pass has been issued for the new account <b>${escapeHtml(upn)}</b>.</p>`
+    + `<p><b>Pass:</b> <code>${escapeHtml(pass)}</code></p>`
+    + '<p>It is single-use and expires in 8 hours. Give it to the new user in person or by phone —'
+    + ' do not forward this email. They will be asked to set up their own sign-in method with it.</p>';
+
+  const result = await adapter.sendEmail({ to: supervisor.email, subject, html, text });
+
+  // Same delivery ledger every other notification lands in — recipient and status only, so the
+  // compliance record shows the pass was handed over without recording the pass itself.
+  await withSystemContext(async (sql) => {
+    await sql.query(
+      `INSERT INTO notification_deliveries
+         (organization_id, event_type, channel, recipient, status, provider_message_id)
+       VALUES ($1,'provisioning.tap_delivered','email',$2,$3,$4)`,
+      [organizationId, supervisor.email, result.status, result.providerMessageId ?? null],
+    );
+  });
+
+  if (result.status !== 'sent') {
+    // Deliberately does NOT interpolate result.error: an adapter's error text is arbitrary
+    // provider output, and this string ends up in a step row and a ticket note.
+    throw new Error('sending the Temporary Access Pass to the supervisor failed');
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/** Wires the Task 10 Graph adapter (and the mail path) into the executor's injected ops. */
+function buildOps(g: ProvisioningGraph, organizationId: string): ProvisioningOps {
+  return {
+    findUser: (upn) => findUserByUpn(g.graph, upn),
+    createUser: (body) => createUser(g.graph, body) as Promise<{ id: string }>,
+    currentLicenses: (userId) => userLicenseSkuIds(g.graph, userId),
+    assignLicenses: (userId, skuIds) => assignLicenses(g.graph, userId, skuIds),
+    // The graph endpoint comes from the same cloud_environments row the client was built from,
+    // so the @odata.id host always matches the host we are authenticated against.
+    addToGroup: (groupId, userId) => addToGroup(g.graph, groupId, userId, g.graphEndpoint),
+    issueTap: async (userId) => {
+      // Closes the residual risk parked earlier: if the TAP request fails AFTER Graph has
+      // minted a pass server-side, the executor holds no value to redact with. So this adapter
+      // never lets the Graph response anywhere near an error message — a failure here is
+      // reported as status only, and the response object itself is reduced to the one field the
+      // executor needs before it is returned. Nothing else from that payload leaves this scope.
+      let res: any;
+      try {
+        res = await issueTap(g.graph, userId);
+      } catch (err) {
+        const status = (err as { status?: number })?.status;
+        throw new Error(`issuing the Temporary Access Pass failed${status ? ` (Graph ${status})` : ''}`);
+      }
+      const pass = typeof res?.temporaryAccessPass === 'string' ? res.temporaryAccessPass : '';
+      if (!pass) throw new Error('Graph did not return a Temporary Access Pass');
+      return { temporaryAccessPass: pass };
+    },
+    deliverTap: (supervisorId, upn, pass) =>
+      deliverTapToSupervisor(organizationId, supervisorId, upn, pass),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Execution
+// ---------------------------------------------------------------------------
+
+async function recordRun(
+  plan: Plan,
+  ticket: TicketRow,
+  actorId: string,
+): Promise<string> {
+  return withSystemContext(async (sql) => {
+    // Conditional insert, not check-then-insert: a double-clicked "Provision" button would
+    // otherwise start two runs against the same identity — two TAPs, two licence assignments,
+    // duplicate group adds. Retrying a FINISHED run is expected and still allowed (history is
+    // never overwritten); only a run still in flight blocks a new one. Two truly simultaneous
+    // requests can still both see no in-flight row under read-committed — closing that fully
+    // needs a partial unique index, which is a schema change beyond this task; the executor's
+    // steps are individually idempotent, which bounds the damage in that narrow window.
+    const { rows } = await sql.query(
+      `INSERT INTO provisioning_runs (ticket_id, organization_id, status, plan, started_by, started_at)
+       SELECT $1,$2,'running',$3::jsonb,$4, now()
+        WHERE NOT EXISTS (
+          SELECT 1 FROM provisioning_runs WHERE ticket_id = $1 AND status = 'running'
+        )
+       RETURNING id`,
+      [ticket.id, ticket.organization_id, JSON.stringify(plan), actorId],
+    );
+    if (!rows[0]) throw Errors.conflict('a provisioning run is already in progress for this ticket');
+    const runId: string = rows[0].id;
+    for (const [i, step] of plan.steps.entries()) {
+      // organization_id is denormalized onto the step: RLS is not inherited through the
+      // foreign key to the run, so the column is NOT NULL and must be supplied here.
+      await sql.query(
+        `INSERT INTO provisioning_steps (run_id, organization_id, step_key, position)
+         VALUES ($1,$2,$3,$4)`,
+        [runId, ticket.organization_id, step.key, i],
+      );
+    }
+    return runId;
+  });
+}
+
+async function recordOutcomes(
+  runId: string,
+  outcomes: StepOutcome[],
+  status: 'succeeded' | 'failed' | 'awaiting_cloudpc',
+): Promise<void> {
+  await withSystemContext(async (sql) => {
+    for (const o of outcomes) {
+      await sql.query(
+        `UPDATE provisioning_steps
+            SET status = $3, graph_object_id = $4, error = $5,
+                attempts = attempts + 1,
+                started_at = COALESCE(started_at, now()),
+                finished_at = now()
+          WHERE run_id = $1 AND step_key = $2`,
+        [runId, o.key, o.status, o.graphObjectId ?? null, o.error ?? null],
+      );
+    }
+    if (status === 'failed') {
+      // The executor stops at the first failure, so later steps were never attempted. Leaving
+      // them 'pending' would read as "still running" forever; 'skipped' says what happened.
+      await sql.query(
+        `UPDATE provisioning_steps SET status = 'skipped' WHERE run_id = $1 AND status = 'pending'`,
+        [runId],
+      );
+    }
+    await sql.query(
+      `UPDATE provisioning_runs
+          SET status = $2, error = $3,
+              finished_at = CASE WHEN $2 = 'awaiting_cloudpc' THEN NULL ELSE now() END
+        WHERE id = $1`,
+      [runId, status, outcomes.find((o) => o.error)?.error ?? null],
+    );
+  });
+}
+
+/**
+ * Notes the run's outcome on the ticket as an internal comment — the same shape the Cloud PC
+ * poller uses when it later finishes the run, so the ticket reads as one continuous story.
+ * Best-effort: the run has already been recorded by the time this is called, and failing to
+ * write a note must not turn a completed run into an error.
+ */
+async function noteRunOutcome(
+  ticket: TicketRow,
+  actorId: string,
+  status: string,
+  outcomes: StepOutcome[],
+): Promise<void> {
+  const body = `Provisioning run ${status}: ${outcomes.map((o) => `${o.key}=${o.status}`).join(', ')}`;
+  try {
+    await withSystemContext(async (sql) => {
+      await sql.query(
+        `INSERT INTO ticket_comments (organization_id, ticket_id, author_id, visibility, body)
+         VALUES ($1,$2,$3,'internal',$4)`,
+        [ticket.organization_id, ticket.id, actorId, body],
+      );
+    });
+  } catch (err) {
+    logger.warn({ err, ticketId: ticket.id }, 'failed to write provisioning outcome note');
+  }
+}
+
+/**
+ * Executes the plan. Builds it through the SAME buildPlan() as preview(), so what runs is what
+ * was previewed. A plan carrying blockers is refused here (and again, independently, inside
+ * executePlan) before any tenant write happens.
+ */
+export async function provision(
+  actor: Principal,
+  ticketId: string,
+): Promise<{ runId: string; status: string; outcomes: StepOutcome[] }> {
+  const { plan, ticket } = await buildPlan(actor, ticketId);
+  if (plan.blockers.length) {
+    throw Errors.badRequest(
+      `plan has ${plan.blockers.length} blocker(s): ${plan.blockers.map((b) => b.message).join(' ')}`,
+    );
+  }
+
+  const g = await getProvisioningGraph();
+  const runId = await recordRun(plan, ticket, actor.id);
+
+  let outcomes: StepOutcome[] = [];
+  let status: 'succeeded' | 'failed' | 'awaiting_cloudpc' = 'failed';
+  try {
+    ({ outcomes, status } = await executePlan(plan, buildOps(g, ticket.organization_id)));
+  } catch (err) {
+    // executePlan only throws for a refused plan (blockers) — but if it ever throws for any
+    // other reason, the run row must not be left claiming 'running' forever.
+    outcomes = [];
+    status = 'failed';
+    await recordOutcomes(runId, outcomes, status);
+    await withSystemContext(async (sql) => {
+      await sql.query('UPDATE provisioning_runs SET error = $2 WHERE id = $1', [
+        runId,
+        err instanceof Error ? err.message : String(err),
+      ]);
+    });
+    throw err;
+  }
+
+  await recordOutcomes(runId, outcomes, status);
+  await noteRunOutcome(ticket, actor.id, status, outcomes);
+
+  // Org-scoped like every other audited action here: an org-NULL row would orphan the record
+  // of a directory write. `detail` carries the step verdicts and the UPN — never the TAP, never
+  // the generated password, never any answer from the sensitive bag.
+  await audit(actor, {
+    action: 'provisioning.executed',
+    organizationId: ticket.organization_id,
+    resourceType: 'ticket',
+    resourceId: ticketId,
+    detail: {
+      runId,
+      status,
+      upn: plan.upn,
+      steps: outcomes.map((o) => ({ key: o.key, status: o.status })),
+    },
+  });
+
+  return { runId, status, outcomes };
+}
+
+// ---------------------------------------------------------------------------
+// Reads
+// ---------------------------------------------------------------------------
+
+async function ticketOrgFor(sql: Sql, ticketId: string): Promise<string> {
+  const { rows } = await sql.query('SELECT organization_id FROM tickets WHERE id = $1', [ticketId]);
+  if (!rows[0]) throw Errors.notFound('ticket not found');
+  return rows[0].organization_id as string;
+}
+
+/**
+ * Run history for a ticket, newest first, each with its steps in plan order.
+ *
+ * Caller-scoped (RLS applies) rather than system context: this is a user-facing read, and the
+ * runs table doubles as the compliance record of what was done to the directory. Deliberately
+ * NOT gated on config.provisioning.enabled — turning the feature off must not erase the
+ * history of what it did while it was on. With no runs, it simply returns [].
+ */
+export async function listRuns(actor: Principal, ticketId: string) {
+  return withOrgContext(orgContextFor(actor), async (sql) => {
+    const organizationId = await ticketOrgFor(sql, ticketId);
+    authorize(actor, 'provisioning.execute', { organizationId });
+    const { rows: runs } = await sql.query(
+      `SELECT id, ticket_id, organization_id, status, plan, started_by, started_at, finished_at, error, created_at
+         FROM provisioning_runs WHERE ticket_id = $1 ORDER BY created_at DESC`,
+      [ticketId],
+    );
+    if (runs.length === 0) return [];
+    const { rows: steps } = await sql.query(
+      `SELECT run_id, step_key, position, status, graph_object_id, error, attempts, started_at, finished_at
+         FROM provisioning_steps WHERE run_id = ANY($1::uuid[]) ORDER BY position`,
+      [runs.map((r: { id: string }) => r.id)],
+    );
+    return runs.map((r: { id: string }) => ({
+      ...r,
+      steps: steps.filter((s: { run_id: string }) => s.run_id === r.id),
+    }));
+  });
+}
+
+/**
+ * Cloud PC provisioning policy names, for the `cloud_pc_policy` picker on the onboarding form
+ * (form_fields.options_source = 'cloudpc_policies').
+ *
+ * Gated on `ticket.create` — the same permission that opens the form these options belong to —
+ * rather than on `provisioning.execute`, which only SuperAdmin/ServiceDeskManager hold; gating
+ * an option list on the execute permission would leave the picker empty for exactly the people
+ * who fill the form in.
+ *
+ * Returns [] when provisioning is disabled instead of raising: this is an options provider, and
+ * with no tenant to enumerate the honest answer is "no dynamic options" — the field then falls
+ * back to its static list. The action routes (preview/execute) refuse loudly instead.
+ */
+export async function listCloudPcPolicies(actor: Principal): Promise<string[]> {
+  authorize(actor, 'ticket.create');
+  if (!config.provisioning.enabled) return [];
+  const g = await getProvisioningGraph();
+  const res = await g.cloudPc.get(
+    '/deviceManagement/virtualEndpoint/provisioningPolicies?$select=id,displayName',
+  );
+  return normalizePolicies(res).map((p) => p.displayName).filter(Boolean);
+}
