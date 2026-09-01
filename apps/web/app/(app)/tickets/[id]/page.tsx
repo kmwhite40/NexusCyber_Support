@@ -8,6 +8,7 @@ import { ArrowLeft, Check, Minus, Star } from 'lucide-react';
 import { Skeleton } from '@/components/ui/data';
 import { PriorityBadge, StatusBadge, SlaBadge } from '@/components/ui/badges';
 import { TicketAttachments } from '@/components/ticket-attachments';
+import { ProvisioningPanel } from '@/components/provisioning-panel';
 
 export default function TicketDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -113,6 +114,10 @@ export default function TicketDetailPage() {
   const tasks = ticket.tasks ?? [];
   const pendingApproval = ticket.approvals?.find((a) => a.status === 'requested');
   const canApprove = can('customer.admin.manage_users') || can('ticket.assign');
+  // Provisioning writes to a live directory, so it only ever appears once this ticket's
+  // approvals have actually passed — no approvals at all (not every ticket needs one) counts
+  // as passed, but anything still requested or ever rejected does not.
+  const approvalsPassed = !ticket.approvals?.length || ticket.approvals.every((a) => a.status === 'approved');
   const nextStates: Record<string, string[]> = {
     new: ['assigned'], triage: ['assigned', 'in_progress'], assigned: ['in_progress'],
     in_progress: ['waiting_customer', 'resolved'], waiting_customer: ['in_progress', 'resolved'],
@@ -182,6 +187,8 @@ export default function TicketDetailPage() {
           </CardBody>
         </Card>
       )}
+
+      {approvalsPassed && <ProvisioningPanel ticketId={id} canProvision={can('provisioning.execute')} />}
 
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Conversation */}
