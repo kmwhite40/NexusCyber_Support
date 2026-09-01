@@ -38,6 +38,45 @@ export function piiPurgeTombstones(
   return [...byTicket.values()];
 }
 
+/**
+ * Writes one tombstone per purged ticket, GUARDED PER RECORD.
+ *
+ * The PII is already destroyed by the time this runs — the purge transaction has committed, and
+ * audit() deliberately runs outside it on its own connection around the chain's advisory lock.
+ * That makes the loop's failure mode asymmetric: an unguarded `throw` on record k abandoned
+ * records k+1..n, whose PII was destroyed just as permanently but which then had no record that
+ * it ever existed. The audit log is the ONLY evidence left, so one failure must cost one
+ * tombstone, not the rest of the sweep.
+ *
+ * `auditFn` is injectable purely so this can be tested with a failing writer; production passes
+ * the real audit().
+ */
+export async function writeTombstones(
+  tombstones: Array<{ organizationId: string; ticketId: string; values: number }>,
+  auditFn: typeof audit = audit,
+): Promise<{ written: number; failed: number }> {
+  let written = 0;
+  let failed = 0;
+  for (const t of tombstones) {
+    try {
+      await auditFn(null, {
+        action: 'pii.purged',
+        organizationId: t.organizationId,
+        resourceType: 'ticket',
+        resourceId: t.ticketId,
+        detail: { values_destroyed: t.values, reason: 'ticket reached a terminal status' },
+      });
+      written += 1;
+    } catch (err) {
+      failed += 1;
+      // No key, no value, no count of anything but the failure: this log line is about a
+      // missing audit row, not about the PII that was destroyed.
+      logger.error({ err, ticketId: t.ticketId }, 'failed to write PII destruction tombstone');
+    }
+  }
+  return { written, failed };
+}
+
 export function startRetentionPurge(intervalMs = DAY_MS): NodeJS.Timeout {
   const days = config.retention.days;
 
@@ -90,15 +129,7 @@ export function startRetentionPurge(intervalMs = DAY_MS): NodeJS.Timeout {
       // Tombstones are written AFTER the purge transaction commits — the audit row must
       // attest to a destruction that actually happened, and audit() runs its own
       // transaction (on its own connection) around the chain's advisory lock.
-      for (const t of purgedPii) {
-        await audit(null, {
-          action: 'pii.purged',
-          organizationId: t.organizationId,
-          resourceType: 'ticket',
-          resourceId: t.ticketId,
-          detail: { values_destroyed: t.values, reason: 'ticket reached a terminal status' },
-        });
-      }
+      await writeTombstones(purgedPii);
     } catch (err) {
       logger.error({ err }, 'retention purge tick failed');
     }
