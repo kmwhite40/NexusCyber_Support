@@ -149,6 +149,19 @@ function defaultRows(over: { runInsert?: any[]; supervisorStatus?: string } = {}
 
 const find = (re: RegExp) => h.queries.filter((q) => re.test(q.text));
 
+/** The partial unique index added in migration 0057. */
+const IN_FLIGHT_INDEX = 'provisioning_runs_one_inflight_per_ticket';
+
+/** A pg driver error, in the shape node-postgres actually throws. */
+function pgError(code: string, constraint?: string) {
+  const e: any = new Error(
+    `duplicate key value violates unique constraint "${constraint ?? 'unnamed'}"`,
+  );
+  e.code = code;
+  if (constraint) e.constraint = constraint;
+  return e;
+}
+
 let g: ReturnType<typeof graphDouble>;
 
 beforeEach(() => {
@@ -291,6 +304,48 @@ describe('the in-flight run guard', () => {
     expect(find(/INSERT INTO provisioning_steps/)).toHaveLength(0);
     expect(g.graph.post).not.toHaveBeenCalled();
     expect(h.audit).not.toHaveBeenCalled();
+  });
+
+  // The second layer (migration 0057). Under READ COMMITTED both racers can pass the NOT EXISTS
+  // check above, so the loser hits the partial unique index instead and gets a raw 23505. That
+  // must look EXACTLY like the guard's clean 409 from outside — and must still start nothing,
+  // because the alternative is a second Temporary Access Pass on a brand-new identity.
+  it('translates the unique-violation race into the same 409 as the guard', async () => {
+    h.setDbRows(defaultRows({ runInsert: [] }));
+    const fromGuard: any = await provisioning.provision(actor, TICKET).catch((e) => e);
+
+    h.queries.length = 0;
+    g.graph.post.mockClear();
+    h.audit.mockClear();
+    h.setDbRows((text, params) => {
+      if (/INSERT INTO provisioning_runs/.test(text)) throw pgError('23505', IN_FLIGHT_INDEX);
+      return defaultRows()(text, params);
+    });
+    const fromIndex: any = await provisioning.provision(actor, TICKET).catch((e) => e);
+
+    expect(fromIndex.status).toBe(409);
+    expect(fromIndex.status).toBe(fromGuard.status);
+    expect(fromIndex.detail).toBe(fromGuard.detail);      // indistinguishable to the caller
+    expect(fromIndex.message).not.toMatch(/duplicate key/); // no raw database error escapes
+    expect(find(/INSERT INTO provisioning_steps/)).toHaveLength(0);
+    expect(g.graph.post).not.toHaveBeenCalled();
+    expect(h.audit).not.toHaveBeenCalled();
+  });
+
+  it('does not mistake an unrelated unique violation for a run already in progress', async () => {
+    h.setDbRows((text, params) => {
+      if (/INSERT INTO provisioning_runs/.test(text)) throw pgError('23505', 'some_other_unique_index');
+      return defaultRows()(text, params);
+    });
+    await expect(provisioning.provision(actor, TICKET)).rejects.toThrow(/duplicate key/);
+  });
+
+  it('does not swallow a non-unique-violation database error', async () => {
+    h.setDbRows((text, params) => {
+      if (/INSERT INTO provisioning_runs/.test(text)) throw pgError('23502'); // not_null_violation
+      return defaultRows()(text, params);
+    });
+    await expect(provisioning.provision(actor, TICKET)).rejects.toThrow(/duplicate key/);
   });
 });
 

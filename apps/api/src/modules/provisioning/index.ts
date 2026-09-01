@@ -333,28 +333,61 @@ function buildOps(g: ProvisioningGraph, organizationId: string): ProvisioningOps
 // Execution
 // ---------------------------------------------------------------------------
 
+/** The partial unique index from migration 0057 — at most one in-flight run per ticket. */
+const IN_FLIGHT_UNIQUE_INDEX = 'provisioning_runs_one_inflight_per_ticket';
+
+/**
+ * Is this the loser of a concurrent-provision race, rather than some other constraint failure?
+ *
+ * Matched on SQLSTATE 23505 (unique_violation) AND the specific index name, not on 23505 alone:
+ * a different unique violation from that INSERT would mean something genuinely unexpected, and
+ * reporting it as "a run is already in progress" would send an admin chasing the wrong thing.
+ * pg surfaces `constraint` for a named index; the message check is a fallback for drivers or
+ * wrappers that do not populate it.
+ */
+function isInFlightUniqueViolation(err: unknown): boolean {
+  const e = err as { code?: string; constraint?: string; message?: string } | null;
+  if (e?.code !== '23505') return false;
+  return e.constraint === IN_FLIGHT_UNIQUE_INDEX || Boolean(e.message?.includes(IN_FLIGHT_UNIQUE_INDEX));
+}
+
 async function recordRun(
   plan: Plan,
   ticket: TicketRow,
   actorId: string,
 ): Promise<string> {
   return withSystemContext(async (sql) => {
-    // Conditional insert, not check-then-insert: a double-clicked "Provision" button would
-    // otherwise start two runs against the same identity — two TAPs, two licence assignments,
-    // duplicate group adds. Retrying a FINISHED run is expected and still allowed (history is
-    // never overwritten); only a run still in flight blocks a new one. Two truly simultaneous
-    // requests can still both see no in-flight row under read-committed — closing that fully
-    // needs a partial unique index, which is a schema change beyond this task; the executor's
-    // steps are individually idempotent, which bounds the damage in that narrow window.
-    const { rows } = await sql.query(
-      `INSERT INTO provisioning_runs (ticket_id, organization_id, status, plan, started_by, started_at)
-       SELECT $1,$2,'running',$3::jsonb,$4, now()
-        WHERE NOT EXISTS (
-          SELECT 1 FROM provisioning_runs WHERE ticket_id = $1 AND status = ANY($5)
-        )
-       RETURNING id`,
-      [ticket.id, ticket.organization_id, JSON.stringify(plan), actorId, [...IN_FLIGHT_RUN_STATUSES]],
-    );
+    // TWO layers, both required, neither redundant.
+    //
+    // Layer 1 (here): a conditional insert rather than check-then-insert. A double-clicked
+    // "Provision" button would otherwise start two runs against the same identity — two TAPs,
+    // two licence assignments, duplicate group adds. Retrying a FINISHED run is expected and
+    // still allowed (history is never overwritten); only a run still in flight blocks a new one.
+    // This is the fast, friendly path: it returns a clean 409 without raising a database error.
+    //
+    // Layer 2 (migration 0057): a partial unique index on (ticket_id) WHERE status is in flight.
+    // Under READ COMMITTED two truly concurrent requests can BOTH evaluate NOT EXISTS before
+    // either commits, so layer 1 alone is statistical, not structural. The index makes the
+    // second insert fail with a unique violation, which is translated below into exactly the
+    // same 409 — the two paths are indistinguishable to the caller, and no raw database error
+    // ever reaches the client.
+    let rows: any[];
+    try {
+      ({ rows } = await sql.query(
+        `INSERT INTO provisioning_runs (ticket_id, organization_id, status, plan, started_by, started_at)
+         SELECT $1,$2,'running',$3::jsonb,$4, now()
+          WHERE NOT EXISTS (
+            SELECT 1 FROM provisioning_runs WHERE ticket_id = $1 AND status = ANY($5)
+          )
+         RETURNING id`,
+        [ticket.id, ticket.organization_id, JSON.stringify(plan), actorId, [...IN_FLIGHT_RUN_STATUSES]],
+      ));
+    } catch (err) {
+      if (isInFlightUniqueViolation(err)) {
+        throw Errors.conflict('a provisioning run is already in progress for this ticket');
+      }
+      throw err;
+    }
     if (!rows[0]) throw Errors.conflict('a provisioning run is already in progress for this ticket');
     const runId: string = rows[0].id;
     for (const [i, step] of plan.steps.entries()) {
