@@ -29,11 +29,13 @@ export interface GraphClientOptions {
   fetchImpl: FetchWithHeaders | FetchLike;
   sleep?: (ms: number) => Promise<void>;
   maxRetries?: number;
+  apiVersion?: 'v1.0' | 'beta';
 }
 
 export interface GraphClient {
   get: (path: string) => Promise<any>;
   post: (path: string, body: unknown) => Promise<any>;
+  patch: (path: string, body: unknown) => Promise<any>;
 }
 
 const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -43,8 +45,9 @@ export function createGraphClient(opts: GraphClientOptions): GraphClient {
   const maxRetries = opts.maxRetries ?? 4;
   const fetchImpl = opts.fetchImpl as FetchWithHeaders;
 
-  async function request(method: 'GET' | 'POST', path: string, body?: unknown): Promise<any> {
-    const url = path.startsWith('http') ? path : `${opts.graphEndpoint}/v1.0${path}`;
+  async function request(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown): Promise<any> {
+    const version = opts.apiVersion ?? 'v1.0';
+    const url = path.startsWith('http') ? path : `${opts.graphEndpoint}/${version}${path}`;
     for (let attempt = 0; ; attempt++) {
       const token = await opts.getToken();
       const res = await fetchImpl(url, {
@@ -75,5 +78,6 @@ export function createGraphClient(opts: GraphClientOptions): GraphClient {
   return {
     get: (path) => request('GET', path),
     post: (path, body) => request('POST', path, body),
+    patch: (path, body) => request('PATCH', path, body),
   };
 }
