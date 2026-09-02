@@ -6,7 +6,7 @@
 // The public import paths are unchanged: `forms.ts` re-exports everything here.
 
 export type FieldType =
-  | 'text' | 'textarea' | 'number' | 'select' | 'checkbox' | 'date'
+  | 'text' | 'textarea' | 'number' | 'select' | 'checkbox' | 'date' | 'datetime'
   | 'user' | 'user_multi' | 'attachment'
   | 'email' | 'phone';
 

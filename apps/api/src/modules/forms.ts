@@ -21,6 +21,8 @@ export interface ValidationError {
 }
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+// Requires a zone designator (Z or +/-HH:MM): a local wall-clock time is ambiguous across an org.
+const ISO_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // Intentionally permissive about formatting (spaces, dashes, parens, dots, +), but requires at least one digit.
 const PHONE = /^(?=.*\d)[+()\-.\s\d]{7,}$/;
@@ -52,6 +54,14 @@ export function validateAgainstForm(fields: FormField[], answers: Record<string,
         break;
       case 'date':
         if (typeof v !== 'string' || !ISO_DATE.test(v)) errors.push({ field: f.key, message: `${f.label} must be a date (YYYY-MM-DD)` });
+        break;
+      case 'datetime':
+        // An INSTANT, not a date. Offboarding schedules a sign-in block for a moment HR named,
+        // and a bare YYYY-MM-DD cannot express "5pm Friday". A zone designator is required for
+        // the same reason: "17:00" without one means five different instants across the org.
+        if (typeof v !== 'string' || !ISO_DATETIME.test(v) || Number.isNaN(Date.parse(v))) {
+          errors.push({ field: f.key, message: `${f.label} must be a date and time with a timezone (e.g. 2026-09-05T17:00:00-04:00)` });
+        }
         break;
       case 'user':
         if (typeof v !== 'string') errors.push({ field: f.key, message: `${f.label} must be a user` });
