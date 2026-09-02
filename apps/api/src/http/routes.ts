@@ -646,7 +646,9 @@ export async function registerRoutes(app: FastifyInstance) {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     return {
       data: await offboarding.listRuns(p, id),
-      offboardingEnabled: provisioning.isEnabled(),
+      // The offboarding gate specifically — reporting provisioning's would tell the panel the
+      // feature is available when it is not.
+      offboardingEnabled: offboarding.isEnabled(),
     };
   });
 

@@ -107,6 +107,17 @@ export interface ProvisioningConfig {
    * integrations/m365/provisioning-graph.ts.
    */
   cloudPcApiVersion: 'v1.0' | 'beta';
+  /**
+   * Whether the OFFBOARDING half may run. An ADDITIONAL gate on top of `enabled`, never an
+   * independent one.
+   *
+   * Both flows need the same tenant credentials, so offboarding must be impossible without
+   * them. But a single shared flag also meant that switching on onboarding silently armed
+   * account teardown — sweeper included — in the same deploy. Nobody should have to accept the
+   * destructive half in order to get the constructive one, so this is ANDed with the full
+   * provisioning config rather than replacing it.
+   */
+  offboardingEnabled: boolean;
 }
 
 const bool = (v: string | undefined): boolean => v === 'true' || v === '1';
@@ -157,12 +168,15 @@ export function parseProvisioningConfig(env: NodeJS.ProcessEnv): ProvisioningCon
   // (verified-safe) default rather than passing it through.
   const cloudPcApiVersion: 'v1.0' | 'beta' =
     rawApiVersion === 'v1.0' || rawApiVersion === 'beta' ? rawApiVersion : 'beta';
+  // AND, deliberately: no tenant configuration means no teardown, whatever this flag says.
+  const offboardingEnabled = enabled && bool(env.M365_OFFBOARD_ENABLED);
   return {
     enabled, tenantId, clientId, clientSecret,
     cloud: (env.M365_PROV_CLOUD as M365Cloud) ?? 'gcchigh',
     upnDomain, baselineSkus,
     cloudPcPolicy: env.M365_PROV_CLOUDPC_POLICY ?? 'SBSFederal Cloud PC',
     cloudPcApiVersion,
+    offboardingEnabled,
   };
 }
 

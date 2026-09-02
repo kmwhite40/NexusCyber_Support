@@ -32,6 +32,7 @@ const h = vi.hoisted(() => {
     config: {
       provisioning: {
         enabled: true,
+        offboardingEnabled: true,
         tenantId: '55555555-5555-5555-5555-555555555555',
         clientId: 'c', clientSecret: 's', cloud: 'gcchigh' as const,
         upnDomain: 'sbsfederal.com',
@@ -99,6 +100,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   h.queries.length = 0;
   h.config.provisioning.enabled = true;
+  h.config.provisioning.offboardingEnabled = true;
   h.withSystemContext.mockImplementation(async (fn: any) => fn(h.sql));
   h.withOrgContext.mockImplementation(async (_ctx: any, fn: any) => fn(h.sql));
   h.getProvisioningGraph.mockImplementation(async () => graphDouble());
@@ -107,7 +109,7 @@ beforeEach(() => {
 });
 
 describe('(a) the feature stays dark when disabled', () => {
-  beforeEach(() => { h.config.provisioning.enabled = false; });
+  beforeEach(() => { h.config.provisioning.enabled = false; h.config.provisioning.offboardingEnabled = false; });
 
   it('refuses preview clearly, before ANY I/O', async () => {
     await expect(offboarding.preview(actor, TICKET)).rejects.toThrow(/not enabled/);
@@ -120,6 +122,22 @@ describe('(a) the feature stays dark when disabled', () => {
     await expect(offboarding.schedule(actor, TICKET, 'fp', '2099-01-01T00:00:00Z'))
       .rejects.toThrow(/not enabled/);
     expect(h.withSystemContext).not.toHaveBeenCalled();
+  });
+});
+
+// Enabling onboarding must NOT arm account teardown. Offboarding carries its own gate on top
+// of the shared tenant configuration, so the constructive half can be switched on alone.
+describe('(a2) offboarding has its own gate', () => {
+  it('refuses when provisioning is on but offboarding was not asked for', async () => {
+    h.config.provisioning.offboardingEnabled = false;
+    await expect(offboarding.preview(actor, TICKET)).rejects.toThrow(/offboarding is not enabled/i);
+    expect(h.getProvisioningGraph).not.toHaveBeenCalled();
+  });
+
+  it('refuses to schedule for the same reason', async () => {
+    h.config.provisioning.offboardingEnabled = false;
+    await expect(offboarding.schedule(actor, TICKET, 'fp', '2099-01-01T00:00:00Z'))
+      .rejects.toThrow(/offboarding is not enabled/i);
   });
 });
 

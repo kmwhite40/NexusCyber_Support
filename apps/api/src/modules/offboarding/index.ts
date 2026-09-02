@@ -40,15 +40,29 @@ interface TicketRow {
 }
 
 /**
- * One flag governs both directions. Read straight from config rather than through the
- * provisioning module, so this file imports nothing from the flow it must stay separable from —
- * but it is deliberately the SAME flag, not a second one. A separate offboarding switch would
- * let the destructive half be turned on while the tenant credentials it depends on are absent.
+ * TWO gates, and both are load-bearing.
+ *
+ * `enabled` is the shared tenant configuration: no credentials, no teardown, ever. But a single
+ * shared flag also meant that switching on ONBOARDING silently armed account teardown — sweeper
+ * included — on the same deploy. Nobody should have to accept the destructive half in order to
+ * get the constructive one, so `offboardingEnabled` is ANDed on top (see config.ts), never
+ * substituted for it.
+ *
+ * Read straight from config rather than through the provisioning module, so this file imports
+ * nothing from the flow it must stay separable from.
  */
 function requireEnabled(): void {
   if (!config.provisioning.enabled) {
     throw Errors.badRequest('provisioning is not enabled on this deployment');
   }
+  if (!config.provisioning.offboardingEnabled) {
+    throw Errors.badRequest('offboarding is not enabled on this deployment');
+  }
+}
+
+/** Whether this deployment may offboard — the same two gates requireEnabled() refuses on. */
+export function isEnabled(): boolean {
+  return config.provisioning.enabled && config.provisioning.offboardingEnabled;
 }
 
 async function loadTicket(ticketId: string): Promise<TicketRow> {

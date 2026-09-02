@@ -142,11 +142,13 @@ async function main() {
     startCloudPcPoller();
     logger.info('Cloud PC poller enabled');
 
-    // Offboarding sweep: fires approved plans at the instant HR instructed. Shares the
-    // provisioning feature flag deliberately — the destructive half must not be able to run
-    // without the tenant configuration the whole engine depends on.
-    startOffboardingSweeper();
-    logger.info('Offboarding sweeper enabled');
+    // Offboarding sweep: fires approved plans at the instant HR instructed. Gated SEPARATELY
+    // from provisioning on purpose — enabling onboarding must not arm account teardown — while
+    // still requiring the same tenant configuration underneath (see config.ts).
+    if (config.provisioning.offboardingEnabled) {
+      startOffboardingSweeper();
+      logger.info('Offboarding sweeper enabled');
+    }
   }
 
   await app.listen({ port: config.port, host: '0.0.0.0' });
