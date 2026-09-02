@@ -38,6 +38,7 @@ import * as forms from '../modules/forms.js';
 import * as sensitiveFields from '../modules/sensitive-fields.js';
 import * as escalationPolicies from '../modules/escalation-policies.js';
 import * as provisioning from '../modules/provisioning/index.js';
+import * as offboarding from '../modules/offboarding/index.js';
 import { computeScore, grade } from '../modules/posture.js';
 import { audit, verifyChain, formatExport, type ExportableRow } from '../modules/audit.js';
 import { authorize, can } from '../authz/pdp.js';
@@ -613,6 +614,39 @@ export async function registerRoutes(app: FastifyInstance) {
     return {
       data: await provisioning.listRuns(p, id),
       provisioningEnabled: provisioning.isEnabled(),
+    };
+  });
+
+  // ---------------- Entra account offboarding (departure fulfillment) ----------------
+  // preview and schedule go through the SAME planning path in the service, so the dry run an
+  // admin approves is provably the plan that gets armed. Nothing here writes to the directory:
+  // the scheduled sweeper does that when the clock reaches scheduled_for.
+  app.post('/api/v1/tickets/:id/offboarding/preview', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return { data: await offboarding.preview(p, id) };
+  });
+
+  // The body carries the fingerprint of the plan the admin previewed, plus the instant HR
+  // instructed. A stale fingerprint is refused with 412 rather than arming a plan nobody read.
+  app.post('/api/v1/tickets/:id/offboarding/schedule', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({
+      fingerprint: z.string(),
+      scheduledFor: z.string(),
+    }).parse(req.body ?? {});
+    return { data: await offboarding.schedule(p, id, body.fingerprint, body.scheduledFor) };
+  });
+
+  // Run history plus whether this deployment can offboard at all — same reasoning as the
+  // provisioning route: already authenticated, already permission-checked, no extra round trip.
+  app.get('/api/v1/tickets/:id/offboarding', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return {
+      data: await offboarding.listRuns(p, id),
+      offboardingEnabled: provisioning.isEnabled(),
     };
   });
 
