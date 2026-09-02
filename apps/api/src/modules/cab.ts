@@ -21,7 +21,10 @@ import type { Threshold } from './changes.js';
 export interface CabScopeActor {
   plane: 'nexus' | 'customer';
   organizationId: string | null;
-  /** Holds `cab.manage.global` (admin.superuser satisfies it via the PDP wildcard). */
+  /**
+   * Holds `cab.manage.global` AT PLATFORM SCOPE — see `holdsGlobalCabGrant`, which is what
+   * every caller must compute this with. Not simply `can(actor,'cab.manage.global')`.
+   */
   canManageGlobal: boolean;
 }
 
@@ -76,11 +79,50 @@ export function resolveReadScope(actor: CabScopeActor, requested?: string | null
   return { ok: true, organizationId: typeof requested === 'string' && requested ? requested : null };
 }
 
+/**
+ * Does this actor hold the platform-wide CAB grant AT PLATFORM SCOPE? Pure.
+ *
+ * `can(actor, 'cab.manage.global')` alone is scope-blind: with no resource context
+ * `pdp.ts`'s `inOrgScope` short-circuits to true, so the answer is pure RBAC. That is safe
+ * only while 0059 grants the permission exclusively to `admin.superuser` holders — and
+ * 0059's own comment invites granting it to non-superuser platform admins, at which point
+ * a SINGLE-ORG role assignment would carry platform-wide CAB write. Global CAB rows are
+ * inherited by every tenant, so the grant has to be paired with genuinely platform-wide
+ * standing: an org-NULL (all-orgs) assignment, or the superuser wildcard.
+ */
+export function holdsGlobalCabGrant(actor: { permissions: string[]; allOrgs: boolean }): boolean {
+  const superuser = actor.permissions.includes('admin.superuser');
+  if (!superuser && !actor.permissions.includes('cab.manage.global')) return false;
+  return superuser || actor.allOrgs;
+}
+
+/**
+ * Would letting this actor configure the CAB break segregation of duties? Pure.
+ *
+ * Whoever composes the board — and whoever authors the pre-approved standard-change
+ * templates — decides who judges production changes and which work skips judgement
+ * entirely. A principal who can also RAISE changes holds both ends of that: add an ally,
+ * set quorum to 1, submit. Migration 0061 removes the overlap from the shipped roles; this
+ * is the runtime backstop, so stacking a raiser role onto a CAB administrator does not
+ * quietly reopen it.
+ *
+ * Deliberately reads the LITERAL permission list rather than `can()`: the platform
+ * superuser wildcard would otherwise match `change.create` and lock break-glass admins out
+ * of CAB configuration entirely. A superuser is outside the SoD model by construction and
+ * every CAB write they make is audited by actor.
+ */
+export function raisesChanges(actor: { permissions: string[] }): boolean {
+  return actor.permissions.includes('change.create');
+}
+
+const SOD_REASON =
+  'segregation of duties: a principal that can raise changes (change.create) may not configure the CAB that judges them — use a role holding cab.manage without change.create';
+
 function scopeActor(actor: Principal): CabScopeActor {
   return {
     plane: actor.plane,
     organizationId: actor.organizationId,
-    canManageGlobal: can(actor, 'cab.manage.global'),
+    canManageGlobal: holdsGlobalCabGrant(actor),
   };
 }
 
@@ -148,6 +190,8 @@ export async function getBoard(actor: Principal, orgId?: string | null) {
 
 /** Create or update the org's default standing board and its members (cab.manage). */
 export async function putBoard(actor: Principal, input: BoardInput) {
+  // Composing the board is the act SoD exists to separate from raising changes.
+  if (raisesChanges(actor)) throw Errors.forbidden(SOD_REASON);
   const org = authorizeWrite(actor, input.organizationId);
   const members = input.members ?? [];
   return withOrgContext(orgContextFor(actor), async (sql) => {
@@ -257,6 +301,11 @@ export async function createTemplate(
     implementationPlan?: string; testPlan?: string; backoutPlan?: string;
   },
 ) {
+  // A `standard` template is a standing PRE-APPROVAL: changes created from it skip the CAB
+  // entirely. Authoring one is therefore a CAB act, and closed to anyone who raises changes.
+  if ((input.changeType ?? 'normal') === 'standard' && raisesChanges(actor)) {
+    throw Errors.forbidden(SOD_REASON);
+  }
   const org = authorizeWrite(actor, input.organizationId);
   return withOrgContext(orgContextFor(actor), async (sql) => {
     const row = (
@@ -264,7 +313,8 @@ export async function createTemplate(
         `INSERT INTO change_templates
            (organization_id, name, change_type, risk, impact, likelihood, description, implementation_plan, test_plan, backout_plan)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-        [org, input.name, input.changeType ?? 'standard', input.risk ?? 'low', input.impact ?? null, input.likelihood ?? null,
+        // Defaults to 'normal': a template that pre-approves work must say so deliberately.
+        [org, input.name, input.changeType ?? 'normal', input.risk ?? 'low', input.impact ?? null, input.likelihood ?? null,
          input.description ?? null, input.implementationPlan ?? null, input.testPlan ?? null, input.backoutPlan ?? null],
       )
     ).rows[0];

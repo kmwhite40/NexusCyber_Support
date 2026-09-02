@@ -36,6 +36,46 @@ describeDb('CAB admin scope (integration)', () => {
     expect(manager.allOrgs).toBe(false);
   });
 
+  // ---- Final review IMPORTANT 3: cab.manage.global was scope-blind ----
+
+  it('refuses cab.manage.global carried by a SINGLE-ORG role assignment', async () => {
+    // scopeActor used to answer this with a bare can(actor,'cab.manage.global'), which
+    // pdp.ts resolves with no resource context — pure RBAC. 0059 only grants the permission
+    // to superusers today, but its own comment invites granting it to platform admins, and
+    // a single-org assignment would then have carried platform-wide CAB write.
+    const scoped: Principal = {
+      ...manager,
+      permissions: [...manager.permissions, 'cab.manage.global'],
+      allOrgs: false,
+    };
+    await expect(putBoard(scoped, { organizationId: null, quorum: 1, members: [] })).rejects.toMatchObject({ status: 403 });
+    await expect(
+      createBlackout(scoped, { organizationId: null, name: 'scope-blind', startsAt: '2027-04-01T00:00:00.000Z', endsAt: '2027-04-02T00:00:00.000Z' }),
+    ).rejects.toMatchObject({ status: 403 });
+    // The same grant on an all-orgs assignment is the real platform administrator.
+    const platformWide: Principal = { ...scoped, allOrgs: true };
+    const row = await createBlackout(platformWide, {
+      organizationId: null, name: 'all-orgs grant', startsAt: '2027-04-03T00:00:00.000Z', endsAt: '2027-04-04T00:00:00.000Z',
+    });
+    await deleteBlackout(platform, row.id);
+  });
+
+  // ---- Final review CRITICAL 2: segregation of duties, role-stacking backstop ----
+
+  it('refuses to let a principal that can raise changes configure the CAB', async () => {
+    // Migration 0061 removes the overlap from the shipped roles; this is what stops an
+    // admin re-creating it by stacking a raiser role onto a CAB administrator.
+    const stacked: Principal = { ...manager, permissions: [...manager.permissions, 'change.create'] };
+    await expect(putBoard(stacked, { organizationId: acmeId, quorum: 1, members: [] })).rejects.toMatchObject({ status: 403 });
+    // …including minting the standing pre-approval that lets a change skip the CAB entirely.
+    await expect(
+      createTemplate(stacked, { organizationId: acmeId, name: 'self-minted pre-approval', changeType: 'standard' }),
+    ).rejects.toMatchObject({ status: 403 });
+    // A template that does NOT pre-approve anything is still ordinary CAB admin work.
+    const ok = await createTemplate(stacked, { organizationId: acmeId, name: 'normal template', changeType: 'normal' });
+    await deleteTemplate(manager, ok.id);
+  });
+
   // ---- CRITICAL 1: unscoped delete of a global row ----
 
   it('refuses a single-org cab.manage holder deleting a GLOBAL blackout', async () => {

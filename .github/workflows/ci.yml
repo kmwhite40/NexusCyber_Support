@@ -46,8 +46,14 @@ jobs:
           npm --workspace apps/api run migrate
           npm --workspace apps/api run seed
 
-      - name: Tests (unit + integration)
+      - name: Tests (api — unit + integration)
         run: npm --workspace apps/api run test
+
+      # The web workspace has its own vitest suite (jsdom + Testing Library). It ran
+      # nowhere until now, so the whole vote-panel / API-envelope / board-weight net was
+      # dead weight in CI.
+      - name: Tests (web)
+        run: npm --workspace apps/web run test
 
       - name: Build
         run: npm run build

@@ -55,6 +55,13 @@ export interface ChangeVote {
 export interface VoteTally {
   approve: number; reject: number; abstain: number;
   pending: number; cast: number; roster: number;
+  /**
+   * Cast/roster weight from STANDING board members only — the API measures quorum against
+   * this, not `cast`, so ad-hoc reviewers cannot make a board quorate. Optional because a
+   * change resolved before the field existed will not carry it; fall back to `cast`.
+   */
+  standing_cast?: number;
+  standing_roster?: number;
 }
 
 /**
@@ -73,6 +80,12 @@ export interface ChangeRow extends Change {
   backout_plan: string | null;
   created_by: string | null;
   created_at: string;
+  /**
+   * The pre-approved template that authorised a `standard` (CAB-skipping) change. Null on
+   * everything else — a standard change with null here was never pre-approved and the API
+   * refuses to auto-approve it at submit.
+   */
+  standard_template_id?: string | null;
   cab_board_id: string | null;
   /** Effective quorum snapshotted at submit time. */
   cab_quorum: number | null;
@@ -164,10 +177,18 @@ export const statusTone = (s: string): BadgeTone =>
 export const riskTone = (r: string): BadgeTone =>
   r === 'high' ? 'danger' : r === 'medium' ? 'warning' : 'neutral';
 
-export const THRESHOLD_LABEL: Record<Threshold, string> = {
-  majority: 'simple majority',
-  two_thirds: 'two-thirds',
-  unanimous: 'unanimous',
+/**
+ * How the server will actually apply the threshold, stated in full.
+ *
+ * `unanimous` is not "unanimous of the votes cast": `thresholdPasses` additionally requires
+ * that NOTHING is still pending, so a board that is unanimous so far but has an outstanding
+ * ballot stays in `cab_review`. Saying "unanimous of votes cast" told members the vote was
+ * decided while the server was still holding it open.
+ */
+export const THRESHOLD_RULE: Record<Threshold, string> = {
+  majority: 'simple majority of votes cast',
+  two_thirds: 'two-thirds of votes cast',
+  unanimous: 'unanimous — and every ballot must be cast',
 };
 
 export interface QuorumProgress {
@@ -182,10 +203,14 @@ export interface QuorumProgress {
   pct: number;
 }
 
-/** Quorum progress for the tally bar. Pure. Mirrors resolveVote's `cast >= quorum`. */
+/**
+ * Quorum progress for the tally bar. Pure. Mirrors resolveVote's
+ * `standing_cast >= quorum` — ad-hoc ballots do not count toward quorum on the server, so
+ * showing them here would overstate how close the board is to being quorate.
+ */
 export function quorumProgress(tally: VoteTally | null, quorum: number | null): QuorumProgress {
   const q = Math.max(1, quorum ?? 1);
-  const cast = tally?.cast ?? 0;
+  const cast = tally?.standing_cast ?? tally?.cast ?? 0;
   return {
     cast,
     quorum: q,
@@ -212,6 +237,63 @@ export function quorumClamp(
   if (effective == null || requested == null) return null;
   if (requested <= effective) return null;
   return { effective, requested };
+}
+
+export type VoteOutcome = 'approved' | 'rejected' | 'open';
+export interface VoteOutlook {
+  /** What the server's resolver would decide on this tally right now. */
+  outcome: VoteOutcome;
+  quorumMet: boolean;
+  /** While `open`, the one thing still missing — in the panel's own words. */
+  blocker: string | null;
+}
+
+/** Mirror of the API's private `thresholdPasses` (apps/api/src/modules/changes.ts). */
+function thresholdPasses(a: number, r: number, threshold: Threshold, allVoted: boolean): boolean {
+  if (a + r === 0) return false;
+  if (threshold === 'majority') return a > r;
+  if (threshold === 'two_thirds') return a >= Math.ceil((2 * (a + r)) / 3);
+  return r === 0 && allVoted;
+}
+
+/**
+ * What would `resolveVote` decide on this tally right now, and if nothing yet, why? Pure.
+ *
+ * This exists because the panel must never claim an outcome the server would not reach.
+ * "Quorum met" plus "unanimous of votes cast" read as decided, while the server was still
+ * holding the change in `cab_review` waiting on a pending ballot. Deliberately a mirror of
+ * the API resolver rather than an approximation of it: same quorum source (standing cast
+ * only), same threshold rules, same abstain handling.
+ */
+export function voteOutlook(
+  tally: VoteTally | null,
+  quorum: number | null,
+  threshold: Threshold,
+): VoteOutlook {
+  const q = Math.max(1, quorum ?? 1);
+  const approve = tally?.approve ?? 0;
+  const reject = tally?.reject ?? 0;
+  const pending = tally?.pending ?? 0;
+  const quorumMet = (tally?.standing_cast ?? tally?.cast ?? 0) >= q;
+  const allVoted = pending === 0;
+
+  if (quorumMet && thresholdPasses(approve, reject, threshold, allVoted)) {
+    return { outcome: 'approved', quorumMet, blocker: null };
+  }
+  const canStillPass = thresholdPasses(approve + pending, reject, threshold, true);
+  if (!canStillPass && approve + reject > 0) return { outcome: 'rejected', quorumMet, blocker: null };
+  if (quorumMet && allVoted && approve + reject === 0) return { outcome: 'rejected', quorumMet, blocker: null };
+
+  const blocker = !quorumMet
+    ? 'quorum not met'
+    : approve + reject === 0
+      ? 'no votes for or against yet'
+      : threshold === 'unanimous' && pending > 0
+        ? `awaiting ${pending} more ballot${pending === 1 ? '' : 's'}`
+        : threshold === 'two_thirds'
+          ? 'approvals are short of two-thirds'
+          : 'approvals do not yet outweigh rejections';
+  return { outcome: 'open', quorumMet, blocker };
 }
 
 /**
@@ -275,6 +357,13 @@ export const changesApi = {
     api.post<ScheduleResult>(`/changes/${id}/schedule`, { windowStart, windowEnd }),
   transition: (id: string, to: 'implementing' | 'review' | 'closed') =>
     api.post<{ status: string }>(`/changes/${id}/transition`, { to }),
+  // Pre-approved standard templates a raiser may build from (change.create, not cab.manage).
+  templates: (organizationId?: string) =>
+    api
+      .get<{ data: ChangeTemplate[] }>(
+        `/changes/templates${organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : ''}`,
+      )
+      .then((r) => r.data),
   comments: (id: string) => api.get<{ data: ChangeComment[] }>(`/changes/${id}/comments`).then((r) => r.data),
   addComment: (id: string, body: string) => api.post<ChangeComment>(`/changes/${id}/comments`, { body }),
 };

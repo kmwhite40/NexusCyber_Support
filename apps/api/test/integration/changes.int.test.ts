@@ -6,7 +6,7 @@ import {
   createChange, submitForCab, castVote, cancelChange, recordPir,
   addComment, listComments, scheduleChange, transitionChange, getChange,
 } from '../../src/modules/changes.js';
-import { putBoard } from '../../src/modules/cab.js';
+import { putBoard, createTemplate, deleteTemplate } from '../../src/modules/cab.js';
 import type { Principal } from '../../src/types.js';
 
 async function principalByEmail(email: string): Promise<Principal> {
@@ -17,8 +17,10 @@ async function principalByEmail(email: string): Promise<Principal> {
 }
 
 describeDb('change management + CAB voting (integration)', () => {
-  let manager: Principal; // board chair: change.create/vote/implement + cab.manage
-  let analyst: Principal; // board member: change.create + change.vote
+  // Segregation of duties (migration 0061): the CAB administrator does NOT hold
+  // change.create, and the raisers do not hold cab.manage.
+  let manager: Principal; // board chair: cab.manage + change.vote/implement, NO change.create
+  let analyst: Principal; // board member + raiser: change.create + change.vote
   let agent: Principal;   // raiser: change.create + change.implement, NOT a voter
   let acmeId: string;
 
@@ -39,13 +41,56 @@ describeDb('change management + CAB voting (integration)', () => {
     analyst = await principalByEmail('analyst@nexus.example.com');
     agent = await principalByEmail('agent@nexus.example.com');
     acmeId = await withSystemContext(async (sql) => (await sql.query("SELECT id FROM organizations WHERE name='Demo Corp'")).rows[0].id);
+    expect(manager.permissions).toContain('cab.manage');
+    expect(manager.permissions).not.toContain('change.create');
     await setBoard();
   });
 
-  it('standard changes are pre-approved without CAB', async () => {
-    const c = await createChange(agent, { title: 'Rotate TLS cert', changeType: 'standard', organizationId: acmeId });
-    const res = await submitForCab(agent, c.id, {});
-    expect(res).toMatchObject({ status: 'approved', cab: false });
+  // ---- Pre-approval is not self-declarable (final review, CRITICAL 1) ----
+
+  it('refuses a change.create holder declaring their own change standard', async () => {
+    // submit-cab on a standard change returns `approved` with zero votes, so being able to
+    // pick the type is being able to approve your own production change.
+    await expect(
+      createChange(agent, { title: 'Self-classified', changeType: 'standard', organizationId: acmeId }),
+    ).rejects.toMatchObject({ status: 403 });
+  });
+
+  it('pre-approves a standard change only from a CAB-authored standard template', async () => {
+    const tpl = await createTemplate(manager, {
+      organizationId: acmeId, name: 'Rotate TLS cert', changeType: 'standard', risk: 'low',
+    });
+    try {
+      const c = await createChange(agent, { title: 'Rotate TLS cert', templateId: tpl.id, organizationId: acmeId });
+      expect(c.change_type).toBe('standard');
+      expect(c.standard_template_id).toBe(tpl.id);
+      expect(await submitForCab(agent, c.id, {})).toMatchObject({ status: 'approved', cab: false });
+
+      // A template that is NOT itself pre-approved grants nothing.
+      const normalTpl = await createTemplate(manager, {
+        organizationId: acmeId, name: 'Connector upgrade', changeType: 'normal',
+      });
+      try {
+        await expect(
+          createChange(agent, { title: 'Borrowed pre-approval', changeType: 'standard', templateId: normalTpl.id, organizationId: acmeId }),
+        ).rejects.toMatchObject({ status: 403 });
+      } finally {
+        await deleteTemplate(manager, normalTpl.id);
+      }
+    } finally {
+      await deleteTemplate(manager, tpl.id);
+    }
+  });
+
+  it('refuses to pre-approve a standard change whose template is gone', async () => {
+    const tpl = await createTemplate(manager, {
+      organizationId: acmeId, name: 'Retired pre-approval', changeType: 'standard',
+    });
+    const c = await createChange(agent, { title: 'Orphaned standard change', templateId: tpl.id, organizationId: acmeId });
+    // ON DELETE SET NULL: retiring the template must not block the delete, and the draft
+    // that loses its provenance must not be waved through as pre-approved.
+    await deleteTemplate(manager, tpl.id);
+    await expect(submitForCab(agent, c.id, {})).rejects.toMatchObject({ status: 403 });
   });
 
   it('derives risk from impact x likelihood on create', async () => {
@@ -85,31 +130,90 @@ describeDb('change management + CAB voting (integration)', () => {
   // ---- Segregation of duties (fix round 1, IMPORTANT 6) ----
 
   it('recuses the raiser from their own change and says so in the snapshot', async () => {
-    const c = await createChange(manager, { title: 'Raised by a board member', changeType: 'normal', organizationId: acmeId });
-    const sub = await submitForCab(manager, c.id, {});
-    // manager is on the board but raised it: roster drops to analyst, quorum clamps 2 -> 1
+    const c = await createChange(analyst, { title: 'Raised by a board member', changeType: 'normal', organizationId: acmeId });
+    const sub = await submitForCab(analyst, c.id, {});
+    // analyst is on the board but raised it: roster drops to manager, quorum clamps 2 -> 1
     // and the clamp is reported rather than silently weakening the board's rule.
     expect(sub).toMatchObject({ voters: 1, quorum: 1, quorum_requested: 2, quorum_clamped: true });
     const full = await getChange(manager, c.id);
-    expect(full.votes.map((v: any) => v.voter_id)).toEqual([analyst.id]);
+    expect(full.votes.map((v: any) => v.voter_id)).toEqual([manager.id]);
     // The clamp is PERSISTED, not just returned to the submitter: a voter opening this
     // change later must still be able to see that it votes at a weakened quorum.
     expect(full.cab_quorum).toBe(1);
     expect(full.cab_quorum_requested).toBe(2);
     // …and the raiser cannot vote even though they hold change.vote.
-    await expect(castVote(manager, c.id, 'approve')).rejects.toMatchObject({ status: 403 });
-    expect((await castVote(analyst, c.id, 'approve')).status).toBe('approved');
+    await expect(castVote(analyst, c.id, 'approve')).rejects.toMatchObject({ status: 403 });
+    expect((await castVote(manager, c.id, 'approve')).status).toBe('approved');
   });
 
   it('refuses a submit where the raiser would be the only voter', async () => {
-    await setBoard([manager.id], 1);
+    await setBoard([analyst.id], 1);
     try {
-      const c = await createChange(manager, { title: 'Self-approval attempt', changeType: 'normal', organizationId: acmeId });
-      // Adding yourself as an ad-hoc reviewer does not get you a ballot either.
-      await expect(submitForCab(manager, c.id, { extraVoterIds: [manager.id] })).rejects.toMatchObject({ status: 400 });
+      const c = await createChange(analyst, { title: 'Self-approval attempt', changeType: 'normal', organizationId: acmeId });
+      // Nor may the raiser hand themselves a ballot as an "ad-hoc reviewer".
+      await expect(submitForCab(analyst, c.id, { extraVoterIds: [analyst.id] })).rejects.toMatchObject({ status: 403 });
+      await expect(submitForCab(analyst, c.id, {})).rejects.toMatchObject({ status: 400 });
     } finally {
       await setBoard();
     }
+  });
+
+  // ---- The raiser does not pick their own approvers (final review, CRITICAL 2) ----
+
+  it('refuses ad-hoc reviewers and a named board chosen by the raiser', async () => {
+    const c = await createChange(agent, { title: 'Packed board attempt', changeType: 'normal', organizationId: acmeId });
+    await expect(submitForCab(agent, c.id, { extraVoterIds: [analyst.id] })).rejects.toMatchObject({ status: 403 });
+    const boardId = await withSystemContext(async (sql) =>
+      (await sql.query('SELECT id FROM cab_boards WHERE organization_id=$1 AND is_default', [acmeId])).rows[0].id);
+    await expect(submitForCab(agent, c.id, { boardId })).rejects.toMatchObject({ status: 403 });
+    // The plain submit — standing board, standing quorum — still works.
+    expect((await submitForCab(agent, c.id, {})).status).toBe('cab_review');
+  });
+
+  it('refuses a submit to a board that has never been configured', async () => {
+    // 0052 seeds every org a default board with quorum 1 and NO members, which would
+    // otherwise vote at a roster of whoever the submitter attached.
+    await putBoard(manager, { organizationId: acmeId, chairId: null, quorum: 1, threshold: 'majority', members: [] });
+    try {
+      const c = await createChange(agent, { title: 'Memberless board', changeType: 'normal', organizationId: acmeId });
+      // The reason has to name the unconfigured board — "the raiser cannot vote" would
+      // send an admin looking for the wrong problem.
+      await expect(submitForCab(agent, c.id, {})).rejects.toMatchObject({
+        status: 400, detail: expect.stringContaining('no members'),
+      });
+      // …and the chair cannot paper over it with ad-hoc reviewers either.
+      await expect(submitForCab(manager, c.id, { extraVoterIds: [analyst.id] })).rejects.toMatchObject({
+        status: 400, detail: expect.stringContaining('no members'),
+      });
+    } finally {
+      await setBoard();
+    }
+  });
+
+  it('does not let ad-hoc ballots make the board quorate', async () => {
+    await setBoard([analyst.id], 1);
+    try {
+      const c = await createChange(agent, { title: 'Ad-hoc quorum attempt', changeType: 'normal', organizationId: acmeId });
+      // The CHAIR attaches the ad-hoc reviewer — the raiser may not.
+      const sub = await submitForCab(manager, c.id, { extraVoterIds: [manager.id] });
+      expect(sub).toMatchObject({ voters: 2, quorum: 1 });
+      // The ad-hoc ballot counts toward the threshold but not toward quorum…
+      expect((await castVote(manager, c.id, 'approve')).status).toBe('cab_review');
+      // …the standing board member is what makes it quorate.
+      expect((await castVote(analyst, c.id, 'approve')).status).toBe('approved');
+    } finally {
+      await setBoard();
+    }
+  });
+
+  it('ships no role that can both raise changes and configure the CAB', async () => {
+    const overlap = await withSystemContext(async (sql) =>
+      (await sql.query(
+        `SELECT r.key FROM roles r
+          WHERE EXISTS (SELECT 1 FROM role_permissions p WHERE p.role_id=r.id AND p.permission_key='change.create')
+            AND EXISTS (SELECT 1 FROM role_permissions p WHERE p.role_id=r.id AND p.permission_key='cab.manage')`,
+      )).rows);
+    expect(overlap).toEqual([]);
   });
 
   it('refuses a vote from a change.vote holder with no change_votes row', async () => {
@@ -168,8 +272,9 @@ describeDb('change management + CAB voting (integration)', () => {
 
   it('adds ad-hoc reviewers alongside the standing board', async () => {
     const c = await createChange(agent, { title: 'App-owner review needed', changeType: 'normal', organizationId: acmeId });
-    const sub = await submitForCab(agent, c.id, { extraVoterIds: [agent.id, manager.id] });
-    // board(2) + agent, but agent raised it so agent is recused; manager is deduped.
+    // Attached by the CAB administrator, not the raiser. agent raised it so agent is
+    // recused even when named; manager is already on the board and is deduped.
+    const sub = await submitForCab(manager, c.id, { extraVoterIds: [agent.id, manager.id] });
     expect(sub.voters).toBe(2);
     const full = await getChange(manager, c.id);
     expect(full.votes.map((v: any) => v.voter_id).sort()).toEqual([manager.id, analyst.id].sort());

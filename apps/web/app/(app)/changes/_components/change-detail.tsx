@@ -8,7 +8,7 @@ import * as React from 'react';
 import { Card, CardHeader, CardTitle, CardBody, Button, Badge, Select, Textarea, SegmentedControl } from '@/components/ui/primitives';
 import { EmptyState } from '@/components/ui/data';
 import { ApiError } from '@/lib/api';
-import { changesApi, statusTone, riskTone, type ChangeRecord, type PirOutcome } from '@/lib/changes';
+import { changesApi, statusTone, riskTone, type ChangeRecord, type PirOutcome, type ScheduleResult } from '@/lib/changes';
 import { VotePanel } from './vote-panel';
 import { ChangeComments } from './change-comments';
 
@@ -55,12 +55,19 @@ export function ChangeDetail({
   const [pirOutcome, setPirOutcome] = React.useState<PirOutcome | ''>('');
   const [pirNotes, setPirNotes] = React.useState('');
   const [busy, setBusy] = React.useState(false);
+  // What scheduling actually reported. The API checks the window against the configured
+  // freeze windows and returns the hits, but does NOT block — blackouts are advisory by
+  // spec. Discarding the result made them advisory to nobody: an admin could configure a
+  // freeze window in CAB settings and watch changes get scheduled straight through it with
+  // no sign anywhere. So the scheduler is told, and the change is still scheduled.
+  const [sched, setSched] = React.useState<ScheduleResult | null>(null);
 
   const changeId = change?.id;
   React.useEffect(() => {
     setErr(null);
     setPirOutcome('');
     setPirNotes('');
+    setSched(null);
   }, [changeId]);
 
   async function run(fn: () => Promise<unknown>, fallback: string) {
@@ -71,6 +78,22 @@ export function ChangeDetail({
       onChanged();
     } catch (e) {
       setErr(e instanceof ApiError ? e.detail : fallback);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function schedule(id: string) {
+    setErr(null);
+    setBusy(true);
+    try {
+      const start = new Date(Date.now() + 86400000);
+      start.setUTCHours(2, 0, 0, 0);
+      const end = new Date(start.getTime() + 2 * 3600000);
+      setSched(await changesApi.schedule(id, start.toISOString(), end.toISOString()));
+      onChanged();
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.detail : 'Failed to schedule the change');
     } finally {
       setBusy(false);
     }
@@ -212,15 +235,7 @@ export function ChangeDetail({
             </Button>
           )}
           {change.status === 'approved' && perms.implement && (
-            <Button
-              size="sm"
-              disabled={busy}
-              onClick={() => run(() => {
-                const start = new Date(Date.now() + 86400000); start.setUTCHours(2, 0, 0, 0);
-                const end = new Date(start.getTime() + 2 * 3600000);
-                return changesApi.schedule(change.id, start.toISOString(), end.toISOString());
-              }, 'Failed to schedule the change')}
-            >
+            <Button size="sm" disabled={busy} onClick={() => schedule(change.id)}>
               Schedule (tomorrow 02:00)
             </Button>
           )}
@@ -235,6 +250,19 @@ export function ChangeDetail({
             </Button>
           )}
         </div>
+
+        {sched && sched.blackouts.length > 0 && (
+          <p role="status" className="rounded border border-warning/30 bg-warning/10 p-2 text-[11px] text-warning">
+            Scheduled inside a change freeze: {sched.blackouts.map((b) => b.name).join(', ')}. Blackout windows are
+            advisory, so the change was still scheduled — move the window or record why the freeze does not apply.
+          </p>
+        )}
+        {sched && sched.conflicts.length > 0 && (
+          <p role="status" className="rounded border border-warning/30 bg-warning/10 p-2 text-[11px] text-warning">
+            Overlaps {sched.conflicts.length} other scheduled change{sched.conflicts.length === 1 ? '' : 's'} in this
+            organization.
+          </p>
+        )}
 
         {err && <p className="text-xs text-danger">{err}</p>}
       </CardBody>

@@ -15,7 +15,7 @@ import { Button, Badge, Textarea } from '@/components/ui/primitives';
 import { ApiError } from '@/lib/api';
 import {
   changesApi, quorumProgress, quorumClamp, isRecusedRaiser, ballotFor, isWeightedRoster,
-  THRESHOLD_LABEL, type ChangeRecord, type ChangeVote, type VoteValue,
+  voteOutlook, THRESHOLD_RULE, type ChangeRecord, type ChangeVote, type VoteValue,
 } from '@/lib/changes';
 
 const VOTE_TONE = { approve: 'success', reject: 'danger', abstain: 'neutral' } as const;
@@ -59,6 +59,11 @@ export function VotePanel({
   const unit = weighted ? 'weight' : 'vote';
   const clamp = quorumClamp(change);
   const threshold = change.cab_threshold ?? 'majority';
+  // What the SERVER's resolver would decide on this tally. The panel says "quorum met" only
+  // as a fact about quorum, never as a verdict: under `unanimous` the server additionally
+  // requires every ballot to be in, so a quorate, all-approve tally with one member still
+  // to vote is not an approval and must not be shown as one.
+  const outlook = voteOutlook(tally, change.cab_quorum, threshold);
   const open = change.status === 'cab_review';
   const myBallot = ballotFor(change.votes, meId);
   const iAmRaiser = isRecusedRaiser(change, meId);
@@ -95,7 +100,7 @@ export function VotePanel({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">CAB vote</span>
         <span className="text-[11px] text-muted">
-          {THRESHOLD_LABEL[threshold]} of votes cast
+          {THRESHOLD_RULE[threshold]}
           {deadline && (
             <>
               {' · '}
@@ -124,10 +129,12 @@ export function VotePanel({
             Quorum {progress.cast} of {progress.quorum}
             {tally ? ` · roster ${tally.roster}${weighted ? ' weight' : ''}` : ''}
           </span>
-          <span className={progress.met ? 'text-success' : undefined}>
-            {progress.met
-              ? 'quorum met'
-              : `${progress.remaining} more ${unit}${progress.remaining === 1 ? '' : 's'} needed`}
+          <span className={progress.met && outlook.outcome !== 'open' ? 'text-success' : undefined}>
+            {!progress.met
+              ? `${progress.remaining} more ${unit}${progress.remaining === 1 ? '' : 's'} needed`
+              : outlook.outcome === 'open'
+                ? `quorum met · not yet decided (${outlook.blocker})`
+                : 'quorum met'}
           </span>
         </div>
         <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-2" role="presentation">

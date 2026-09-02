@@ -3,7 +3,7 @@ import * as React from 'react';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
 import { Card, CardBody, Button, Input, Select, Textarea, SegmentedControl } from '@/components/ui/primitives';
-import { changesApi, type Change, type ChangeRecord } from '@/lib/changes';
+import { changesApi, type Change, type ChangeRecord, type ChangeTemplate } from '@/lib/changes';
 import { ChangeCalendar } from './_components/change-calendar';
 import { ChangeList } from './_components/change-list';
 import { ChangeDetail } from './_components/change-detail';
@@ -17,7 +17,8 @@ export default function ChangesPage() {
   const [sel, setSel] = React.useState<ChangeRecord | null>(null);
   const [view, setView] = React.useState<View>('list');
   const [creating, setCreating] = React.useState(false);
-  const [form, setForm] = React.useState({ title: '', changeType: 'normal', risk: 'medium', description: '' });
+  const [form, setForm] = React.useState({ title: '', changeType: 'normal', risk: 'medium', description: '', templateId: '' });
+  const [templates, setTemplates] = React.useState<ChangeTemplate[]>([]);
   const [err, setErr] = React.useState<string | null>(null);
 
   const perms = {
@@ -46,6 +47,18 @@ export default function ChangesPage() {
   }, []);
   React.useEffect(load, [load]);
 
+  // A `standard` change is PRE-APPROVED — submitting it returns `approved` with no vote at
+  // all — so it is not a type a raiser may simply pick off a dropdown. It comes from a
+  // pre-approved template, authored by a CAB administrator; without one, the option does
+  // not exist here.
+  React.useEffect(() => {
+    if (!perms.create) return;
+    changesApi.templates().then(setTemplates).catch(() => setTemplates([]));
+  }, [perms.create]);
+
+  const template = templates.find((t) => t.id === form.templateId) ?? null;
+  const preapproved = template?.change_type === 'standard';
+
   const open = React.useCallback((id: string) => {
     changesApi.get(id).then(setSel).catch(() => {});
   }, []);
@@ -59,9 +72,14 @@ export default function ChangesPage() {
   async function create() {
     setErr(null);
     try {
-      const c = await changesApi.create(form);
+      const c = await changesApi.create({
+        ...form,
+        templateId: form.templateId || undefined,
+        // The template is what carries the pre-approval; the form never asserts it alone.
+        changeType: preapproved ? 'standard' : form.changeType,
+      });
       setCreating(false);
-      setForm({ title: '', changeType: 'normal', risk: 'medium', description: '' });
+      setForm({ title: '', changeType: 'normal', risk: 'medium', description: '', templateId: '' });
       load();
       open(c.id);
     } catch (e) {
@@ -103,9 +121,29 @@ export default function ChangesPage() {
               onChange={(e) => setForm({ ...form, description: e.target.value })}
               rows={3}
             />
-            <div className="flex gap-2">
-              <Select className="w-40" value={form.changeType} onChange={(e) => setForm({ ...form, changeType: e.target.value })}>
-                <option value="standard">Standard (pre-approved)</option>
+            <div className="flex flex-wrap gap-2">
+              <Select
+                className="w-52"
+                aria-label="Change template"
+                value={form.templateId}
+                onChange={(e) => setForm({ ...form, templateId: e.target.value })}
+              >
+                <option value="">No template</option>
+                {templates.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                    {t.change_type === 'standard' ? ' (pre-approved)' : ''}
+                  </option>
+                ))}
+              </Select>
+              <Select
+                className="w-40"
+                aria-label="Change type"
+                value={preapproved ? 'standard' : form.changeType}
+                disabled={preapproved}
+                onChange={(e) => setForm({ ...form, changeType: e.target.value })}
+              >
+                {preapproved && <option value="standard">Standard (pre-approved)</option>}
                 <option value="normal">Normal (CAB)</option>
                 <option value="emergency">Emergency</option>
               </Select>
@@ -116,6 +154,12 @@ export default function ChangesPage() {
               </Select>
               <Button onClick={create} disabled={!form.title.trim()} className="ml-auto">Create</Button>
             </div>
+            {preapproved && (
+              <p className="text-[11px] text-muted">
+                “{template?.name}” is a pre-approved standard change: it skips the CAB. Only a CAB administrator can
+                publish a template that does that.
+              </p>
+            )}
             {err && <p className="text-xs text-danger">{err}</p>}
           </CardBody>
         </Card>

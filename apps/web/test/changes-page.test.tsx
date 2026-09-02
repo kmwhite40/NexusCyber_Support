@@ -6,7 +6,7 @@
 // asking for the GLOBAL config and gets a 403.
 import * as React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ChangesPage from '@/app/(app)/changes/page';
 import { api, type Me } from '@/lib/api';
@@ -83,6 +83,73 @@ describe('ChangesPage', () => {
     expect(await screen.findByLabelText('Organization')).toBeInTheDocument();
     // Nothing was read with an implicit (global) scope while no org is chosen.
     expect(mockedApi.get.mock.calls.map(([u]) => u as string).filter((u) => u.startsWith('/cab/'))).toHaveLength(0);
+  });
+
+  // A `standard` change is PRE-APPROVED — submit-cab returns `approved` with zero votes —
+  // so offering it on the type dropdown handed every change.create holder a way to approve
+  // their own production change. It now comes from a CAB-authored template or not at all.
+  it('does not offer a self-declared standard change', async () => {
+    asUser({}, ['change.create']);
+    render(<ChangesPage />);
+    await userEvent.click(screen.getByRole('button', { name: /new change/i }));
+
+    const type = screen.getByLabelText('Change type');
+    expect(within(type).queryByRole('option', { name: /standard/i })).not.toBeInTheDocument();
+    expect(within(type).getByRole('option', { name: /normal/i })).toBeInTheDocument();
+  });
+
+  it('classifies a change standard only through a pre-approved template', async () => {
+    mockedApi.get.mockImplementation((url: string) => {
+      if (url.startsWith('/changes/templates')) {
+        return Promise.resolve({
+          data: [
+            { id: 't-std', organization_id: ORG, name: 'Quarterly cert rotation', change_type: 'standard', risk: 'low' },
+            { id: 't-norm', organization_id: ORG, name: 'Connector upgrade', change_type: 'normal', risk: 'medium' },
+          ],
+        });
+      }
+      return Promise.resolve({ data: [] });
+    });
+    mockedApi.post.mockResolvedValue({ id: 'c-new' });
+    asUser({}, ['change.create']);
+    render(<ChangesPage />);
+    await userEvent.click(screen.getByRole('button', { name: /new change/i }));
+    await screen.findByRole('option', { name: /quarterly cert rotation/i });
+
+    await userEvent.type(screen.getByPlaceholderText(/change title/i), 'Rotate the edge certs');
+    await userEvent.selectOptions(screen.getByLabelText('Change template'), 't-std');
+    // The type is the template's to state, not the raiser's to pick.
+    expect(screen.getByLabelText('Change type')).toBeDisabled();
+    expect(screen.getByText(/skips the CAB/i)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /^create$/i }));
+    await waitFor(() =>
+      expect(mockedApi.post).toHaveBeenCalledWith('/changes', expect.objectContaining({
+        changeType: 'standard', templateId: 't-std',
+      })),
+    );
+  });
+
+  it('leaves a non-pre-approved template on a CAB-bound change type', async () => {
+    mockedApi.get.mockImplementation((url: string) =>
+      url.startsWith('/changes/templates')
+        ? Promise.resolve({ data: [{ id: 't-norm', organization_id: ORG, name: 'Connector upgrade', change_type: 'normal', risk: 'medium' }] })
+        : Promise.resolve({ data: [] }),
+    );
+    mockedApi.post.mockResolvedValue({ id: 'c-new' });
+    asUser({}, ['change.create']);
+    render(<ChangesPage />);
+    await userEvent.click(screen.getByRole('button', { name: /new change/i }));
+    await screen.findByRole('option', { name: /connector upgrade/i });
+
+    await userEvent.type(screen.getByPlaceholderText(/change title/i), 'Upgrade the connector');
+    await userEvent.selectOptions(screen.getByLabelText('Change template'), 't-norm');
+    expect(screen.getByLabelText('Change type')).not.toBeDisabled();
+
+    await userEvent.click(screen.getByRole('button', { name: /^create$/i }));
+    await waitFor(() =>
+      expect(mockedApi.post).toHaveBeenCalledWith('/changes', expect.objectContaining({ changeType: 'normal' })),
+    );
   });
 
   it('keeps the New change action out of the settings tab', async () => {

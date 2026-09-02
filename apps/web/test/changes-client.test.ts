@@ -10,7 +10,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   changesApi, cabApi, quorumProgress, quorumClamp, isRecusedRaiser, ballotFor, isWeightedRoster,
-  statusTone, riskTone, type ChangeVote,
+  statusTone, riskTone, voteOutlook, type ChangeVote,
 } from '@/lib/changes';
 import { api } from '@/lib/api';
 
@@ -39,6 +39,9 @@ describe('changes client — { data } envelope', () => {
     mockedApi.get.mockResolvedValue({ data: [{ id: 'b1' }] });
     await expect(cabApi.blackouts(ORG)).resolves.toEqual([{ id: 'b1' }]);
     await expect(cabApi.templates(ORG)).resolves.toEqual([{ id: 'b1' }]);
+    // The raiser-facing template list is a separate, change.create-gated route.
+    await expect(changesApi.templates()).resolves.toEqual([{ id: 'b1' }]);
+    expect(mockedApi.get).toHaveBeenCalledWith('/changes/templates');
 
     mockedApi.put.mockResolvedValue({ data: { quorum: 3, members: [] } });
     await expect(cabApi.saveBoard({ organizationId: ORG, quorum: 3 })).resolves.toEqual({ quorum: 3, members: [] });
@@ -89,7 +92,7 @@ describe('changes client — { data } envelope', () => {
 describe('quorumProgress', () => {
   const tally = (over: Partial<ReturnType<typeof base>> = {}) => ({ ...base(), ...over });
   function base() {
-    return { approve: 0, reject: 0, abstain: 0, pending: 0, cast: 0, roster: 0 };
+    return { approve: 0, reject: 0, abstain: 0, pending: 0, cast: 0, roster: 0, standing_cast: undefined as number | undefined };
   }
 
   it('reports progress toward the snapshotted quorum', () => {
@@ -107,6 +110,52 @@ describe('quorumProgress', () => {
     expect(quorumProgress(tally({ cast: 9 }), 2).pct).toBe(100);
     expect(quorumProgress(tally({ cast: 1 }), 0)).toMatchObject({ quorum: 1, met: true, pct: 100 });
     expect(quorumProgress(null, null)).toMatchObject({ cast: 0, quorum: 1, met: false, pct: 0 });
+  });
+
+  it('measures quorum against the STANDING cast, as the resolver does', () => {
+    // Ad-hoc reviewers are attached per change and cannot make the board quorate on the
+    // server; counting their ballots here would tell members quorum was reached when the
+    // change is still short of it.
+    expect(quorumProgress(tally({ cast: 2, standing_cast: 1, roster: 3 }), 2)).toMatchObject({
+      cast: 1, remaining: 1, met: false,
+    });
+  });
+});
+
+// The panel used to say "quorum met" + "<threshold> of votes cast" while the server's
+// resolver was still holding the change in cab_review — under `unanimous` it additionally
+// requires that nothing is pending. This mirrors resolveVote so the panel can never claim
+// an outcome the server would not reach.
+describe('voteOutlook (mirrors the API resolver)', () => {
+  const t = (over: Partial<{ approve: number; reject: number; abstain: number; pending: number; cast: number; roster: number; standing_cast: number }> = {}) =>
+    ({ approve: 0, reject: 0, abstain: 0, pending: 0, cast: 0, roster: 0, ...over });
+
+  it('does not call a quorate all-approve unanimous vote decided while a ballot is pending', () => {
+    const outlook = voteOutlook(t({ approve: 2, pending: 1, cast: 2, roster: 3 }), 2, 'unanimous');
+    expect(outlook).toMatchObject({ outcome: 'open', quorumMet: true });
+    expect(outlook.blocker).toMatch(/awaiting 1 more ballot/);
+  });
+
+  it('calls the same vote approved once the last ballot is in', () => {
+    expect(voteOutlook(t({ approve: 3, cast: 3, roster: 3 }), 2, 'unanimous')).toMatchObject({ outcome: 'approved' });
+  });
+
+  it('reports an open majority vote that has not yet pulled ahead', () => {
+    expect(voteOutlook(t({ approve: 1, reject: 1, pending: 1, cast: 2, roster: 3 }), 2, 'majority')).toMatchObject({
+      outcome: 'open', quorumMet: true, blocker: 'approvals do not yet outweigh rejections',
+    });
+  });
+
+  it('names the missing quorum rather than the threshold when quorum is short', () => {
+    expect(voteOutlook(t({ approve: 1, pending: 2, cast: 1, roster: 3 }), 3, 'majority')).toMatchObject({
+      outcome: 'open', quorumMet: false, blocker: 'quorum not met',
+    });
+  });
+
+  it('agrees with the resolver on approve, reject and all-abstain', () => {
+    expect(voteOutlook(t({ approve: 2, reject: 1, cast: 3, roster: 3 }), 2, 'majority')).toMatchObject({ outcome: 'approved' });
+    expect(voteOutlook(t({ approve: 1, reject: 2, cast: 3, roster: 3 }), 2, 'majority')).toMatchObject({ outcome: 'rejected' });
+    expect(voteOutlook(t({ abstain: 3, cast: 3, roster: 3 }), 2, 'majority')).toMatchObject({ outcome: 'rejected' });
   });
 });
 

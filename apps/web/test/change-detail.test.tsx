@@ -148,6 +148,40 @@ describe('ChangeDetail', () => {
     expect(screen.getByRole('button', { name: /record review/i })).toBeInTheDocument();
   });
 
+  // The API checks the requested window against the configured freeze windows and returns
+  // the hits without blocking (advisory by spec) — and the pane used to throw that result
+  // away, which made the whole blackout settings tab configure nothing anyone could see.
+  it('tells the scheduler when the window it just booked lands inside a freeze', async () => {
+    mockedApi.post.mockResolvedValue({
+      status: 'scheduled',
+      conflicts: [],
+      blackouts: [{ id: 'b1', name: 'Year-end freeze' }],
+    });
+    render(<ChangeDetail change={makeChange({ status: 'approved' })} meId={ME} perms={ALL} onChanged={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole('button', { name: /schedule/i }));
+    const note = await screen.findByRole('status');
+    expect(note).toHaveTextContent(/Year-end freeze/);
+    expect(note).toHaveTextContent(/advisory/i);
+  });
+
+  it('reports an overlap with another scheduled change', async () => {
+    mockedApi.post.mockResolvedValue({ status: 'scheduled', conflicts: ['c9'], blackouts: [] });
+    render(<ChangeDetail change={makeChange({ status: 'approved' })} meId={ME} perms={ALL} onChanged={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole('button', { name: /schedule/i }));
+    expect(await screen.findByRole('status')).toHaveTextContent(/Overlaps 1 other scheduled change/i);
+  });
+
+  it('says nothing about freezes when the window is clear', async () => {
+    mockedApi.post.mockResolvedValue({ status: 'scheduled', conflicts: [], blackouts: [] });
+    render(<ChangeDetail change={makeChange({ status: 'approved' })} meId={ME} perms={ALL} onChanged={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole('button', { name: /schedule/i }));
+    await waitFor(() => expect(mockedApi.post).toHaveBeenCalled());
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
   it('surfaces a refused lifecycle action instead of silently doing nothing', async () => {
     const { ApiError } = await vi.importActual<typeof import('@/lib/api')>('@/lib/api');
     mockedApi.post.mockRejectedValue(new ApiError(400, 'no CAB voters: configure the board'));

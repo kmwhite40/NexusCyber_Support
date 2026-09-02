@@ -96,6 +96,59 @@ describe('VotePanel', () => {
     expect(within(panel).getByText(/no backout plan/)).toBeInTheDocument();
   });
 
+  // The panel used to render "quorum met" beside "<threshold> of votes cast" while the
+  // server's resolver was still holding the change open: `thresholdPasses` additionally
+  // requires that NOTHING is pending under `unanimous`. A member was being told the vote
+  // was decided when it was not.
+  it('does not present a quorate unanimous vote as decided while a ballot is pending', () => {
+    const change = makeChange({
+      cab_quorum: 2,
+      cab_threshold: 'unanimous',
+      votes: [
+        ballot({ id: 'v1', voter_id: ME, vote: 'approve' }),
+        ballot({ id: 'v2', voter_id: OTHER, vote: 'approve' }),
+        ballot({ id: 'v3', voter_id: 'u4' }),
+      ],
+    });
+    render(<VotePanel change={change} meId={ME} canVote onVoted={vi.fn()} />);
+    const panel = screen.getByRole('region', { name: /cab vote/i });
+    expect(within(panel).getByText(/unanimous — and every ballot must be cast/i)).toBeInTheDocument();
+    expect(within(panel).getByText(/not yet decided/i)).toBeInTheDocument();
+    expect(within(panel).getByText(/awaiting 1 more ballot/i)).toBeInTheDocument();
+  });
+
+  it('says quorum met plainly once the server would actually approve', () => {
+    const change = makeChange({
+      cab_quorum: 2,
+      cab_threshold: 'unanimous',
+      votes: [
+        ballot({ id: 'v1', voter_id: ME, vote: 'approve' }),
+        ballot({ id: 'v2', voter_id: OTHER, vote: 'approve' }),
+      ],
+    });
+    render(<VotePanel change={change} meId={ME} canVote onVoted={vi.fn()} />);
+    const panel = screen.getByRole('region', { name: /cab vote/i });
+    expect(within(panel).getByText(/quorum met/i)).toBeInTheDocument();
+    expect(within(panel).queryByText(/not yet decided/i)).not.toBeInTheDocument();
+  });
+
+  it('does not count ad-hoc ballots toward quorum progress', () => {
+    // The API measures quorum against the STANDING board only, so a panel that counted
+    // ad-hoc ballots would show a board as quorate that the resolver does not.
+    const change = makeChange({
+      cab_quorum: 2,
+      votes: [
+        ballot({ id: 'v1', voter_id: ME, vote: 'approve' }),
+        ballot({ id: 'v2', voter_id: OTHER, vote: 'approve', ad_hoc: true }),
+      ],
+      cab_tally: { approve: 2, reject: 0, abstain: 0, pending: 0, cast: 2, roster: 2, standing_cast: 1, standing_roster: 1 },
+    });
+    render(<VotePanel change={change} meId={ME} canVote onVoted={vi.fn()} />);
+    const panel = screen.getByRole('region', { name: /cab vote/i });
+    expect(within(panel).getByText(/quorum 1 of 2/i)).toBeInTheDocument();
+    expect(within(panel).queryByText(/quorum met/i)).not.toBeInTheDocument();
+  });
+
   it('counts short of quorum rather than claiming it is met', () => {
     render(<VotePanel change={makeChange({ cab_quorum: 2 })} meId={ME} canVote onVoted={vi.fn()} />);
     expect(screen.getByText(/quorum 0 of 2/i)).toBeInTheDocument();

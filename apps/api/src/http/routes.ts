@@ -1057,6 +1057,15 @@ export async function registerRoutes(app: FastifyInstance) {
     return { data: await changes.calendar(p, q.from, q.to) };
   });
 
+  // The raiser-facing template list. `cab.listTemplates` is the ADMIN read (cab.manage);
+  // this one needs only `change.create`, because a pre-approved standard template is now
+  // the only route to a standard change and a raiser has to be able to pick one.
+  app.get('/api/v1/changes/templates', async (req) => {
+    const p = await requirePrincipal(req);
+    const q = z.object({ organizationId: z.string().uuid().optional() }).parse(req.query ?? {});
+    return { data: await changes.listChangeTemplates(p, q.organizationId) };
+  });
+
   app.post('/api/v1/changes', async (req, reply) => {
     const p = await requirePrincipal(req);
     const body = z

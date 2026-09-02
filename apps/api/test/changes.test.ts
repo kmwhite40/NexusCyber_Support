@@ -3,7 +3,7 @@ import {
   requiresCab, canTransition, detectWindowConflicts, allStepsApproved,
   tallyVotes, resolveVote, deriveRisk,
   addBusinessDays, voteDeadlineFor, ecabRoster, snapshotQuorum, voteEligibility, requiresPir,
-  recuseRaiser, mayCancel,
+  recuseRaiser, mayCancel, preapprovalGranted, mayComposeRoster,
 } from '../src/modules/changes.js';
 
 describe('requiresCab', () => {
@@ -72,7 +72,16 @@ describe('tallyVotes', () => {
       { vote: 'reject', weight: 1 }, { vote: 'abstain', weight: 1 },
       { vote: null, weight: 1 },
     ]);
-    expect(t).toEqual({ approve: 2, reject: 1, abstain: 1, pending: 1, cast: 4, roster: 5 });
+    expect(t).toEqual({ approve: 2, reject: 1, abstain: 1, pending: 1, cast: 4, roster: 5, standing_cast: 4, standing_roster: 5 });
+  });
+
+  it('separates standing-board weight from ad-hoc reviewers', () => {
+    const t = tallyVotes([
+      { vote: 'approve', weight: 2 },
+      { vote: 'approve', weight: 1, ad_hoc: true },
+      { vote: null, weight: 1 },
+    ]);
+    expect(t).toMatchObject({ cast: 3, roster: 4, standing_cast: 2, standing_roster: 3 });
   });
 });
 
@@ -98,6 +107,58 @@ describe('resolveVote', () => {
   it('unanimous requires zero rejects and all non-abstainers approved', () => {
     expect(resolveVote(roster(['approve', 'approve', 'approve']), { quorum: 3, threshold: 'unanimous' })).toBe('approved');
     expect(resolveVote(roster(['approve', 'approve', 'reject']), { quorum: 3, threshold: 'unanimous' })).toBe('rejected');
+  });
+
+  // Quorum is the STANDING board's property. Ad-hoc reviewers are attached to one change by
+  // whoever submits it, so if their ballots counted toward quorum the submitter could make
+  // the board quorate with people they chose — the packing half of "the raiser picks their
+  // own approvers". They still count toward the threshold.
+  it('does not let ad-hoc ballots satisfy quorum', () => {
+    const rows = [
+      { vote: 'approve' as const, weight: 1, ad_hoc: true },
+      { vote: 'approve' as const, weight: 1, ad_hoc: true },
+      { vote: null, weight: 1 },
+    ];
+    expect(resolveVote(rows, { quorum: 1, threshold: 'majority' })).toBe('cab_review');
+    // …and the standing member's own ballot is what makes it quorate.
+    expect(
+      resolveVote([...rows.slice(0, 2), { vote: 'approve' as const, weight: 1 }], { quorum: 1, threshold: 'majority' }),
+    ).toBe('approved');
+  });
+});
+
+describe('preapprovalGranted (a standard change is not self-declarable)', () => {
+  it('refuses a standard change with no template behind it', () => {
+    expect(preapprovalGranted('standard', null)).toBe(false);
+    expect(preapprovalGranted('standard', undefined)).toBe(false);
+  });
+  it('refuses a standard change whose template is not itself pre-approved', () => {
+    expect(preapprovalGranted('standard', { change_type: 'normal' })).toBe(false);
+    expect(preapprovalGranted('standard', { change_type: null })).toBe(false);
+  });
+  it('grants pre-approval from a standard template', () => {
+    expect(preapprovalGranted('standard', { change_type: 'standard' })).toBe(true);
+  });
+  it('does not constrain change types that still go to the CAB', () => {
+    expect(preapprovalGranted('normal', null)).toBe(true);
+    expect(preapprovalGranted('emergency', null)).toBe(true);
+  });
+});
+
+describe('mayComposeRoster (the raiser does not pick their own approvers)', () => {
+  const base = { actorId: 'u1', raiserId: 'u2', hasCabManage: false, isChair: false };
+  it('refuses the raiser, whatever else they hold', () => {
+    expect(mayComposeRoster({ ...base, actorId: 'u2', hasCabManage: true, isChair: true })).toBe(false);
+  });
+  it('refuses anyone with no standing authority over the roster', () => {
+    expect(mayComposeRoster(base)).toBe(false);
+  });
+  it('allows the chair and a CAB administrator who did not raise it', () => {
+    expect(mayComposeRoster({ ...base, isChair: true })).toBe(true);
+    expect(mayComposeRoster({ ...base, hasCabManage: true })).toBe(true);
+  });
+  it('treats an unattributed change as composable by an authorised actor', () => {
+    expect(mayComposeRoster({ ...base, raiserId: null, hasCabManage: true })).toBe(true);
   });
 });
 
