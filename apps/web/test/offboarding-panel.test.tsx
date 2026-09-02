@@ -120,3 +120,47 @@ describe('OffboardingPanel', () => {
     expect(screen.getByText(/waiting on the manual mailbox conversion/)).toBeInTheDocument();
   });
 });
+
+describe('OffboardingPanel — cancelling an armed run', () => {
+  const scheduledRun = {
+    data: [{
+      id: 'run-1', status: 'scheduled', error: null,
+      scheduled_for: '2099-01-01T09:00:00.000Z', started_at: null, finished_at: null, steps: [],
+    }],
+    offboardingEnabled: true,
+  };
+
+  it('offers a way to stop a run that is armed', async () => {
+    mockedApi.get.mockResolvedValue(scheduledRun);
+    render(<OffboardingPanel ticketId="T-1" canOffboard />);
+    expect(await screen.findByRole('button', { name: /cancel run/i })).toBeInTheDocument();
+  });
+
+  it('requires a reason before it will cancel', async () => {
+    // The run history is the record of why a termination did not happen. "Cancelled" with no
+    // reason is the least useful entry it could contain.
+    mockedApi.get.mockResolvedValue(scheduledRun);
+    render(<OffboardingPanel ticketId="T-1" canOffboard />);
+    expect(await screen.findByRole('button', { name: /cancel run/i })).toBeDisabled();
+  });
+
+  it('sends the reason and refreshes the history', async () => {
+    mockedApi.get.mockResolvedValue(scheduledRun);
+    mockedApi.post.mockResolvedValue({ data: { cancelled: 1 } });
+    render(<OffboardingPanel ticketId="T-1" canOffboard />);
+    const reason = await screen.findByPlaceholderText(/why/i);
+    await userEvent.type(reason, 'start date moved');
+    await userEvent.click(screen.getByRole('button', { name: /cancel run/i }));
+    expect(mockedApi.post).toHaveBeenCalledWith('/tickets/T-1/offboarding/cancel', { reason: 'start date moved' });
+  });
+
+  it('offers no cancel for a run that has already finished', async () => {
+    mockedApi.get.mockResolvedValue({
+      data: [{ id: 'run-1', status: 'succeeded', error: null, scheduled_for: null, started_at: null, finished_at: null, steps: [] }],
+      offboardingEnabled: true,
+    });
+    render(<OffboardingPanel ticketId="T-1" canOffboard />);
+    await screen.findByText(/succeeded/i);
+    expect(screen.queryByRole('button', { name: /cancel run/i })).not.toBeInTheDocument();
+  });
+});

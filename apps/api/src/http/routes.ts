@@ -639,6 +639,16 @@ export async function registerRoutes(app: FastifyInstance) {
     return { data: await offboarding.schedule(p, id, body.fingerprint, body.scheduledFor) };
   });
 
+  // Stops an armed run before it fires. Not gated on the feature flag: something already armed
+  // must stay stoppable even if offboarding is switched off, or re-enabling would fire a
+  // teardown nobody still wants.
+  app.post('/api/v1/tickets/:id/offboarding/cancel', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ reason: z.string().min(1).max(500) }).parse(req.body ?? {});
+    return { data: await offboarding.cancel(p, id, body.reason) };
+  });
+
   // Run history plus whether this deployment can offboard at all — same reasoning as the
   // provisioning route: already authenticated, already permission-checked, no extra round trip.
   app.get('/api/v1/tickets/:id/offboarding', async (req) => {

@@ -324,3 +324,57 @@ describe('(h) one armed run per ticket', () => {
     expect(insert.text).toContain('NOT EXISTS');
   });
 });
+
+// Arming without cancelling was the wrong shape to ship: once a plan was armed the only way to
+// stop the teardown was a manual UPDATE against production. Plans change, start dates move,
+// people withdraw resignations.
+describe('(i) an armed run can be cancelled', () => {
+  const rowsWithScheduledRun = () => rowsExcept((text) => {
+    if (/UPDATE provisioning_runs/.test(text) && /cancelled/.test(text)) return [{ id: 'run-1' }];
+    return null;
+  });
+
+  it('cancels a scheduled run', async () => {
+    h.setDbRows(rowsWithScheduledRun());
+    const out = await offboarding.cancel(actor, TICKET, 'reassigned to a later date');
+    expect(out.cancelled).toBe(1);
+    const upd = h.queries.find((q) => /UPDATE provisioning_runs/.test(q.text) && /cancelled/.test(q.text))!;
+    expect(upd.text).toContain("status = 'scheduled'");
+  });
+
+  it('only cancels runs that are still scheduled, never one already running', async () => {
+    // A run mid-execution has already made directory writes; "cancelled" would misdescribe it.
+    h.setDbRows(rowsWithScheduledRun());
+    await offboarding.cancel(actor, TICKET, 'nope');
+    const upd = h.queries.find((q) => /UPDATE provisioning_runs/.test(q.text) && /cancelled/.test(q.text))!;
+    expect(upd.text).not.toContain("'running'");
+  });
+
+  it('reports when there was nothing armed to cancel', async () => {
+    h.setDbRows(rowsExcept(() => null)); // no matching run
+    const out = await offboarding.cancel(actor, TICKET, 'nothing here');
+    expect(out.cancelled).toBe(0);
+  });
+
+  it('scopes the cancel to the ticket organization', async () => {
+    h.setDbRows(rowsWithScheduledRun());
+    await offboarding.cancel(actor, TICKET, 'why');
+    const upd = h.queries.find((q) => /UPDATE provisioning_runs/.test(q.text) && /cancelled/.test(q.text))!;
+    expect(upd.params).toContain(TICKET_ORG);
+  });
+
+  it('still works when the feature has since been switched off', async () => {
+    // Disabling the flag stops the sweeper starting, but an already-armed run must remain
+    // stoppable — and re-enabling later would otherwise fire a teardown nobody still wants.
+    h.config.provisioning.offboardingEnabled = false;
+    h.setDbRows(rowsWithScheduledRun());
+    await expect(offboarding.cancel(actor, TICKET, 'switched off')).resolves.toBeTruthy();
+  });
+
+  it('records the reason, so history says why it did not happen', async () => {
+    h.setDbRows(rowsWithScheduledRun());
+    await offboarding.cancel(actor, TICKET, 'start date moved to October');
+    const upd = h.queries.find((q) => /UPDATE provisioning_runs/.test(q.text) && /cancelled/.test(q.text))!;
+    expect(JSON.stringify(upd.params)).toContain('start date moved to October');
+  });
+});

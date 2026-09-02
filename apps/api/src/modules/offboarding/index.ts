@@ -338,6 +338,52 @@ export async function schedule(
 }
 
 /**
+ * Stops an armed run before it fires.
+ *
+ * Phase 1 shipped arming with no way to stop it, so the only way to prevent a teardown was a
+ * manual UPDATE against production — the wrong shape for the one action here that disables a
+ * person's account at a fixed moment. Plans change, start dates move, resignations get withdrawn.
+ *
+ * Deliberately NOT gated on the feature flag. Switching offboarding off stops the sweeper
+ * STARTING, but an already-armed run survives in the table and would fire the moment the flag
+ * came back on. Something already armed must stay stoppable.
+ *
+ * Only touches runs still `scheduled`. A run already `running` has made directory writes, and
+ * calling that "cancelled" would misdescribe what happened to the account.
+ */
+export async function cancel(
+  actor: Principal,
+  ticketId: string,
+  reason: string,
+): Promise<{ cancelled: number }> {
+  const ticket = await loadTicket(ticketId);
+  authorize(actor, 'provisioning.execute', { organizationId: ticket.organization_id });
+
+  const cancelled = await withOrgContext(orgContextFor(actor), async (sql: Sql) => {
+    const { rows } = await sql.query(
+      `UPDATE provisioning_runs
+          SET status = 'cancelled', finished_at = now(), error = $3
+        WHERE ticket_id = $1 AND organization_id = $2
+          AND kind = 'offboarding' AND status = 'scheduled'
+        RETURNING id`,
+      [ticketId, ticket.organization_id, `cancelled: ${reason}`.slice(0, 500)],
+    );
+    return rows.length;
+  });
+
+  if (cancelled > 0) {
+    await audit(actor, {
+      action: 'offboarding.cancel',
+      organizationId: ticket.organization_id,
+      resourceType: 'ticket',
+      resourceId: ticketId,
+      detail: { cancelled, reason },
+    });
+  }
+  return { cancelled };
+}
+
+/**
  * Run history for a ticket. Caller-scoped (RLS applies), and deliberately NOT gated on the
  * feature flag: turning offboarding off must not erase the record of what it did while on.
  */

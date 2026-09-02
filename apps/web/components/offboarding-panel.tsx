@@ -59,6 +59,10 @@ export function OffboardingPanel({ ticketId, canOffboard }: { ticketId: string; 
   const [scheduledLocal, setScheduledLocal] = React.useState('');
   const [armed, setArmed] = React.useState<{ scheduledFor: string } | null>(null);
 
+  const [cancelReason, setCancelReason] = React.useState('');
+  const [cancelling, setCancelling] = React.useState(false);
+  const [cancelError, setCancelError] = React.useState<string | null>(null);
+
   const [latestRun, setLatestRun] = React.useState<RunRow | null>(null);
   const [runsLoaded, setRunsLoaded] = React.useState(false);
   /** null = not yet known; only an explicit false hides the controls. */
@@ -131,11 +135,56 @@ export function OffboardingPanel({ ticketId, canOffboard }: { ticketId: string; 
     }
   }
 
+  async function cancelRun() {
+    setCancelling(true);
+    setCancelError(null);
+    try {
+      await api.post(`/tickets/${ticketId}/offboarding/cancel`, { reason: cancelReason });
+      setCancelReason('');
+      loadRuns();
+    } catch (e) {
+      setCancelError(e instanceof ApiError ? e.detail : 'Could not cancel the scheduled run.');
+    } finally {
+      setCancelling(false);
+    }
+  }
+
+  /** A run persisted as scheduled — distinct from `armed`, which is this session's own result. */
+  const runIsArmed = latestRun?.status === 'scheduled';
+
   return (
     <Card>
       <CardHeader><CardTitle>Offboarding</CardTitle></CardHeader>
       <CardBody className="space-y-4">
         {runsLoaded && latestRun && <RunStatus run={latestRun} />}
+
+        {runIsArmed && (
+          <div className="space-y-2 rounded-md border border-border bg-surface-2/40 p-3">
+            <p className="text-xs text-muted">
+              This run is armed and will fire on its own. Stop it here if the departure has
+              changed — there is no other way to call it back.
+            </p>
+            <Input
+              placeholder="Why is this being cancelled?"
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+            />
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={cancelRun}
+                // A reason is required: the run history is the record of why a termination did
+                // not happen, and "cancelled" with no reason is the least useful entry it could
+                // hold.
+                disabled={cancelling || !cancelReason.trim()}
+              >
+                {cancelling ? 'Cancelling…' : 'Cancel run'}
+              </Button>
+            </div>
+            {cancelError && <p className="text-sm text-danger">{cancelError}</p>}
+          </div>
+        )}
 
         {featureOff && (
           <div className="rounded-md border border-border bg-surface-2/40 p-3">
