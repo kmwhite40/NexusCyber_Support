@@ -42,7 +42,7 @@ problem in both directions and should not be solved twice.
 | 1 | `block_signin` | `accountEnabled=false` | — |
 | 2 | `revoke_sessions` | revoke refresh tokens | after 1 — a live session otherwise mints new tokens against a still-enabled account |
 | 3 | `rename_account` | `displayName` → `<inactive_name>` | — |
-| 4 | `convert_shared_mailbox` | convert to shared, standard/elevated only | **before 5** |
+| 4 | `convert_shared_mailbox` | convert to shared, standard/elevated only — **prompted manual step, see below** | **before 5** |
 | 5 | `remove_licenses` | reclaim all assigned SKUs | after 4 |
 | 6 | `remove_groups_dls_roles` | groups, distribution lists, directory roles | after 5 |
 
@@ -51,6 +51,24 @@ while it is still licensed. Remove the license first and the mailbox enters soft
 conversion fails — destroying the artifact the runbook was trying to preserve. The planner emits
 these steps in this order or it emits nothing; the executor refuses a plan whose steps arrive in
 any other order, the same way the provisioning executor refuses group names with no resolved ids.
+
+### Step 4 is not automatable in phase 1
+
+Microsoft Graph exposes no mailbox-type conversion endpoint; `Set-Mailbox -Type Shared` is an
+Exchange Online PowerShell operation, in GCC High as in commercial. Building an EXO PowerShell
+execution path is a substantially larger piece of work than this phase, and pulling it in would
+delay every other step.
+
+So step 4 is a **prompted manual step with evidence capture**: the executor pauses, the tech
+performs the conversion in EXO and confirms, and the confirmation (who, when) is recorded on the
+step like any automated one. **The ordering protection is unaffected** — the planner still
+refuses to emit `remove_licenses` until step 4 is recorded complete, which is the constraint that
+actually matters. Only the keystrokes are manual; the guardrail is not.
+
+Confirm against the real tenant before planning. If a conversion API does turn out to be
+reachable there, step 4 becomes a normal automated step and nothing else in this design changes.
+
+### Rename convention
 
 Step 3 renames `displayName` only. The UPN is left alone: renaming it breaks mailbox resolution
 and makes the audit trail hard to follow, and the runbook says "change name on account", not
@@ -151,10 +169,14 @@ Mirrors the provisioning suite's split:
 - **Phase 4 — notifications:** partner/customer access-termination notices, and the HR
   completion report with exceptions.
 
+The `<inactive_name>` format is `ZZ_Inactive_<Last>_<First>_<YYYY-MM-DD>` — e.g.
+`ZZ_Inactive_Doe_Jane_2026-09-02`, using the last day, not the date the rename ran. The `ZZ_`
+prefix sorts departed accounts to the bottom of every admin list, the name stays searchable, and
+the embedded date makes the 1yr/7yr retention clock readable off the account itself without a
+lookup. The planner builds this string; it is never typed by hand.
+
 ## Open questions
 
-- Which Graph API version exposes shared-mailbox conversion in GCC High, and whether it requires
-  Exchange Online PowerShell rather than Graph. If it needs EXO PowerShell, step 4 cannot be
-  automated in this phase and becomes a prompted manual step with evidence capture — the rest of
-  the design is unaffected. **This needs probing against the real tenant before planning.**
-- The `<inactive_name>` format is not specified in the runbook. Needs a decided convention.
+- Whether GCC High exposes any mailbox-conversion API that would let step 4 be automated after
+  all. Assumed no (see "Step 4 is not automatable in phase 1"); worth one probe against the
+  tenant, but the design does not depend on the answer.
