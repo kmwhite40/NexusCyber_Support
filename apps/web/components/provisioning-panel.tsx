@@ -12,7 +12,7 @@
 import * as React from 'react';
 import { api, ApiError } from '@/lib/api';
 import { Card, CardHeader, CardTitle, CardBody, Button, Badge } from '@/components/ui/primitives';
-import { AlertTriangle, Clock3 } from 'lucide-react';
+import { AlertTriangle, Clock3, Info } from 'lucide-react';
 
 interface Blocker { code: string; message: string }
 interface PlanStep { key: string; label: string; detail: Record<string, unknown> }
@@ -72,11 +72,16 @@ export function ProvisioningPanel({ ticketId, canProvision }: { ticketId: string
 
   const [latestRun, setLatestRun] = React.useState<RunRow | null>(null);
   const [runsLoaded, setRunsLoaded] = React.useState(false);
+  /** null = not yet known. See featureOff below for why the distinction is deliberate. */
+  const [enabled, setEnabled] = React.useState<boolean | null>(null);
 
   const loadRuns = React.useCallback(() => {
     api
-      .get<{ data: RunRow[] }>(`/tickets/${ticketId}/provisioning`)
-      .then((r) => setLatestRun(r.data[0] ?? null))
+      .get<{ data: RunRow[]; provisioningEnabled?: boolean }>(`/tickets/${ticketId}/provisioning`)
+      .then((r) => {
+        setLatestRun(r.data[0] ?? null);
+        setEnabled(r.provisioningEnabled ?? null);
+      })
       .catch(() => {
         /* Run history is a convenience read; a failure here must not block the panel from
            rendering the preview/provision controls. */
@@ -92,6 +97,11 @@ export function ProvisioningPanel({ ticketId, canProvision }: { ticketId: string
   if (!canProvision) return null;
 
   const blocked = (plan?.blockers.length ?? 0) > 0;
+  // Only an explicit `false` hides the controls. If the flag never arrived — an older API, or
+  // the loadRuns read failing — we do NOT claim the feature is off: we fall back to the old
+  // behaviour and let the server be the one to refuse. Announcing "not configured" on the
+  // strength of a request that failed would be inventing an answer we do not have.
+  const featureOff = enabled === false;
   // Once a run is known to be in flight (from history, or from a just-started execute call),
   // Provision stays disabled — this is the pre-emptive half of the 409 guard; the reactive half
   // is the catch block in execute() below, for the race where two admins click at once.
@@ -159,7 +169,20 @@ export function ProvisioningPanel({ ticketId, canProvision }: { ticketId: string
           <RunStatus run={latestRun} />
         )}
 
-        {!result && (
+        {featureOff && (
+          <div className="rounded-md border border-border bg-surface-2/40 p-3">
+            <p className="flex items-start gap-1.5 text-sm text-muted">
+              <Info className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={1.75} />
+              <span>
+                Provisioning is not configured on this deployment, so no account can be created
+                from this ticket. Complete the fulfillment steps manually, or ask an
+                administrator to finish the tenant setup before using this panel.
+              </span>
+            </p>
+          </div>
+        )}
+
+        {!result && !featureOff && (
           <div className="flex items-center gap-2">
             <Button size="sm" variant="outline" onClick={preview} disabled={previewing || executing}>
               {previewing ? 'Building preview…' : plan ? 'Refresh preview' : 'Preview'}

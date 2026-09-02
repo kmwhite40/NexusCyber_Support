@@ -603,10 +603,17 @@ export async function registerRoutes(app: FastifyInstance) {
     return { data: await provisioning.provision(p, id, body.fingerprint) };
   });
 
+  // Run history, plus whether this deployment can provision at all. The flag rides along here
+  // rather than on the public /auth/config: this route is already the one call the panel makes
+  // on mount, it is already authenticated and already checks provisioning.execute, so the
+  // answer costs no extra round trip and adds nothing to the unauthenticated surface.
   app.get('/api/v1/tickets/:id/provisioning', async (req) => {
     const p = await requirePrincipal(req);
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
-    return { data: await provisioning.listRuns(p, id) };
+    return {
+      data: await provisioning.listRuns(p, id),
+      provisioningEnabled: provisioning.isEnabled(),
+    };
   });
 
   // Options provider for the onboarding form's cloud_pc_policy field

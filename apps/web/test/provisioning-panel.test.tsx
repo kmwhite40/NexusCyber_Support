@@ -69,3 +69,52 @@ describe('ProvisioningPanel — preview envelope unwrap', () => {
     expect(screen.getByRole('button', { name: /^provision$/i })).toBeEnabled();
   });
 });
+
+// The panel used to render an unconditional Preview button. On a deployment where
+// M365_PROV_ENABLED is off (which is every deployment until the SBS tenant prerequisites are
+// done) that button's ONLY possible outcome was a 400 "provisioning is not enabled on this
+// deployment" — so "the feature is not turned on here" and "provisioning is broken" produced
+// the same experience: click, red text. The runs endpoint now reports the flag, and these
+// tests pin that the panel says which one it is BEFORE anything is clicked.
+describe('ProvisioningPanel — feature-off state', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('says the feature is not configured, and offers no button that could only fail', async () => {
+    mockedApi.get.mockResolvedValue({ data: [], provisioningEnabled: false });
+
+    render(<ProvisioningPanel ticketId="TCK-1" canProvision />);
+
+    expect(await screen.findByText(/not configured on this deployment/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /preview/i })).not.toBeInTheDocument();
+  });
+
+  it('still shows the run history when the feature is switched off after a run', async () => {
+    // listRuns is deliberately not gated on the flag (apps/api/src/modules/provisioning/index.ts):
+    // turning the feature off must not erase the compliance record of what it did while on. The
+    // panel has to honour that — hiding the controls must not hide the history with them.
+    mockedApi.get.mockResolvedValue({
+      data: [{
+        id: 'run-1', status: 'succeeded', error: null, started_at: null, finished_at: null,
+        steps: [{ step_key: 'create_account', status: 'succeeded', error: null }],
+      }],
+      provisioningEnabled: false,
+    });
+
+    render(<ProvisioningPanel ticketId="TCK-1" canProvision />);
+
+    expect(await screen.findByText(/^Succeeded$/)).toBeInTheDocument();
+    expect(screen.getByText('create account')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /preview/i })).not.toBeInTheDocument();
+  });
+
+  it('offers Preview normally when the feature is on', async () => {
+    mockedApi.get.mockResolvedValue({ data: [], provisioningEnabled: true });
+
+    render(<ProvisioningPanel ticketId="TCK-1" canProvision />);
+
+    expect(await screen.findByRole('button', { name: /preview/i })).toBeInTheDocument();
+    expect(screen.queryByText(/not configured on this deployment/i)).not.toBeInTheDocument();
+  });
+});

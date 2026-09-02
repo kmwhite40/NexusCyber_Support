@@ -332,6 +332,24 @@ describe('(f) the feature stays dark when disabled', () => {
     expect(await provisioning.listCloudPcPolicies(actor)).toEqual([]);
     expect(h.getProvisioningGraph).not.toHaveBeenCalled();
   });
+
+  // The ticket page had no way to learn any of the above: it rendered a Preview button whose
+  // only possible outcome was the 400 asserted two tests up, so "the feature is off" and
+  // "provisioning is broken" looked identical to the admin. isEnabled() is what the panel
+  // reads to say which one it is, and it MUST be the same flag requireEnabled() refuses on --
+  // a second source of truth here would let the UI promise a run the service then refuses.
+  it('reports itself off, so the UI can say so instead of offering a dead button', () => {
+    expect(provisioning.isEnabled()).toBe(false);
+  });
+});
+
+describe('the feature reports itself on when it is configured', () => {
+  // The mirror of the last test in (f). Both directions matter: a flag stuck at false would
+  // hide Preview on a working deployment, which is the same class of lie in reverse.
+  it('reports itself on, and preview then does not refuse on the flag', async () => {
+    expect(provisioning.isEnabled()).toBe(true);
+    await expect(provisioning.preview(actor, TICKET)).resolves.toBeTruthy();
+  });
 });
 
 describe('the in-flight run guard', () => {

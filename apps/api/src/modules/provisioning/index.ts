@@ -159,6 +159,25 @@ function requireEnabled(): void {
   }
 }
 
+/**
+ * Whether this deployment can provision at all — the SAME flag requireEnabled() refuses on,
+ * deliberately read through one accessor rather than re-derived anywhere else.
+ *
+ * The ticket panel needs this because "off" and "broken" were indistinguishable from the
+ * outside: with the feature dark the panel still offered a Preview button whose only possible
+ * outcome was requireEnabled()'s 400, so an admin clicking it learned nothing about which of
+ * the two they were looking at. Exposing the flag lets the UI say "not configured here" up
+ * front, and reading the flag rather than copying it means the notice cannot drift out of
+ * agreement with the refusal it is explaining.
+ *
+ * Note what this does NOT claim: only that the process is configured to provision. Whether
+ * THIS ticket can (right org, approved onboarding request, no blockers) is decided by
+ * preview() against live tenant state, and stays there.
+ */
+export function isEnabled(): boolean {
+  return config.provisioning.enabled;
+}
+
 async function loadTicket(ticketId: string): Promise<TicketRow> {
   const ticket = await withSystemContext(async (sql) => {
     const { rows } = await sql.query(
