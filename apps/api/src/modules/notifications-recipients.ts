@@ -223,5 +223,60 @@ export async function resolveRecipients(sql: Sql, evt: DomainEvent): Promise<Rec
     return dedupe(rows);
   }
 
+  // CAB voting lifecycle (spec 2026-06-25). Every branch below re-scopes to the event's
+  // OWN organization_id in the WHERE clause, in addition to filtering by change_id — so a
+  // change_id from one tenant can never resolve recipients from another tenant's board or
+  // roster, even if the event payload were ever mis-addressed.
+  if (type === 'change.cab_requested') {
+    // The board members who have a ballot on THIS change — read back from change_votes
+    // itself (never from the event payload's voter_ids), which is what makes the
+    // resolution tenant-scoped: change_votes.organization_id is set at submit-cab time
+    // from the change's own org and cannot be forged by the event.
+    const changeId = data.change_id as string | undefined;
+    if (!changeId || !evt.organization_id) return [];
+    const { rows } = await sql.query(
+      `SELECT DISTINCT u.id AS user_id, u.email
+         FROM change_votes cv
+         JOIN users u ON u.id = cv.voter_id
+        WHERE cv.change_id = $1 AND cv.organization_id = $2
+          AND u.email IS NOT NULL AND ${NOT_OPTED_OUT}`,
+      [changeId, evt.organization_id],
+    );
+    return dedupe(rows);
+  }
+
+  // A vote was cast (still deliberating), or the vote deadline passed with quorum unmet
+  // (the sweeper's escalation) — both notify the board CHAIR, resolved via the change's
+  // own cab_board_id, never from the event payload.
+  if (type === 'change.vote_cast' || type === 'change.vote_overdue') {
+    const changeId = data.change_id as string | undefined;
+    if (!changeId || !evt.organization_id) return [];
+    const { rows } = await sql.query(
+      `SELECT u.id AS user_id, u.email
+         FROM changes c
+         JOIN cab_boards b ON b.id = c.cab_board_id
+         JOIN users u ON u.id = b.chair_id
+        WHERE c.id = $1 AND c.organization_id = $2
+          AND u.email IS NOT NULL AND ${NOT_OPTED_OUT}`,
+      [changeId, evt.organization_id],
+    );
+    return dedupe(rows);
+  }
+
+  // Decision / scheduling milestones -> the change's creator (raiser).
+  if (type === 'change.approved' || type === 'change.rejected' || type === 'change.scheduled') {
+    const changeId = data.change_id as string | undefined;
+    if (!changeId || !evt.organization_id) return [];
+    const { rows } = await sql.query(
+      `SELECT u.id AS user_id, u.email
+         FROM changes c
+         JOIN users u ON u.id = c.created_by
+        WHERE c.id = $1 AND c.organization_id = $2
+          AND u.email IS NOT NULL AND ${NOT_OPTED_OUT}`,
+      [changeId, evt.organization_id],
+    );
+    return dedupe(rows);
+  }
+
   return [];
 }

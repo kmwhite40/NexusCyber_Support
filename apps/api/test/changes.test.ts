@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   requiresCab, canTransition, detectWindowConflicts, allStepsApproved,
-  tallyVotes, resolveVote, deriveRisk,
+  tallyVotes, resolveVote, isVoteOverdue, deriveRisk,
   addBusinessDays, voteDeadlineFor, ecabRoster, snapshotQuorum, voteEligibility, requiresPir,
   recuseRaiser, mayCancel, preapprovalGranted, mayComposeRoster,
 } from '../src/modules/changes.js';
@@ -126,6 +126,63 @@ describe('resolveVote', () => {
     expect(
       resolveVote([...rows.slice(0, 2), { vote: 'approve' as const, weight: 1 }], { quorum: 1, threshold: 'majority' }),
     ).toBe('approved');
+  });
+});
+
+describe('isVoteOverdue (the deadline sweeper\'s pure predicate)', () => {
+  const NOW = new Date('2026-06-20T12:00:00.000Z');
+  const base = { status: 'cab_review', cab_quorum: 2 };
+  const noBallots: Array<{ vote: null; weight: number }> = [];
+  const quorateBallots = [
+    { vote: 'approve' as const, weight: 1 },
+    { vote: 'approve' as const, weight: 1 },
+  ];
+
+  it('is false before the deadline, even with quorum unmet', () => {
+    const change = { ...base, vote_deadline: '2026-06-20T12:00:00.001Z' }; // 1ms in the future
+    expect(isVoteOverdue(change, noBallots, NOW)).toBe(false);
+  });
+
+  it('is true exactly at the deadline boundary (>=, not >) with quorum unmet', () => {
+    const change = { ...base, vote_deadline: '2026-06-20T12:00:00.000Z' };
+    expect(isVoteOverdue(change, noBallots, NOW)).toBe(true);
+  });
+
+  it('is true well past the deadline with quorum unmet', () => {
+    const change = { ...base, vote_deadline: '2026-06-18T00:00:00.000Z' };
+    expect(isVoteOverdue(change, noBallots, NOW)).toBe(true);
+  });
+
+  it('is false once quorum is met, even past deadline — the board showed up', () => {
+    const change = { ...base, vote_deadline: '2026-06-18T00:00:00.000Z' };
+    expect(isVoteOverdue(change, quorateBallots, NOW)).toBe(false);
+  });
+
+  it('is false for a change that is not (or no longer) cab_review', () => {
+    const change = { ...base, status: 'approved', vote_deadline: '2026-06-18T00:00:00.000Z' };
+    expect(isVoteOverdue(change, noBallots, NOW)).toBe(false);
+  });
+
+  it('is false with no vote_deadline set', () => {
+    const change = { ...base, vote_deadline: null };
+    expect(isVoteOverdue(change, noBallots, NOW)).toBe(false);
+  });
+
+  it('does not let ad-hoc reviewer ballots satisfy quorum (mirrors resolveVote)', () => {
+    const change = { ...base, vote_deadline: '2026-06-18T00:00:00.000Z' };
+    const adHocOnly = [
+      { vote: 'approve' as const, weight: 1, ad_hoc: true },
+      { vote: 'approve' as const, weight: 1, ad_hoc: true },
+    ];
+    expect(isVoteOverdue(change, adHocOnly, NOW)).toBe(true); // still overdue: standing quorum unmet
+  });
+
+  it('defaults `now` to the current time when omitted', () => {
+    const soon = new Date(Date.now() + 60_000).toISOString(); // 1 minute from now
+    const change = { ...base, vote_deadline: soon };
+    expect(isVoteOverdue(change, noBallots)).toBe(false);
+    const past = new Date(Date.now() - 60_000).toISOString(); // 1 minute ago
+    expect(isVoteOverdue({ ...change, vote_deadline: past }, noBallots)).toBe(true);
   });
 });
 

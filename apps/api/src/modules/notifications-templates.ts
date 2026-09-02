@@ -17,6 +17,10 @@ export interface TemplateContext {
   resolutionCode?: string;
   ticketId?: string;
   webOrigin?: string;
+  changeId?: string;
+  changeTitle?: string;
+  voteDeadline?: string;
+  windowStart?: string;
   [k: string]: unknown;
 }
 
@@ -253,6 +257,59 @@ const TEMPLATES: Record<string, Renderer> = {
     wrap(`New posture finding (${c.severity ?? 'finding'})`, [
       `A new ${c.severity ?? ''} posture finding was created for ${c.orgName ?? 'your organization'}.`,
     ]),
+  // CAB voting lifecycle (spec 2026-06-25). No sensitive detail beyond the change's own
+  // title/id — never risk/impact narrative, votes, or reasons.
+  'change.cab_requested': (c) => {
+    const title = c.changeTitle ?? '(untitled change)';
+    const deadline = fmtWhen(c.voteDeadline);
+    return wrap(`CAB vote requested: ${title}`, [
+      `A change is awaiting your CAB vote${c.orgName ? ` for ${c.orgName}` : ''}.`,
+      `Change: ${title}`,
+      deadline ? `Vote deadline: ${deadline}` : '',
+      'Please cast your vote (approve, reject, or abstain) in the portal before the deadline.',
+    ].filter(Boolean));
+  },
+  'change.vote_cast': (c) => {
+    const title = c.changeTitle ?? '(untitled change)';
+    return wrap(`CAB vote cast: ${title}`, [
+      `A board member cast a vote on change "${title}".`,
+      'Sign in to the portal to review the current tally.',
+    ]);
+  },
+  'change.approved': (c) => {
+    const title = c.changeTitle ?? '(untitled change)';
+    return wrap(`Your change was approved: ${title}`, [
+      `Good news — your change "${title}" has been approved by the CAB.`,
+      'It can now be scheduled for implementation.',
+    ]);
+  },
+  'change.rejected': (c) => {
+    const title = c.changeTitle ?? '(untitled change)';
+    return wrap(`Your change was not approved: ${title}`, [
+      `Your change "${title}" was not approved by the CAB.`,
+      'Sign in to the portal to review the board\'s comments, then revise and resubmit if appropriate.',
+    ]);
+  },
+  'change.scheduled': (c) => {
+    const title = c.changeTitle ?? '(untitled change)';
+    const when = fmtWhen(c.windowStart);
+    return wrap(`Your change is scheduled: ${title}`, [
+      `Your change "${title}" has been scheduled for implementation.`,
+      when ? `Window start: ${when}` : '',
+    ].filter(Boolean));
+  },
+  // The deadline sweeper's escalation (jobs/cab-deadline-sweeper.ts): the vote deadline
+  // passed with quorum unmet. This NOTIFIES the chair only — nothing auto-decides the
+  // change, so the copy asks the chair to follow up rather than implying any outcome.
+  'change.vote_overdue': (c) => {
+    const title = c.changeTitle ?? '(untitled change)';
+    const deadline = fmtWhen(c.voteDeadline);
+    return wrap(`CAB vote overdue: ${title}`, [
+      `The CAB vote deadline for change "${title}" has passed and quorum has not been reached.`,
+      deadline ? `Deadline was: ${deadline}` : '',
+      'As chair, please follow up with the board to secure the remaining votes. No automatic action has been taken on this change.',
+    ].filter(Boolean));
+  },
 };
 
 export function renderTemplate(eventType: string, ctx: TemplateContext): RenderedTemplate {

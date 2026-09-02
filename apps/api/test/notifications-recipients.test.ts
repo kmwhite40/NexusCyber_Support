@@ -210,3 +210,105 @@ describe('resolveRecipients — other event families', () => {
     expect(sql.query.mock.calls[0][1]).toEqual(['resp-1']);
   });
 });
+
+// ---- CAB voting lifecycle (spec 2026-06-25, task 7) ----
+//
+// Every branch is queried with (change_id, organization_id) as $1/$2. `makeChangeSql`
+// simulates real Postgres row-scoping: passing an `*Org` value means the fake "table"
+// only returns rows when the query's organization_id param matches it, so a test can
+// prove that mismatched tenancy yields zero rows without needing a live database.
+function makeChangeSql(opts: {
+  changeVotes?: Array<{ user_id: string; email: string }>;
+  changeVotesOrg?: string;
+  chair?: { user_id: string; email: string } | null;
+  chairOrg?: string;
+  creator?: { user_id: string; email: string } | null;
+  creatorOrg?: string;
+}) {
+  const calls: Array<{ text: string; params?: any[] }> = [];
+  const query = vi.fn(async (text: string, params?: any[]) => {
+    calls.push({ text, params });
+    const orgParam = params?.[1];
+    if (text.includes('FROM change_votes')) {
+      if (opts.changeVotesOrg !== undefined && orgParam !== opts.changeVotesOrg) return { rows: [] };
+      return { rows: opts.changeVotes ?? [] };
+    }
+    if (text.includes('cab_boards')) {
+      if (opts.chairOrg !== undefined && orgParam !== opts.chairOrg) return { rows: [] };
+      return { rows: opts.chair ? [opts.chair] : [] };
+    }
+    if (text.includes('c.created_by')) {
+      if (opts.creatorOrg !== undefined && orgParam !== opts.creatorOrg) return { rows: [] };
+      return { rows: opts.creator ? [opts.creator] : [] };
+    }
+    return { rows: [] };
+  });
+  return { sql: { query } as any, calls };
+}
+
+describe('resolveRecipients — CAB voting lifecycle', () => {
+  it('cab_requested resolves board members from change_votes, scoped to the change\'s own organization', async () => {
+    const { sql, calls } = makeChangeSql({
+      changeVotes: [
+        { user_id: 'v1', email: 'chair@acme' },
+        { user_id: 'v2', email: 'member@acme' },
+      ],
+      changeVotesOrg: 'org-1',
+    });
+    const out = await resolveRecipients(sql, evt('change.cab_requested', { change_id: 'chg-1', voter_ids: ['v1', 'v2'] }));
+    expect(emails(out)).toEqual(['chair@acme', 'member@acme']);
+    expect(calls[0].params).toEqual(['chg-1', 'org-1']); // tenant-scoped: change_id AND organization_id
+  });
+
+  it('cab_requested resolves strictly from change_votes, ignoring the event payload\'s voter_ids', async () => {
+    const { sql } = makeChangeSql({ changeVotes: [{ user_id: 'v1', email: 'chair@acme' }], changeVotesOrg: 'org-1' });
+    // Payload claims a different (untrusted) voter list than what change_votes actually has.
+    const out = await resolveRecipients(sql, evt('change.cab_requested', { change_id: 'chg-1', voter_ids: ['someone-else'] }));
+    expect(emails(out)).toEqual(['chair@acme']);
+  });
+
+  it('cab_requested never leaks another tenant\'s ballots for the same change_id', async () => {
+    // The event claims org-1 (via evt()'s organization_id), but this change_id's rows in
+    // the fake "table" belong to a different org — simulating a mis-addressed event.
+    // Because the query is scoped by (change_id, organization_id) together, nothing comes back.
+    const { sql } = makeChangeSql({ changeVotes: [{ user_id: 'v1', email: 'chair@other-org' }], changeVotesOrg: 'org-OTHER' });
+    const out = await resolveRecipients(sql, evt('change.cab_requested', { change_id: 'chg-1' }));
+    expect(out).toEqual([]);
+  });
+
+  it('cab_requested resolves nobody (and queries nothing) without a change_id', async () => {
+    const { sql, calls } = makeChangeSql({});
+    const out = await resolveRecipients(sql, evt('change.cab_requested', {}));
+    expect(out).toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('vote_cast notifies the chair, resolved via the change\'s own board and organization', async () => {
+    const { sql, calls } = makeChangeSql({ chair: { user_id: 'chair-1', email: 'chair@acme' }, chairOrg: 'org-1' });
+    const out = await resolveRecipients(sql, evt('change.vote_cast', { change_id: 'chg-1', voter_id: 'v2', vote: 'approve' }));
+    expect(out).toEqual([{ userId: 'chair-1', email: 'chair@acme' }]);
+    expect(calls[0].params).toEqual(['chg-1', 'org-1']);
+  });
+
+  it('vote_cast resolves nobody when the board has no chair configured', async () => {
+    const { sql } = makeChangeSql({ chair: null });
+    const out = await resolveRecipients(sql, evt('change.vote_cast', { change_id: 'chg-1', voter_id: 'v2', vote: 'approve' }));
+    expect(out).toEqual([]);
+  });
+
+  it('vote_overdue (the deadline sweeper\'s escalation) resolves the chair the same way as vote_cast', async () => {
+    const { sql } = makeChangeSql({ chair: { user_id: 'chair-1', email: 'chair@acme' }, chairOrg: 'org-1' });
+    const out = await resolveRecipients(sql, evt('change.vote_overdue', { change_id: 'chg-1', vote_deadline: '2026-06-16T00:00:00Z' }));
+    expect(out).toEqual([{ userId: 'chair-1', email: 'chair@acme' }]);
+  });
+
+  it.each(['change.approved', 'change.rejected', 'change.scheduled'])(
+    '%s notifies the change creator, scoped to its own organization',
+    async (type) => {
+      const { sql, calls } = makeChangeSql({ creator: { user_id: 'raiser-1', email: 'raiser@acme' }, creatorOrg: 'org-1' });
+      const out = await resolveRecipients(sql, evt(type, { change_id: 'chg-1' }));
+      expect(out).toEqual([{ userId: 'raiser-1', email: 'raiser@acme' }]);
+      expect(calls[0].params).toEqual(['chg-1', 'org-1']);
+    },
+  );
+});

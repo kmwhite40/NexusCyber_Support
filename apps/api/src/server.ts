@@ -15,6 +15,7 @@ import { registerAutomationHandlers } from './modules/automation.js';
 import { registerCsatHandlers } from './modules/csat.js';
 import { registerWebhookHandlers } from './modules/webhooks.js';
 import { startSlaSweeper } from './jobs/sla-sweeper.js';
+import { startCabDeadlineSweeper } from './jobs/cab-deadline-sweeper.js';
 import { startConMonScheduler } from './modules/conmon.js';
 import { subscribe } from './events/bus.js';
 import { incCounter, renderMetrics, statusClass } from './metrics.js';
@@ -117,6 +118,10 @@ async function main() {
 
   // Background SLA evaluation sweep (warning/breach), idempotent.
   startSlaSweeper();
+
+  // CAB deadline sweep: notifies the chair when a vote_deadline passes with quorum
+  // unmet (notify-only; never auto-decides a change). Idempotent via a durable marker.
+  startCabDeadlineSweeper();
 
   // Continuous Monitoring scheduler (NIST 800-137 / FedRAMP ConMon), idempotent findings.
   startConMonScheduler();

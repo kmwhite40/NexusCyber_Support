@@ -32,6 +32,16 @@ async function ticketDetails(
   return rows[0] ?? {};
 }
 
+/** Change fields used to render CAB templates. Events carry only change_id (plus
+ *  whatever the publisher already knew, e.g. vote_deadline/window_start); the dispatcher
+ *  looks the title up once. Never selects risk/impact/plan text — templates surface only
+ *  the title and id. */
+async function changeDetails(sql: Sql, changeId: string | undefined): Promise<{ title?: string }> {
+  if (!changeId) return {};
+  const { rows } = await sql.query('SELECT title FROM changes WHERE id = $1', [changeId]);
+  return rows[0] ?? {};
+}
+
 type Channel = 'teams' | 'email' | 'portal';
 
 async function capability(sql: Sql, cloud: string, channel: Channel): Promise<string> {
@@ -115,6 +125,10 @@ export async function dispatch(
   const t = evt.type.startsWith('ticket.') || evt.type.startsWith('csat.') || evt.type.startsWith('approval.')
     ? await ticketDetails(sql, ref)
     : {};
+  // change.* events carry only change_id — look the title up once (never risk/impact/plan
+  // text; templates surface only title + id, per the "nothing sensitive" requirement).
+  const changeRef = d.change_id as string | undefined;
+  const c = evt.type.startsWith('change.') ? await changeDetails(sql, changeRef) : {};
   const tpl = renderTemplate(evt.type, {
     orgName: await orgName(sql, orgId),
     ticketId: ref,
@@ -130,6 +144,10 @@ export async function dispatch(
     commentExcerpt: d.comment_excerpt,
     resolutionCode: d.resolution_code,
     webOrigin: config.webOrigin[0],
+    changeId: changeRef,
+    changeTitle: c.title,
+    voteDeadline: d.vote_deadline,
+    windowStart: d.window_start,
   });
 
   // Purely customer-facing messages must be email-only — never posted to the
@@ -188,6 +206,15 @@ export function registerNotificationHandlers(): void {
     'sla.breached',
     'posture.finding_created',
     'oncall.acknowledgement_required',
+    // CAB voting lifecycle (spec 2026-06-25). cab_requested is the important one — without
+    // it a board member is never told they have a ballot; vote_overdue is the deadline
+    // sweeper's escalation (jobs/cab-deadline-sweeper.ts), notify-only.
+    'change.cab_requested',
+    'change.vote_cast',
+    'change.approved',
+    'change.rejected',
+    'change.scheduled',
+    'change.vote_overdue',
   ];
   for (const type of notifying) {
     subscribe(type, async (evt: DomainEvent) => {

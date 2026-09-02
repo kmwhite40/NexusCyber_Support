@@ -143,6 +143,34 @@ export function resolveVote(rows: VoteRow[], cfg: { quorum: number; threshold: T
   return 'cab_review';
 }
 
+/**
+ * Is this change's CAB vote overdue -- past its `vote_deadline` while still `cab_review`
+ * and quorum unmet? Pure; `now` is a parameter (no `Date.now()` inside) so the deadline
+ * boundary is directly testable, mirroring `sla.ts`'s `evaluateState`. Drives the
+ * deadline sweeper's decision to escalate to the chair (spec 2026-06-25 "Deadline
+ * escalation").
+ *
+ * Deliberately narrower than "resolveVote would still say cab_review": a change that is
+ * past deadline but AT quorum is still genuinely deliberating (the board showed up; they
+ * just haven't finished), which is not the failure this escalates. Quorum is measured
+ * the same way `resolveVote` measures it -- standing-board cast weight against
+ * `cfg.quorum` (see `tallyVotes`: ad-hoc reviewers cannot supply quorum) -- so "overdue"
+ * here means specifically "the board never turned out."
+ */
+export function isVoteOverdue(
+  change: { status: string; vote_deadline: Date | string | null; cab_quorum: number | null },
+  ballots: VoteRow[],
+  now: Date = new Date(),
+): boolean {
+  if (change.status !== 'cab_review') return false;
+  if (!change.vote_deadline) return false;
+  const deadline = change.vote_deadline instanceof Date ? change.vote_deadline : new Date(change.vote_deadline);
+  if (Number.isNaN(deadline.getTime())) return false;
+  if (now < deadline) return false;
+  const quorum = change.cab_quorum ?? 1;
+  return tallyVotes(ballots).standing_cast < quorum;
+}
+
 const RISK_MATRIX: Record<string, Record<string, 'low' | 'medium' | 'high'>> = {
   low: { low: 'low', medium: 'low', high: 'medium' },
   medium: { low: 'low', medium: 'medium', high: 'high' },

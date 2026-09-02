@@ -110,4 +110,55 @@ describe('renderTemplate', () => {
     expect(renderTemplate('approval.approved', { ticketNumber: 'REQ-1', subject: 'New laptop' }).text.toLowerCase()).toContain('approved');
     expect(renderTemplate('approval.rejected', { ticketNumber: 'REQ-1', subject: 'New laptop' }).text.toLowerCase()).toContain('not approved');
   });
+
+  describe('CAB voting lifecycle', () => {
+    it('cab_requested asks the board member to vote, with the deadline, and no sensitive detail', () => {
+      const out = renderTemplate('change.cab_requested', {
+        orgName: 'Acme',
+        changeTitle: 'Upgrade firewall firmware',
+        changeId: 'chg-1',
+        voteDeadline: '2026-06-16T14:30:00.000Z',
+      });
+      expect(out.subject.toLowerCase()).toContain('vote requested');
+      expect(out.text).toContain('Upgrade firewall firmware');
+      expect(out.text).toContain('Vote deadline: 2026-06-16 14:30 UTC');
+      expect(out.text.toLowerCase()).toContain('approve, reject, or abstain');
+      // no risk/impact/plan narrative leaks into the notification
+      expect(out.text.toLowerCase()).not.toContain('risk');
+      expect(out.text.toLowerCase()).not.toContain('backout');
+    });
+
+    it('vote_cast tells the chair a vote landed, without saying which way', () => {
+      const out = renderTemplate('change.vote_cast', { changeTitle: 'Upgrade firewall firmware' });
+      expect(out.subject.toLowerCase()).toContain('vote cast');
+      expect(out.text).toContain('Upgrade firewall firmware');
+      expect(out.text.toLowerCase()).not.toMatch(/approve|reject|abstain/);
+    });
+
+    it('approved and rejected render creator-facing outcomes', () => {
+      const approved = renderTemplate('change.approved', { changeTitle: 'Upgrade firewall firmware' });
+      expect(approved.subject.toLowerCase()).toContain('approved');
+      const rejected = renderTemplate('change.rejected', { changeTitle: 'Upgrade firewall firmware' });
+      expect(rejected.subject.toLowerCase()).toContain('not approved');
+    });
+
+    it('scheduled includes the implementation window', () => {
+      const out = renderTemplate('change.scheduled', {
+        changeTitle: 'Upgrade firewall firmware',
+        windowStart: '2026-06-20T02:00:00.000Z',
+      });
+      expect(out.subject.toLowerCase()).toContain('scheduled');
+      expect(out.text).toContain('Window start: 2026-06-20 02:00 UTC');
+    });
+
+    it('vote_overdue tells the chair to follow up and explicitly makes no decision', () => {
+      const out = renderTemplate('change.vote_overdue', {
+        changeTitle: 'Upgrade firewall firmware',
+        voteDeadline: '2026-06-16T14:30:00.000Z',
+      });
+      expect(out.subject.toLowerCase()).toContain('overdue');
+      expect(out.text.toLowerCase()).toContain('quorum has not been reached');
+      expect(out.text.toLowerCase()).toContain('no automatic action has been taken');
+    });
+  });
 });
