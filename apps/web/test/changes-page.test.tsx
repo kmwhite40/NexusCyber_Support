@@ -31,6 +31,25 @@ const mockedApi = vi.mocked(api, true);
 
 const ORG = '88888888-8888-8888-8888-888888888888';
 
+// GET /changes/:id returns the `changes` row bare (see the envelope-discipline note atop
+// lib/changes.ts) — NOT wrapped in `{ data }` like the collection routes. `status` is a
+// NOT NULL column (0011_change_management.sql), so a real response always carries one;
+// a mock that answers with `{ data: [] }` here — the shape of a *list* endpoint — lies
+// about that contract and hands ChangeDetail a change with no status.
+function changeRecordFixture(over: Record<string, unknown> = {}) {
+  return {
+    id: 'c-new', title: 'Untitled change', change_type: 'normal', risk: 'medium',
+    status: 'draft', window_start: null, window_end: null,
+    organization_id: ORG, description: null, impact: null, likelihood: null,
+    implementation_plan: null, test_plan: null, backout_plan: null,
+    created_by: 'u1', created_at: '2026-06-01T00:00:00.000Z',
+    cab_board_id: null, cab_quorum: null, cab_quorum_requested: null, cab_threshold: null,
+    vote_deadline: null, pir_outcome: null, pir_notes: null, pir_at: null,
+    cab_steps: [], votes: [], cab_tally: null,
+    ...over,
+  };
+}
+
 function asUser(over: Partial<Me>, caps: string[]) {
   authState.me = {
     id: 'u1', plane: 'customer', email: 'admin@acme.gov', organization_id: ORG,
@@ -108,6 +127,10 @@ describe('ChangesPage', () => {
           ],
         });
       }
+      // Create opens the new change, which re-fetches it bare from GET /changes/:id.
+      if (url === '/changes/c-new') {
+        return Promise.resolve(changeRecordFixture({ title: 'Rotate the edge certs', change_type: 'standard', risk: 'low', status: 'approved' }));
+      }
       return Promise.resolve({ data: [] });
     });
     mockedApi.post.mockResolvedValue({ id: 'c-new' });
@@ -131,11 +154,16 @@ describe('ChangesPage', () => {
   });
 
   it('leaves a non-pre-approved template on a CAB-bound change type', async () => {
-    mockedApi.get.mockImplementation((url: string) =>
-      url.startsWith('/changes/templates')
-        ? Promise.resolve({ data: [{ id: 't-norm', organization_id: ORG, name: 'Connector upgrade', change_type: 'normal', risk: 'medium' }] })
-        : Promise.resolve({ data: [] }),
-    );
+    mockedApi.get.mockImplementation((url: string) => {
+      if (url.startsWith('/changes/templates')) {
+        return Promise.resolve({ data: [{ id: 't-norm', organization_id: ORG, name: 'Connector upgrade', change_type: 'normal', risk: 'medium' }] });
+      }
+      // Create opens the new change, which re-fetches it bare from GET /changes/:id.
+      if (url === '/changes/c-new') {
+        return Promise.resolve(changeRecordFixture({ title: 'Upgrade the connector', change_type: 'normal', risk: 'medium' }));
+      }
+      return Promise.resolve({ data: [] });
+    });
     mockedApi.post.mockResolvedValue({ id: 'c-new' });
     asUser({}, ['change.create']);
     render(<ChangesPage />);
