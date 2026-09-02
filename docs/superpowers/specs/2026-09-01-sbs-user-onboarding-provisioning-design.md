@@ -195,6 +195,7 @@ Application permissions (admin consent required):
 | `Group.ReadWrite.All` | Security/distribution groups and the Cloud PC policy group |
 | `UserAuthenticationMethod.ReadWrite.All` | Issue the Temporary Access Pass |
 | `CloudPC.ReadWrite.All` | Read provisioning policies, watch Cloud PC state |
+| `Policy.Read.All` | **Probe only** — read the authentication-methods policy to confirm the Temporary Access Pass method is enabled (Open Item 4). Not needed by the running provisioning engine; grant it only if you want `scripts/probe-provisioning-tenant.sh` to answer that item automatically, and revoke it afterwards if you prefer a minimal standing grant. |
 
 `UserAuthenticationMethod.ReadWrite.All` is the sharpest — it can reset authentication methods on
 any account. Scoping these permissions to an **administrative unit** is recommended so the app
