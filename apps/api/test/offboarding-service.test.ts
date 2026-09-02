@@ -304,3 +304,23 @@ describe('(g) scheduling is gated on the request itself, not just the permission
     await expect(offboarding.preview(actor, TICKET)).rejects.toThrow(/approval/i);
   });
 });
+
+describe('(h) one armed run per ticket', () => {
+  it('refuses to arm a second run while one is already scheduled', async () => {
+    // Two armed runs for one ticket means the teardown fires twice, and the second fires against
+    // an account the first already renamed and stripped.
+    h.setDbRows(rowsExcept((text) => (/INSERT INTO provisioning_runs/.test(text)
+      ? []          // the conditional insert matched nothing: a run is already in flight
+      : null)));
+    const { fingerprint } = await offboarding.preview(actor, TICKET);
+    await expect(offboarding.schedule(actor, TICKET, fingerprint, '2099-01-01T00:00:00Z'))
+      .rejects.toThrow(/already/i);
+  });
+
+  it('guards with a conditional insert rather than check-then-insert', async () => {
+    const { fingerprint } = await offboarding.preview(actor, TICKET);
+    await offboarding.schedule(actor, TICKET, fingerprint, '2099-01-01T00:00:00Z');
+    const insert = h.queries.find((q) => /INSERT INTO provisioning_runs/.test(q.text))!;
+    expect(insert.text).toContain('NOT EXISTS');
+  });
+});

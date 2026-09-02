@@ -26,11 +26,37 @@ interface ClaimedRun {
   plan: { fingerprint?: string } | null;
 }
 
+/**
+ * How long a run may sit in 'running' before it is presumed abandoned. Generous: a real run is
+ * a handful of Graph calls, so anything past this is a process that died mid-execution.
+ */
+const STRANDED_AFTER = "interval '30 minutes'";
+
 export async function sweepDueOffboardings(
   now: Date = new Date(),
-): Promise<{ claimed: number; executed: number; needsReview: number }> {
+): Promise<{ claimed: number; executed: number; needsReview: number; stranded: number }> {
   let executed = 0;
   let needsReview = 0;
+
+  // A run claimed as 'running' whose process then died was invisible forever: the claim below
+  // only looks at 'scheduled', so nothing revisited it and nobody learned the termination had
+  // not completed.
+  //
+  // Deliberately NOT re-executed. Replaying destructive steps blind is worse than flagging —
+  // removeFromGroup against an already-removed membership fails, and a half-finished teardown is
+  // exactly the state a human should look at.
+  const stranded = await withSystemContext(async (sql: Sql) => {
+    const { rows } = await sql.query(
+      `UPDATE provisioning_runs
+          SET status = 'needs_review', finished_at = now(),
+              error = 'run was interrupted before it finished; review what completed before retrying'
+        WHERE kind = 'offboarding' AND status = 'running'
+          AND started_at < now() - ${STRANDED_AFTER}
+        RETURNING id`,
+    );
+    return rows.length;
+  });
+  if (stranded > 0) logger.warn({ stranded }, 'offboarding runs found stranded in running');
 
   // SKIP LOCKED is what makes concurrent sweepers safe — two app instances, or the old and new
   // container overlapping during a rolling deploy. A row already claimed by another transaction
@@ -111,7 +137,7 @@ export async function sweepDueOffboardings(
     }
   }
 
-  return { claimed: due.length, executed, needsReview };
+  return { claimed: due.length, executed, needsReview, stranded };
 }
 
 async function finish(run: ClaimedRun, status: string, error: string | null): Promise<void> {

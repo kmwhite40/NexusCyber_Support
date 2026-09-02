@@ -31,6 +31,9 @@ import type { Principal } from '../../types.js';
 /** The catalog item this engine offboards for. Nothing else may drive a directory teardown. */
 const OFFBOARDING_CATALOG_KEY = 'user.offboarding';
 
+/** Statuses that mean a run still owns this ticket's identity — a second must not be armed. */
+const IN_FLIGHT_OFFBOARD_STATUSES = ['scheduled', 'running'];
+
 interface TicketRow {
   id: string;
   organization_id: string;
@@ -145,12 +148,21 @@ async function resolveDepartingUpn(answers: Record<string, unknown>): Promise<st
 
 /** Group and distribution-list memberships. Directory roles are counted separately. */
 async function userGroupIds(graph: { get: (p: string) => Promise<any> }, userId: string): Promise<string[]> {
-  const res = await graph.get(`/users/${userId}/memberOf`);
-  const values = Array.isArray(res?.value) ? res.value : [];
-  return values
-    .filter((v: any) => String(v?.['@odata.type'] ?? '').includes('group'))
-    .map((v: any) => String(v.id))
-    .filter(Boolean);
+  // MUST follow @odata.nextLink. Graph pages memberOf at 100 by default, and silently dropping
+  // page two would leave the extra memberships in place while the run still reported success —
+  // an account that reads as fully offboarded and is not.
+  const ids: string[] = [];
+  let url: string | null = `/users/${userId}/memberOf`;
+  let pages = 0;
+  while (url && pages < 50) { // bounded: a malformed nextLink loop must not hang the sweeper
+    const res: any = await graph.get(url);
+    for (const v of Array.isArray(res?.value) ? res.value : []) {
+      if (String(v?.['@odata.type'] ?? '').includes('group') && v?.id) ids.push(String(v.id));
+    }
+    url = res?.['@odata.nextLink'] ?? null;
+    pages += 1;
+  }
+  return ids;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -290,17 +302,29 @@ export async function schedule(
     );
   }
 
+  // A CONDITIONAL insert, not check-then-insert. Two armed runs for one ticket means the
+  // teardown fires twice, the second against an account the first already renamed and stripped.
+  // A finished run never blocks a new one — only one still scheduled or running does.
   const runId = await withOrgContext(orgContextFor(actor), async (sql: Sql) => {
     const { rows } = await sql.query(
       `INSERT INTO provisioning_runs
          (ticket_id, organization_id, kind, status, scheduled_for, plan, started_by)
-       VALUES ($1,$2,'offboarding','scheduled',$3,$4::jsonb,$5)
+       SELECT $1,$2,'offboarding','scheduled',$3,$4::jsonb,$5
+        WHERE NOT EXISTS (
+          SELECT 1 FROM provisioning_runs
+           WHERE ticket_id = $1 AND kind = 'offboarding'
+             AND status = ANY($6)
+        )
        RETURNING id`,
       [ticket.id, ticket.organization_id, when.toISOString(),
-        JSON.stringify({ ...plan, fingerprint }), actor.id],
+        JSON.stringify({ ...plan, fingerprint }), actor.id, IN_FLIGHT_OFFBOARD_STATUSES],
     );
-    return rows[0]?.id as string;
+    return rows[0]?.id as string | undefined;
   });
+
+  if (!runId) {
+    throw Errors.conflict('an offboarding run is already scheduled or running for this ticket');
+  }
 
   await audit(actor, {
     action: 'offboarding.schedule',

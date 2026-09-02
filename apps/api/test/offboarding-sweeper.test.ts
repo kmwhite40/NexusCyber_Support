@@ -67,6 +67,7 @@ const approvedFingerprint = () => offboardFingerprint(planOffboard(STATE));
 /** A due run whose stored plan matches what the tenant still looks like. */
 function dueRun(fingerprint: string) {
   return (text: string) => {
+    if (/needs_review/.test(text) && /started_at </.test(text)) return []; // nothing stranded
     if (/UPDATE provisioning_runs/.test(text) && /RETURNING/.test(text)) {
       return [{ id: RUN, ticket_id: TICKET, organization_id: ORG, plan: { fingerprint } }];
     }
@@ -86,13 +87,13 @@ beforeEach(() => {
 describe('claiming due runs', () => {
   it('claims with FOR UPDATE SKIP LOCKED so two sweepers cannot double-execute a termination', async () => {
     await sweepDueOffboardings(new Date('2026-09-05T21:00:00Z'));
-    const claim = h.queries.find((q) => /UPDATE provisioning_runs/.test(q.text) && /RETURNING/.test(q.text))!;
+    const claim = h.queries.find((q) => /FOR UPDATE SKIP LOCKED/.test(q.text))!;
     expect(claim.text).toContain('FOR UPDATE SKIP LOCKED');
   });
 
   it('only claims offboarding runs that are scheduled and already due', async () => {
     await sweepDueOffboardings(new Date('2026-09-05T21:00:00Z'));
-    const claim = h.queries.find((q) => /UPDATE provisioning_runs/.test(q.text) && /RETURNING/.test(q.text))!;
+    const claim = h.queries.find((q) => /FOR UPDATE SKIP LOCKED/.test(q.text))!;
     expect(claim.text).toContain("kind = 'offboarding'");
     expect(claim.text).toContain("status = 'scheduled'");
     expect(claim.text).toContain('scheduled_for <=');
@@ -101,7 +102,7 @@ describe('claiming due runs', () => {
   it('does nothing when no run is due', async () => {
     h.setDbRows(() => []);
     const out = await sweepDueOffboardings(new Date('2026-09-01T00:00:00Z'));
-    expect(out).toEqual({ claimed: 0, executed: 0, needsReview: 0 });
+    expect(out).toEqual({ claimed: 0, executed: 0, needsReview: 0, stranded: 0 });
     expect(h.ops.blockSignin).not.toHaveBeenCalled();
   });
 });
@@ -184,6 +185,41 @@ describe('the inversion has to be real', () => {
     await sweepDueOffboardings(new Date('2026-09-05T21:00:00Z'));
     expect(h.ops.blockSignin).toHaveBeenCalled();
     expect(h.ops.revokeSessions).toHaveBeenCalled();
+    expect(h.ops.removeLicenses).not.toHaveBeenCalled();
+  });
+});
+
+// A run claimed as 'running' that never finished — the container was restarted mid-execution —
+// was invisible forever: the claim query only looks at 'scheduled', so nothing ever revisited it
+// and nobody learned the termination had not completed.
+describe('runs stranded in running', () => {
+  it('surfaces a long-running run for review instead of leaving it invisible', async () => {
+    h.setDbRows((text: string) => {
+      if (/UPDATE provisioning_runs/.test(text) && /needs_review/.test(text) && /RETURNING/.test(text)) {
+        return [{ id: 'stale-1' }];
+      }
+      return [];
+    });
+    const out = await sweepDueOffboardings(new Date('2026-09-05T21:00:00Z'));
+    const reclaim = h.queries.find((q) => /UPDATE provisioning_runs/.test(q.text) && /needs_review/.test(q.text))!;
+    expect(reclaim).toBeTruthy();
+    expect(reclaim.text).toContain("status = 'running'");
+    expect(reclaim.text).toContain('started_at <');
+    expect(out.stranded).toBe(1);
+  });
+
+  it('does NOT silently re-execute a stranded run', async () => {
+    // Re-running destructive steps blind is worse than flagging: removeFromGroup on an
+    // already-removed membership fails, and a half-finished teardown is exactly the state a
+    // human should look at.
+    h.setDbRows((text: string) => {
+      if (/UPDATE provisioning_runs/.test(text) && /needs_review/.test(text) && /RETURNING/.test(text)) {
+        return [{ id: 'stale-1' }];
+      }
+      return [];
+    });
+    await sweepDueOffboardings(new Date('2026-09-05T21:00:00Z'));
+    expect(h.ops.blockSignin).not.toHaveBeenCalled();
     expect(h.ops.removeLicenses).not.toHaveBeenCalled();
   });
 });
