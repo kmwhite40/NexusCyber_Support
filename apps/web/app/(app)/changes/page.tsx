@@ -7,12 +7,15 @@ import { changesApi, type Change, type ChangeRecord } from '@/lib/changes';
 import { ChangeCalendar } from './_components/change-calendar';
 import { ChangeList } from './_components/change-list';
 import { ChangeDetail } from './_components/change-detail';
+import { CabBoardSettings, useOrgOptions } from './_components/cab-board-settings';
+
+type View = 'list' | 'calendar' | 'settings';
 
 export default function ChangesPage() {
   const { me, can } = useAuth();
   const [rows, setRows] = React.useState<Change[] | null>(null);
   const [sel, setSel] = React.useState<ChangeRecord | null>(null);
-  const [view, setView] = React.useState<'list' | 'calendar'>('list');
+  const [view, setView] = React.useState<View>('list');
   const [creating, setCreating] = React.useState(false);
   const [form, setForm] = React.useState({ title: '', changeType: 'normal', risk: 'medium', description: '' });
   const [err, setErr] = React.useState<string | null>(null);
@@ -22,6 +25,21 @@ export default function ChangesPage() {
     vote: can('change.vote'),
     implement: can('change.implement'),
   };
+  const canManageCab = can('cab.manage');
+
+  // CAB config is per organization. A customer admin configures their own org and gets no
+  // picker; a nexus admin chooses which customer's board they are editing. Neither ever
+  // omits the org — see the ORG SCOPE note in _components/cab-board-settings.tsx.
+  const isAgent = me?.plane === 'nexus';
+  const orgOptions = useOrgOptions(canManageCab && isAgent);
+  const [cabOrgId, setCabOrgId] = React.useState<string | null>(null);
+  const settingsOrgId = isAgent ? cabOrgId : me?.organization_id ?? null;
+
+  // Losing cab.manage (a role change mid-session) must not strand the user on a tab they
+  // may no longer see.
+  React.useEffect(() => {
+    if (view === 'settings' && !canManageCab) setView('list');
+  }, [view, canManageCab]);
 
   const load = React.useCallback(() => {
     changesApi.list().then(setRows).catch(() => setRows([]));
@@ -59,20 +77,23 @@ export default function ChangesPage() {
           <p className="mt-1 text-sm text-muted">Standard, normal, and emergency changes with CAB approval and a change calendar.</p>
         </div>
         <div className="flex items-center gap-2">
-          <SegmentedControl<'list' | 'calendar'>
+          <SegmentedControl<View>
             size="sm"
             value={view}
             onChange={setView}
             options={[
               { value: 'list', label: 'List' },
               { value: 'calendar', label: 'Calendar' },
+              ...(canManageCab ? ([{ value: 'settings' as const, label: 'CAB settings' }]) : []),
             ]}
           />
-          {perms.create && <Button onClick={() => setCreating((c) => !c)}>{creating ? 'Cancel' : 'New change'}</Button>}
+          {perms.create && view !== 'settings' && (
+            <Button onClick={() => setCreating((c) => !c)}>{creating ? 'Cancel' : 'New change'}</Button>
+          )}
         </div>
       </div>
 
-      {creating && (
+      {creating && view !== 'settings' && (
         <Card>
           <CardBody className="space-y-3">
             <Input placeholder="Change title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
@@ -101,6 +122,15 @@ export default function ChangesPage() {
       )}
 
       {view === 'calendar' && <ChangeCalendar onOpen={open} />}
+
+      {view === 'settings' && canManageCab && (
+        <CabBoardSettings
+          organizationId={settingsOrgId}
+          orgOptions={isAgent ? orgOptions : []}
+          onOrganizationChange={setCabOrgId}
+          canListPlatformUsers={can('admin.users.manage')}
+        />
+      )}
 
       {view === 'list' && (
         <div className="grid gap-5 lg:grid-cols-[1fr_400px]">
