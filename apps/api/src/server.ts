@@ -22,6 +22,7 @@ import { incCounter, renderMetrics, statusClass } from './metrics.js';
 import { startMailIngest } from './jobs/mail-ingest.js';
 import { startRetentionPurge } from './jobs/retention-purge.js';
 import { startCloudPcPoller } from './jobs/cloudpc-poller.js';
+import { startOffboardingSweeper } from './jobs/offboarding-sweeper.js';
 
 async function main() {
   // Optional in-boundary migrations on boot (set RUN_MIGRATIONS_ON_BOOT=true). Runs
@@ -140,6 +141,12 @@ async function main() {
   if (config.provisioning.enabled) {
     startCloudPcPoller();
     logger.info('Cloud PC poller enabled');
+
+    // Offboarding sweep: fires approved plans at the instant HR instructed. Shares the
+    // provisioning feature flag deliberately — the destructive half must not be able to run
+    // without the tenant configuration the whole engine depends on.
+    startOffboardingSweeper();
+    logger.info('Offboarding sweeper enabled');
   }
 
   await app.listen({ port: config.port, host: '0.0.0.0' });
