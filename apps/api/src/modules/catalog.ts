@@ -10,6 +10,7 @@ import { addBusinessMinutes } from './sla.js';
 import { Errors } from '../errors.js';
 import { getFormByCatalogKey, validateAgainstForm, mapFormAnswers, type MappedAnswers } from './forms.js';
 import { storeSensitiveWith } from './sensitive-fields.js';
+import { nextTicketNumber } from './tickets.js';
 import type { FormField } from './form-fields.js';
 import type { Principal } from '../types.js';
 
@@ -97,13 +98,9 @@ export async function createRequest(actor: Principal, key: string, input: Create
   }
 
   return withOrgContext(orgContextFor(actor), async (sql) => {
-    const prefix = (await sql.query('SELECT left(upper(name),4) AS p FROM organizations WHERE id=$1', [orgId])).rows[0].p;
-    const n = (
-      await sql.query(
-        `SELECT COALESCE(MAX((regexp_replace(ticket_number,'\\D','','g'))::int),0)+1 AS n FROM tickets WHERE organization_id=$1`,
-        [orgId],
-      )
-    ).rows[0].n;
+    // Advisory-lock-serialized per-org allocation (see nextTicketNumber in tickets.ts) —
+    // shared with the direct-create and mail-ingest paths so the lock key matches everywhere.
+    const ticketNumber = await nextTicketNumber(sql, orgId);
     // Requires approval -> starts 'new' (pending approval). Else routed & owned by the tier.
     const status = item.requires_approval ? 'new' : 'assigned';
 
@@ -118,7 +115,7 @@ export async function createRequest(actor: Principal, key: string, input: Create
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
         [
           orgId,
-          `${prefix}-${String(n).padStart(6, '0')}`,
+          ticketNumber,
           item.ticket_type,
           requesterId,
           affectedUserId,
