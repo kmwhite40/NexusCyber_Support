@@ -7,6 +7,7 @@ import { EmptyState } from '@/components/ui/data';
 import { changesApi, statusTone, type Change, type ChangeRecord } from '@/lib/changes';
 import { ChangeCalendar } from './_components/change-calendar';
 import { ChangeList } from './_components/change-list';
+import { VotePanel } from './_components/vote-panel';
 
 export default function ChangesPage() {
   const { me, can } = useAuth();
@@ -53,17 +54,6 @@ export default function ChangesPage() {
       await changesApi.submitCab(sel.id);
     } catch (e) {
       setErr(e instanceof ApiError ? e.detail : 'Failed to submit to the CAB');
-      return;
-    }
-    open(sel.id); load();
-  }
-  async function decide(vote: 'approve' | 'reject' | 'abstain') {
-    if (!sel) return;
-    setErr(null);
-    try {
-      await changesApi.vote(sel.id, vote);
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.detail : 'Failed to record your vote');
       return;
     }
     open(sel.id); load();
@@ -173,33 +163,11 @@ export default function ChangesPage() {
                 )}
 
                 {sel.votes.length > 0 && (
-                  <div className="rounded-md border border-border p-2">
-                    <div className="mb-1 flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-muted">
-                      <span>CAB board</span>
-                      {sel.cab_tally && (
-                        <span className="normal-case tracking-normal">
-                          {sel.cab_tally.cast} of {sel.cab_tally.roster} cast · quorum {sel.cab_quorum ?? '—'} · {(sel.cab_threshold ?? 'majority').replace(/_/g, ' ')}
-                        </span>
-                      )}
-                    </div>
-                    {sel.votes.map((v) => (
-                      <div key={v.id} className="flex items-center justify-between text-xs">
-                        <span className="text-muted">{v.ad_hoc ? 'ad-hoc reviewer' : 'board member'}</span>
-                        <Badge tone={v.vote === 'approve' ? 'success' : v.vote === 'reject' ? 'danger' : 'neutral'}>{v.vote ?? 'pending'}</Badge>
-                      </div>
-                    ))}
-                  </div>
+                  <VotePanel change={sel} meId={me?.id} canVote={canVote} onVoted={() => { open(sel.id); load(); }} />
                 )}
 
                 <div className="flex flex-wrap gap-2 border-t border-border pt-3">
                   {sel.status === 'draft' && can('change.create') && <Button size="sm" onClick={submitCab}>Submit to CAB</Button>}
-                  {sel.status === 'cab_review' && canVote && sel.votes.some((v) => v.voter_id === me?.id) && (
-                    <>
-                      <Button size="sm" onClick={() => decide('approve')}>Approve</Button>
-                      <Button size="sm" variant="danger" onClick={() => decide('reject')}>Reject</Button>
-                      <Button size="sm" variant="subtle" onClick={() => decide('abstain')}>Abstain</Button>
-                    </>
-                  )}
                   {sel.status === 'approved' && canImplement && <Button size="sm" onClick={schedule}>Schedule (tomorrow 02:00)</Button>}
                   {sel.status === 'review' && canImplement ? (
                     // Closing requires a post-implementation review outcome; recording it closes the change.
