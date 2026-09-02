@@ -405,9 +405,12 @@ export async function submitForCab(actor: Principal, changeId: string, input: Su
       );
     }
     await sql.query(
+      // cab_quorum_requested is persisted, not just returned, so a clamped (weakened)
+      // quorum stays visible in the vote panel to everyone who votes later — not only
+      // to whoever happened to read this call's response.
       `UPDATE changes SET status='cab_review', cab_board_id=$2, cab_quorum=$3, cab_threshold=$4,
-              vote_deadline=$5, updated_at=now() WHERE id=$1`,
-      [changeId, board?.id ?? null, quorum, threshold, deadline.toISOString()],
+              vote_deadline=$5, cab_quorum_requested=$6, updated_at=now() WHERE id=$1`,
+      [changeId, board?.id ?? null, quorum, threshold, deadline.toISOString(), quorumRequested],
     );
     await audit(actor, { action: 'change.submit_cab', organizationId: change.organization_id, resourceType: 'change', resourceId: changeId, detail: { voters: voters.length, quorum, quorum_requested: quorumRequested, quorum_clamped: clamped, recused: proposed.length - voters.length, threshold, vote_deadline: deadline.toISOString() } });
     publish('change.cab_requested', change.organization_id, {

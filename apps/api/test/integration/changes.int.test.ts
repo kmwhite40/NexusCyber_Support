@@ -92,6 +92,10 @@ describeDb('change management + CAB voting (integration)', () => {
     expect(sub).toMatchObject({ voters: 1, quorum: 1, quorum_requested: 2, quorum_clamped: true });
     const full = await getChange(manager, c.id);
     expect(full.votes.map((v: any) => v.voter_id)).toEqual([analyst.id]);
+    // The clamp is PERSISTED, not just returned to the submitter: a voter opening this
+    // change later must still be able to see that it votes at a weakened quorum.
+    expect(full.cab_quorum).toBe(1);
+    expect(full.cab_quorum_requested).toBe(2);
     // …and the raiser cannot vote even though they hold change.vote.
     await expect(castVote(manager, c.id, 'approve')).rejects.toMatchObject({ status: 403 });
     expect((await castVote(analyst, c.id, 'approve')).status).toBe('approved');
