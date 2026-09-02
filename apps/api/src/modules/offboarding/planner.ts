@@ -8,6 +8,8 @@
 //
 // Spec: docs/superpowers/specs/2026-09-02-sbs-offboarding-design.md
 
+import { createHash } from 'node:crypto';
+
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
@@ -169,4 +171,26 @@ export function planOffboard(input: OffboardPlanInput): OffboardPlan {
     steps,
     blockers,
   };
+}
+
+/**
+ * Binds an approved plan to the exact set of writes it authorises.
+ *
+ * Covers the step DETAIL, not just the keys: "reclaim 1 licence" and "reclaim 4 licences" are
+ * the same six steps and very different acts, and the admin approved one of them.
+ *
+ * What the service does with a mismatch differs by direction, and the difference is deliberate.
+ * Onboarding refuses the whole run — creating the wrong account is worse than creating nothing.
+ * Offboarding still blocks sign-in and revokes sessions, because failing to disable a terminated
+ * employee is the dangerous outcome; only the data-affecting steps halt. See
+ * jobs/offboarding-sweeper.ts.
+ */
+export function offboardFingerprint(plan: OffboardPlan): string {
+  const material = JSON.stringify({
+    upn: plan.upn,
+    inactiveName: plan.inactiveName,
+    privileged: plan.privileged,
+    steps: plan.steps.map((s) => [s.key, s.manual, s.detail]),
+  });
+  return createHash('sha256').update(material).digest('hex');
 }

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  inactiveDisplayName, planOffboard, OFFBOARD_STEP_ORDER, type OffboardPlanInput,
+  inactiveDisplayName, planOffboard, offboardFingerprint, OFFBOARD_STEP_ORDER, type OffboardPlanInput,
 } from '../src/modules/offboarding/planner.js';
 
 // The disabled-account name is the only place the retention clock (1yr standard / 7yr
@@ -109,5 +109,32 @@ describe('planOffboard', () => {
 
   it('carries the computed inactive name so the executor never derives it', () => {
     expect(planOffboard(baseInput()).inactiveName).toBe('ZZ_Inactive_Doe_Jane_2026-09-02');
+  });
+});
+
+describe('offboardFingerprint', () => {
+  it('is stable for the same plan', () => {
+    expect(offboardFingerprint(planOffboard(baseInput())))
+      .toBe(offboardFingerprint(planOffboard(baseInput())));
+  });
+
+  it('changes when the licenses to reclaim change', () => {
+    // "reclaim 1 licence" and "reclaim 2 licences" are the same six steps and very different
+    // acts, which is why the fingerprint covers step DETAIL and not just the keys.
+    expect(offboardFingerprint(planOffboard(baseInput())))
+      .not.toBe(offboardFingerprint(planOffboard(baseInput({ licenseSkuIds: ['sku-e3', 'sku-atp'] }))));
+  });
+
+  it('changes when the groups to strip change', () => {
+    expect(offboardFingerprint(planOffboard(baseInput())))
+      .not.toBe(offboardFingerprint(planOffboard(baseInput({ groupIds: ['g-1', 'g-2'] }))));
+  });
+
+  it('changes when the account being acted on changes', () => {
+    const other = baseInput({
+      user: { id: 'u-2', userPrincipalName: 'someone.else@sbsfederal.com', displayName: 'Someone Else', accountEnabled: true },
+    });
+    expect(offboardFingerprint(planOffboard(baseInput())))
+      .not.toBe(offboardFingerprint(planOffboard(other)));
   });
 });
