@@ -112,7 +112,9 @@ describe('resolveVote', () => {
   // Quorum is the STANDING board's property. Ad-hoc reviewers are attached to one change by
   // whoever submits it, so if their ballots counted toward quorum the submitter could make
   // the board quorate with people they chose — the packing half of "the raiser picks their
-  // own approvers". They still count toward the threshold.
+  // own approvers". They are still counted in the THRESHOLD, so this stops ad-hoc voters
+  // resolving a vote the standing board has not turned out for; it does not stop them
+  // outweighing one that has. The authority to attach them is the control there.
   it('does not let ad-hoc ballots satisfy quorum', () => {
     const rows = [
       { vote: 'approve' as const, weight: 1, ad_hoc: true },

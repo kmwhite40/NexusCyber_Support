@@ -132,6 +132,21 @@ describe('VotePanel', () => {
     expect(within(panel).queryByText(/not yet decided/i)).not.toBeInTheDocument();
   });
 
+  it('does not dress a rejection up as a met quorum', () => {
+    const change = makeChange({
+      status: 'rejected',
+      cab_quorum: 2,
+      votes: [
+        ballot({ id: 'v1', voter_id: ME, vote: 'reject' }),
+        ballot({ id: 'v2', voter_id: OTHER, vote: 'reject' }),
+      ],
+    });
+    render(<VotePanel change={change} meId={ME} canVote onVoted={vi.fn()} />);
+    const line = screen.getByText(/quorum met/i);
+    expect(line).toHaveTextContent(/rejected/i);
+    expect(line.className).not.toMatch(/text-success/);
+  });
+
   it('does not count ad-hoc ballots toward quorum progress', () => {
     // The API measures quorum against the STANDING board only, so a panel that counted
     // ad-hoc ballots would show a board as quorate that the resolver does not.

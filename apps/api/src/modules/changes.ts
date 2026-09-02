@@ -124,9 +124,15 @@ function thresholdPasses(a: number, r: number, threshold: Threshold, allVoted: b
 export function resolveVote(rows: VoteRow[], cfg: { quorum: number; threshold: Threshold }): ChangeStatus {
   const t = tallyVotes(rows);
   // Quorum is a property of the STANDING board. Ad-hoc reviewers are added per change by
-  // the submitter, so counting their ballots toward quorum would let the submitter make
-  // the board quorate with people they chose. They still count toward the threshold —
-  // an ad-hoc reviewer can influence or block an outcome, not manufacture one.
+  // the submitter, so counting their ballots toward quorum would let the submitter make the
+  // board quorate with people they chose.
+  //
+  // This is a tightening, NOT a guarantee that ad-hoc reviewers cannot decide an outcome:
+  // they are still counted in the THRESHOLD, so a standing board splitting 1 approve / 2
+  // reject plus two ad-hoc approvals passes a simple majority. What the exclusion buys is
+  // that the standing board must actually turn out before anything resolves at all. Whoever
+  // may attach ad-hoc reviewers (the chair or a CAB administrator, never the raiser — see
+  // mayComposeRoster) can still weight a vote, which is why that authority is the control.
   const quorumMet = t.standing_cast >= cfg.quorum;
   const allVoted = t.pending === 0;
   if (quorumMet && thresholdPasses(t.approve, t.reject, cfg.threshold, allVoted)) return 'approved';
@@ -458,7 +464,7 @@ export async function submitForCab(actor: Principal, changeId: string, input: Su
         : null;
       if (!preapprovalGranted('standard', tpl)) {
         throw Errors.forbidden(
-          'this change is marked standard but carries no pre-approved change template, so it has not been pre-approved; raise it as a normal change for the CAB to vote on',
+          'this change is marked standard but no pre-approved template stands behind it, so nothing has pre-approved it. Cancel it and raise it again: as a normal change for the CAB to vote on, or from a pre-approved standard template (GET /api/v1/changes/templates) if one covers this work.',
         );
       }
       await sql.query("UPDATE changes SET status='approved', updated_at=now() WHERE id=$1", [changeId]);

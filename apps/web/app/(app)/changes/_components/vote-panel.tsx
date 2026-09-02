@@ -129,12 +129,22 @@ export function VotePanel({
             Quorum {progress.cast} of {progress.quorum}
             {tally ? ` · roster ${tally.roster}${weighted ? ' weight' : ''}` : ''}
           </span>
-          <span className={progress.met && outlook.outcome !== 'open' ? 'text-success' : undefined}>
+          <span
+            className={
+              !progress.met || outlook.outcome === 'open' ? undefined
+                : outlook.outcome === 'rejected' ? 'text-danger'
+                : 'text-success'
+            }
+          >
             {!progress.met
               ? `${progress.remaining} more ${unit}${progress.remaining === 1 ? '' : 's'} needed`
               : outlook.outcome === 'open'
                 ? `quorum met · not yet decided (${outlook.blocker})`
-                : 'quorum met'}
+                // Quorum being met is not good news when the vote it resolved was a
+                // rejection; a green "quorum met" chip on a rejected change reads as approval.
+                : outlook.outcome === 'rejected'
+                  ? 'quorum met · rejected'
+                  : 'quorum met'}
           </span>
         </div>
         <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-2" role="presentation">

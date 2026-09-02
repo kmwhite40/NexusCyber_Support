@@ -162,6 +162,33 @@ describe('CabBoardSettings', () => {
     expect(body).toMatchObject({ organizationId: ORG, name: 'Standard patch' });
   });
 
+  // This form is the only thing in the product that authors templates, so its default IS the
+  // effective default — the API's and the column's never reach a user. It used to be
+  // `standard`, which minted a standing pre-approval (changes from it skip the CAB entirely)
+  // for any admin who filled in a name and clicked Add.
+  it('authors a template as normal unless pre-approval is chosen deliberately', async () => {
+    mockedApi.post.mockResolvedValue({ id: 't-new' });
+    renderSettings();
+    await userEvent.type(await screen.findByLabelText('Template name'), 'Connector upgrade');
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /add template/i }));
+
+    await waitFor(() => expect(mockedApi.post).toHaveBeenCalled());
+    expect(mockedApi.post.mock.calls[0][1]).toMatchObject({ changeType: 'normal' });
+  });
+
+  it('states the consequence when an admin does choose pre-approval', async () => {
+    mockedApi.post.mockResolvedValue({ id: 't-new' });
+    renderSettings();
+    await userEvent.type(await screen.findByLabelText('Template name'), 'Cert rotation');
+    await userEvent.selectOptions(screen.getByLabelText('Template type'), 'standard');
+    expect(screen.getByRole('status')).toHaveTextContent(/never reach the board/i);
+
+    await userEvent.click(screen.getByRole('button', { name: /add template/i }));
+    await waitFor(() => expect(mockedApi.post).toHaveBeenCalled());
+    expect(mockedApi.post.mock.calls[0][1]).toMatchObject({ changeType: 'standard' });
+  });
+
   it('labels inherited global rows so an admin knows they are platform-wide', async () => {
     routeGet({
       blackouts: { data: [{ id: 'b1', organization_id: null, name: 'Fiscal year end', starts_at: '2026-09-25T00:00:00.000Z', ends_at: '2026-10-02T00:00:00.000Z', reason: null }] },

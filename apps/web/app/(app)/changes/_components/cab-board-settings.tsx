@@ -394,7 +394,11 @@ function BlackoutEditor({ organizationId }: { organizationId: string }) {
 function TemplateEditor({ organizationId }: { organizationId: string }) {
   const [rows, setRows] = React.useState<ChangeTemplate[] | null>(null);
   const [form, setForm] = React.useState({
-    name: '', changeType: 'standard' as ChangeType, risk: 'low' as RiskBand,
+    // Defaults to `normal`. A `standard` template is a standing PRE-APPROVAL — every change
+    // built from it skips the CAB entirely — so it has to be chosen, never inherited from a
+    // form default nobody looked at. (This form is the only thing that authors templates, so
+    // the API and column defaults never reached the product until this changed.)
+    name: '', changeType: 'normal' as ChangeType, risk: 'low' as RiskBand,
     description: '', implementationPlan: '', testPlan: '', backoutPlan: '',
   });
   const [busy, setBusy] = React.useState(false);
@@ -469,9 +473,9 @@ function TemplateEditor({ organizationId }: { organizationId: string }) {
           <Field label="Name"><Input aria-label="Template name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
           <Field label="Type">
             <Select aria-label="Template type" value={form.changeType} onChange={(e) => setForm({ ...form, changeType: e.target.value as ChangeType })}>
-              <option value="standard">Standard (pre-approved)</option>
               <option value="normal">Normal (CAB)</option>
               <option value="emergency">Emergency</option>
+              <option value="standard">Standard (pre-approved)</option>
             </Select>
           </Field>
           <Field label="Risk">
@@ -482,6 +486,13 @@ function TemplateEditor({ organizationId }: { organizationId: string }) {
             </Select>
           </Field>
         </div>
+        {form.changeType === 'standard' && (
+          <p role="status" className="rounded border border-warning/30 bg-warning/10 p-2 text-[11px] text-warning">
+            A standard template pre-approves this work: changes raised from it are approved on
+            submission and never reach the board. Publish one only for work the CAB has already
+            agreed needs no vote.
+          </p>
+        )}
         <Textarea aria-label="Template description" placeholder="Description" rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
         <Textarea aria-label="Template implementation plan" placeholder="Implementation plan" rows={2} value={form.implementationPlan} onChange={(e) => setForm({ ...form, implementationPlan: e.target.value })} />
         <Textarea aria-label="Template test plan" placeholder="Test plan" rows={2} value={form.testPlan} onChange={(e) => setForm({ ...form, testPlan: e.target.value })} />
