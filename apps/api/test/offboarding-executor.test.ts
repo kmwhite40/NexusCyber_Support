@@ -20,8 +20,12 @@ const opsDouble = () => {
 };
 
 const input = (over: Partial<OffboardPlanInput> = {}): OffboardPlanInput => ({
-  answers: { legal_first_name: 'Jane', legal_last_name: 'Doe', last_day: '2026-09-02' },
-  user: { id: 'u-1', userPrincipalName: 'jane.doe@sbsfederal.com', displayName: 'Jane Doe', accountEnabled: true },
+  answers: { last_day: '2026-09-02' },
+  departingUpn: 'jane.doe@sbsfederal.com',
+  user: {
+    id: 'u-1', userPrincipalName: 'jane.doe@sbsfederal.com', displayName: 'Jane Doe',
+    accountEnabled: true, givenName: 'Jane', surname: 'Doe',
+  },
   directoryRoleCount: 0, licenseSkuIds: ['sku-e3'], groupIds: ['g-1'], mailboxType: 'user',
   ...over,
 });

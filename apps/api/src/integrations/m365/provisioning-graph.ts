@@ -60,9 +60,16 @@ function odataStringLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+/**
+ * $select MUST list every field a caller reads. Graph silently omits anything unselected, so a
+ * short list does not fail — it returns `undefined` and the caller quietly reasons about nothing.
+ * The offboarding planner reads displayName/accountEnabled (to detect an already-offboarded
+ * account) and givenName/surname (to build the rename), and all four were missing here.
+ */
 export async function findUserByUpn(g: GraphClient, upn: string) {
   const filter = `userPrincipalName eq ${odataStringLiteral(upn)}`;
-  const res = await g.get(`/users?$filter=${encodeURIComponent(filter)}&$select=id,userPrincipalName`);
+  const select = 'id,userPrincipalName,displayName,accountEnabled,givenName,surname';
+  const res = await g.get(`/users?$filter=${encodeURIComponent(filter)}&$select=${select}`);
   return res?.value?.[0] ?? null;
 }
 

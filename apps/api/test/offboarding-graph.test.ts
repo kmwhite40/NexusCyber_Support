@@ -64,3 +64,21 @@ describe('offboarding graph ops', () => {
     expect(calls[0]).toMatchObject({ method: 'DELETE', path: '/groups/g-1/members/u-1/$ref' });
   });
 });
+
+// findUserByUpn selected only id + userPrincipalName, but the offboarding planner reads
+// displayName and accountEnabled off the same object — so both arrived undefined, the
+// `already_offboarded` blocker could never fire, and a finished account could be torn down a
+// second time (renamed with a fresh date, licences re-stripped). The test double returned the
+// unselected fields, which is precisely why the suite stayed green.
+describe('findUserByUpn selects what its callers actually read', () => {
+  it('asks Graph for the fields the offboarding planner needs', async () => {
+    const { findUserByUpn } = await import('../src/integrations/m365/provisioning-graph.js');
+    const calls: string[] = [];
+    const g = { get: async (p: string) => { calls.push(p); return { value: [] }; } } as any;
+    await findUserByUpn(g, 'jane.doe@sbsfederal.com');
+    const url = decodeURIComponent(calls[0]);
+    for (const field of ['id', 'userPrincipalName', 'displayName', 'accountEnabled', 'givenName', 'surname']) {
+      expect(url).toContain(field);
+    }
+  });
+});

@@ -28,8 +28,14 @@ describe('inactiveDisplayName', () => {
 });
 
 const baseInput = (over: Partial<OffboardPlanInput> = {}): OffboardPlanInput => ({
-  answers: { legal_first_name: 'Jane', legal_last_name: 'Doe', last_day: '2026-09-02' },
-  user: { id: 'u-1', userPrincipalName: 'jane.doe@sbsfederal.com', displayName: 'Jane Doe', accountEnabled: true },
+  // The offboarding intake captures departing_user / last_day / legal_hold — NOT name fields.
+  // The name for the rename comes from the DIRECTORY account being renamed.
+  answers: { last_day: '2026-09-02' },
+  departingUpn: 'jane.doe@sbsfederal.com',
+  user: {
+    id: 'u-1', userPrincipalName: 'jane.doe@sbsfederal.com', displayName: 'Jane Doe',
+    accountEnabled: true, givenName: 'Jane', surname: 'Doe',
+  },
   directoryRoleCount: 0,
   licenseSkuIds: ['sku-e3'],
   groupIds: ['g-1'],
@@ -88,7 +94,7 @@ describe('planOffboard', () => {
 
   it('blocks a re-run of an account already disabled and renamed', () => {
     const plan = planOffboard(baseInput({
-      user: { id: 'u-1', userPrincipalName: 'jane.doe@sbsfederal.com', displayName: 'ZZ_Inactive_Doe_Jane_2026-09-02', accountEnabled: false },
+      user: { id: 'u-1', userPrincipalName: 'jane.doe@sbsfederal.com', displayName: 'ZZ_Inactive_Doe_Jane_2026-09-02', accountEnabled: false, givenName: 'Jane', surname: 'Doe' },
     }));
     expect(plan.blockers.map((b) => b.code)).toContain('already_offboarded');
   });
@@ -97,13 +103,13 @@ describe('planOffboard', () => {
     // Disabled but not renamed is a normal pre-state (HR disabled early); offboarding should
     // still be able to finish the job.
     const plan = planOffboard(baseInput({
-      user: { id: 'u-1', userPrincipalName: 'jane.doe@sbsfederal.com', displayName: 'Jane Doe', accountEnabled: false },
+      user: { id: 'u-1', userPrincipalName: 'jane.doe@sbsfederal.com', displayName: 'Jane Doe', accountEnabled: false, givenName: 'Jane', surname: 'Doe' },
     }));
     expect(plan.blockers.map((b) => b.code)).not.toContain('already_offboarded');
   });
 
   it('reports a bad last day as a blocker rather than throwing out of the planner', () => {
-    const plan = planOffboard(baseInput({ answers: { legal_first_name: 'Jane', legal_last_name: 'Doe', last_day: 'soon' } }));
+    const plan = planOffboard(baseInput({ answers: { last_day: 'soon' } }));
     expect(plan.blockers.map((b) => b.code)).toContain('bad_last_day');
   });
 
@@ -136,5 +142,38 @@ describe('offboardFingerprint', () => {
     });
     expect(offboardFingerprint(planOffboard(baseInput())))
       .not.toBe(offboardFingerprint(planOffboard(other)));
+  });
+});
+
+// The rename must describe the account actually being renamed, so its name parts come from the
+// DIRECTORY, not from form text. The offboarding intake never captured a name at all — building
+// the planner against onboarding's legal_first_name/legal_last_name meant every real preview
+// derived an empty name and found no user.
+describe('planOffboard — name resolution', () => {
+  it('builds the inactive name from the directory account given/surname', () => {
+    expect(planOffboard(baseInput()).inactiveName).toBe('ZZ_Inactive_Doe_Jane_2026-09-02');
+  });
+
+  it('falls back to splitting displayName when given/surname are absent', () => {
+    // Plenty of real directory accounts have only a displayName populated.
+    const plan = planOffboard(baseInput({
+      user: { id: 'u-1', userPrincipalName: 'a.b@sbsfederal.com', displayName: 'Ada Lovelace', accountEnabled: true },
+    }));
+    expect(plan.inactiveName).toBe('ZZ_Inactive_Lovelace_Ada_2026-09-02');
+  });
+
+  it('handles a "Last, First" display name', () => {
+    const plan = planOffboard(baseInput({
+      user: { id: 'u-1', userPrincipalName: 'a.b@sbsfederal.com', displayName: 'Townsend, Colleen', accountEnabled: true },
+    }));
+    expect(plan.inactiveName).toBe('ZZ_Inactive_Townsend_Colleen_2026-09-02');
+  });
+
+  it('BLOCKS rather than renaming a live account to a name with empty segments', () => {
+    const plan = planOffboard(baseInput({
+      user: { id: 'u-1', userPrincipalName: 'a.b@sbsfederal.com', displayName: '   ', accountEnabled: true },
+    }));
+    expect(plan.blockers.map((b) => b.code)).toContain('no_name');
+    expect(plan.inactiveName).not.toMatch(/__/);
   });
 });

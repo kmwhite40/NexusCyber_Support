@@ -20,7 +20,6 @@ import { audit } from '../audit.js';
 import { Errors } from '../../errors.js';
 import { config } from '../../config.js';
 import { getProvisioningGraph } from '../../integrations/m365/provisioning-runtime.js';
-import { deriveUpn } from '../provisioning/planner.js';
 import {
   findUserByUpn, directoryRoleCount, userLicenseSkuIds,
   setAccountEnabled, revokeSignInSessions, setDisplayName, removeLicenses, removeFromGroup,
@@ -90,22 +89,32 @@ export async function readOffboardTenantState(ticketId: string): Promise<Offboar
   const ticket = await loadTicket(ticketId);
   const answers = (ticket.custom_fields ?? {}) as Record<string, unknown>;
 
-  const g = await getProvisioningGraph();
-  const upn = String(answers.departing_upn ?? deriveUpn(answers, config.provisioning.upnDomain));
-  const user = await findUserByUpn(g.graph, upn);
+  // WHO is being offboarded comes from the ticket's `departing_user` reference — the only
+  // identity the offboarding intake actually captures. Deriving a UPN from name fields (as the
+  // onboarding planner does) is wrong here: this form has no name fields, so every derivation
+  // produced ".@<domain>", matched nothing, and the feature could never arm a run.
+  const departingUpn = await resolveDepartingUpn(answers);
 
-  const roleCount = user ? await directoryRoleCount(g.graph, user.id) : 0;
-  const licenseSkuIds = user ? await userLicenseSkuIds(g.graph, user.id) : [];
-  const groupIds = user ? await userGroupIds(g.graph, user.id) : [];
+  // No resolvable person means nothing to look up. Skipping the Graph call keeps a malformed
+  // request from spending a tenant round trip, and the planner reports it as a blocker.
+  const g = departingUpn ? await getProvisioningGraph() : null;
+  const user = g && departingUpn ? await findUserByUpn(g.graph, departingUpn) : null;
+
+  const roleCount = g && user ? await directoryRoleCount(g.graph, user.id) : 0;
+  const licenseSkuIds = g && user ? await userLicenseSkuIds(g.graph, user.id) : [];
+  const groupIds = g && user ? await userGroupIds(g.graph, user.id) : [];
 
   return {
     answers,
+    departingUpn,
     user: user
       ? {
         id: user.id,
-        userPrincipalName: user.userPrincipalName ?? upn,
+        userPrincipalName: user.userPrincipalName ?? departingUpn!,
         displayName: user.displayName ?? '',
         accountEnabled: user.accountEnabled !== false,
+        givenName: user.givenName ?? undefined,
+        surname: user.surname ?? undefined,
       }
       : null,
     directoryRoleCount: roleCount,
@@ -114,6 +123,24 @@ export async function readOffboardTenantState(ticketId: string): Promise<Offboar
     mailboxType: licenseSkuIds.length > 0 ? 'user' : 'none',
     ticket,
   };
+}
+
+/**
+ * The departing person's UPN, from their Nexus user record.
+ *
+ * The intake stores `departing_user` as a user REFERENCE (form field type `user`, maps_to
+ * `affected`), so the ticket and the directory action point at the same person by construction
+ * rather than by someone retyping a name. Returns null when the answer is absent or names
+ * nobody — the planner turns that into a readable blocker.
+ */
+async function resolveDepartingUpn(answers: Record<string, unknown>): Promise<string | null> {
+  const ref = answers.departing_user;
+  if (typeof ref !== 'string' || !ref.trim()) return null;
+  return withSystemContext(async (sql: Sql) => {
+    const { rows } = await sql.query('SELECT email FROM users WHERE id = $1', [ref]);
+    const email = rows[0]?.email as string | undefined;
+    return email ? email.trim().toLowerCase() : null;
+  });
 }
 
 /** Group and distribution-list memberships. Directory roles are counted separately. */

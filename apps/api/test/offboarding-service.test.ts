@@ -67,14 +67,21 @@ const actor: Principal = {
   assignedOrgs: [TICKET_ORG], allOrgs: false, elevated: false,
 };
 
-const ANSWERS = { legal_first_name: 'Jane', legal_last_name: 'Doe', last_day: '2026-09-02' };
+// The REAL offboarding intake: a reference to the departing person, not their name. Building
+// against onboarding's legal_first_name/legal_last_name meant every production preview derived
+// an empty UPN and found no user.
+const DEPARTING = '33333333-3333-3333-3333-333333333333';
+const ANSWERS = { departing_user: DEPARTING, last_day: '2026-09-02' };
 
 function graphDouble() {
   return {
     graph: {
       get: vi.fn(async (path: string) => {
         if (path.startsWith('/users?$filter=')) {
-          return { value: [{ id: 'u-1', userPrincipalName: 'jane.doe@sbsfederal.com', displayName: 'Jane Doe', accountEnabled: true }] };
+          // Only answers for the UPN resolved from the Nexus user record — a lookup for anything
+          // else returns nothing, so a wrong UPN cannot pass unnoticed.
+          if (!decodeURIComponent(path).includes('jane.doe@sbsfederal.com')) return { value: [] };
+          return { value: [{ id: 'u-1', userPrincipalName: 'jane.doe@sbsfederal.com', displayName: 'Jane Doe', accountEnabled: true, givenName: 'Jane', surname: 'Doe' }] };
         }
         if (path.includes('/memberOf')) return { value: [{ id: 'g-1', '@odata.type': '#microsoft.graph.group' }] };
         if (path.includes('/licenseDetails')) return { value: [{ skuId: 'sku-e3' }] };
@@ -88,9 +95,15 @@ function graphDouble() {
   };
 }
 
-const defaultRows = () => (text: string) => {
+const defaultRows = () => (text: string, params: unknown[]) => {
   if (/FROM tickets/.test(text)) {
     return [{ id: TICKET, organization_id: TICKET_ORG, category: 'user.offboarding', custom_fields: ANSWERS }];
+  }
+  // The departing person's Nexus record: this is where the UPN comes from.
+  if (/FROM users/.test(text)) {
+    return params?.[0] === DEPARTING
+      ? [{ id: DEPARTING, email: 'jane.doe@sbsfederal.com', display_name: 'Jane Doe' }]
+      : [];
   }
   if (/INSERT INTO provisioning_runs/.test(text)) return [{ id: 'run-1' }];
   return [];
@@ -203,5 +216,38 @@ describe('(e) the run is persisted correctly', () => {
     const { fingerprint } = await offboarding.preview(actor, TICKET);
     await expect(offboarding.schedule(actor, TICKET, fingerprint, '2099-01-01T00:00:00Z'))
       .rejects.toThrow(/blocker/i);
+  });
+});
+
+describe('(f) the departing account is resolved from the ticket, not from form text', () => {
+  it('uses the departing_user reference to find the directory account', async () => {
+    const plan = await offboarding.preview(actor, TICKET);
+    expect(plan.upn).toBe('jane.doe@sbsfederal.com');
+    expect(plan.inactiveName).toBe('ZZ_Inactive_Doe_Jane_2026-09-02');
+    expect(plan.blockers).toEqual([]);
+  });
+
+  it('blocks when the request names no departing user at all', async () => {
+    h.setDbRows((text: string) => {
+      if (/FROM tickets/.test(text)) {
+        return [{ id: TICKET, organization_id: TICKET_ORG, category: 'user.offboarding',
+                  custom_fields: { last_day: '2026-09-02' } }];
+      }
+      return [];
+    });
+    const plan = await offboarding.preview(actor, TICKET);
+    expect(plan.blockers.map((b) => b.code)).toContain('no_departing_user');
+  });
+
+  it('blocks when the referenced user is not a known Nexus record', async () => {
+    h.setDbRows((text: string) => {
+      if (/FROM tickets/.test(text)) {
+        return [{ id: TICKET, organization_id: TICKET_ORG, category: 'user.offboarding',
+                  custom_fields: { departing_user: 'ffffffff-ffff-ffff-ffff-ffffffffffff', last_day: '2026-09-02' } }];
+      }
+      return [];  // no matching users row
+    });
+    const plan = await offboarding.preview(actor, TICKET);
+    expect(plan.blockers.map((b) => b.code)).toContain('no_departing_user');
   });
 });

@@ -59,7 +59,22 @@ export interface OffboardPlan {
 
 export interface OffboardPlanInput {
   answers: Record<string, unknown>;
-  user: { id: string; userPrincipalName: string; displayName: string; accountEnabled: boolean } | null;
+  /**
+   * The departing account's UPN, resolved by the service from the ticket's `departing_user`
+   * reference. Null when the request names nobody resolvable — which is a different failure
+   * from "named someone who is not in the tenant", and gets its own blocker so the message
+   * tells the reader which of the two happened.
+   */
+  departingUpn: string | null;
+  user: {
+    id: string;
+    userPrincipalName: string;
+    displayName: string;
+    accountEnabled: boolean;
+    /** From the directory. Preferred over parsing displayName when present. */
+    givenName?: string;
+    surname?: string;
+  } | null;
   directoryRoleCount: number;
   licenseSkuIds: string[];
   groupIds: string[];
@@ -84,27 +99,73 @@ export const OFFBOARD_STEP_ORDER: OffboardStepKey[] = [
 
 const ALREADY_OFFBOARDED_PREFIX = 'ZZ_Inactive_';
 
+/**
+ * The name for the rename comes from the DIRECTORY ACCOUNT BEING RENAMED, never from form text.
+ *
+ * The offboarding intake captures `departing_user` — a reference, not a name — so there is no
+ * name on the form to use. (Building this against onboarding's legal_first_name/legal_last_name
+ * was the defect that made every real preview derive an empty name and find no user.)
+ *
+ * Prefer the directory's own givenName/surname. Fall back to splitting displayName, which is all
+ * many real accounts have, handling both "First Last" and "Last, First". Return nulls rather
+ * than guessing when nothing usable is there — planRun turns that into a blocker instead of
+ * renaming a live account to `ZZ_Inactive___2026-09-02`.
+ */
+export function nameParts(user: { displayName?: string; givenName?: string; surname?: string } | null):
+{ first: string; last: string } | null {
+  const clean = (v: string | undefined) => (v ?? '').trim();
+  const given = clean(user?.givenName);
+  const sur = clean(user?.surname);
+  if (given && sur) return { first: given, last: sur };
+
+  const display = clean(user?.displayName);
+  if (!display) return null;
+
+  if (display.includes(',')) {
+    const [last, first] = display.split(',').map((p) => p.trim());
+    if (last && first) return { first, last };
+  }
+  const parts = display.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return { first: parts[0], last: parts[parts.length - 1] };
+  return null;
+}
+
 export function planOffboard(input: OffboardPlanInput): OffboardPlan {
   const blockers: Blocker[] = [];
-  const first = String(input.answers.legal_first_name ?? '');
-  const last = String(input.answers.legal_last_name ?? '');
   const lastDay = String(input.answers.last_day ?? '');
+  const parts = nameParts(input.user);
 
   // Any directory role at all makes this a privileged account, which is what selects the 7-year
   // retention path in phase 2 rather than the 1-year default.
   const privileged = input.directoryRoleCount > 0;
 
   let inactiveName = '';
+  if (!parts) {
+    // Renaming a live account to a name with empty segments is worse than refusing: it is
+    // unsearchable, and the embedded retention date becomes the only readable part.
+    blockers.push({
+      code: 'no_name',
+      message: 'The directory account has no usable name (no given/surname, and displayName cannot be split).',
+    });
+  }
   try {
-    inactiveName = inactiveDisplayName(last, first, lastDay);
+    if (parts) inactiveName = inactiveDisplayName(parts.last, parts.first, lastDay);
   } catch (e) {
     // Reported, never thrown: a planner that throws gives the admin a stack trace instead of a
     // readable reason, and the other blockers below would never be collected.
     blockers.push({ code: 'bad_last_day', message: (e as Error).message });
   }
 
-  if (!input.user) {
-    blockers.push({ code: 'user_not_found', message: 'The account was not found in the tenant.' });
+  if (!input.departingUpn) {
+    blockers.push({
+      code: 'no_departing_user',
+      message: 'The request does not identify a departing user, or that user has no Nexus record.',
+    });
+  } else if (!input.user) {
+    blockers.push({
+      code: 'user_not_found',
+      message: `No directory account was found for ${input.departingUpn}.`,
+    });
   } else if (!input.user.accountEnabled && input.user.displayName.startsWith(ALREADY_OFFBOARDED_PREFIX)) {
     // Disabled AND renamed means a previous run finished. Disabled alone is a normal pre-state
     // — HR often disables early — and must still be completable.
