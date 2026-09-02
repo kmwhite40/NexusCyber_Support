@@ -21,7 +21,7 @@ const NEXUS_NAV: NavItem[] = [
   { href: '/incidents', label: 'Incidents', icon: <IconAlert />, section: 'Work' },
   { href: '/catalog', label: 'Service catalog', icon: <IconCatalog />, section: 'Work' },
   { href: '/kb', label: 'Knowledge base', icon: <IconBook />, anyPerm: ['kb.read'], section: 'Work' },
-  { href: '/changes', label: 'Changes', icon: <IconCalendar />, anyPerm: ['change.create', 'change.approve'], section: 'Work' },
+  { href: '/changes', label: 'Changes', icon: <IconCalendar />, anyPerm: ['change.create', 'change.approve', 'change.vote', 'change.implement', 'cab.manage'], section: 'Work' },
   { href: '/problems', label: 'Problems', icon: <IconBug />, anyPerm: ['problem.manage'], section: 'Work' },
   { href: '/archived', label: 'Archived', icon: <IconArchive />, section: 'Work' },
   // Operations

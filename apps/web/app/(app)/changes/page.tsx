@@ -68,15 +68,28 @@ export default function ChangesPage() {
 
   async function submitCab() {
     if (!sel) return;
-    // The standing board (GET/PUT /cab/board) supplies the roster; until the board-settings
-    // UI lands (plan Task 6) the current agent is added as an ad-hoc voter so the flow works
-    // on a freshly seeded, memberless board. Standard changes auto-approve and ignore this.
-    await api.post(`/changes/${sel.id}/submit-cab`, { extraVoterIds: me ? [me.id] : [] }).catch(() => {});
+    // The standing board (GET/PUT /cab/board) supplies the roster. The raiser is NEVER
+    // added as their own voter — segregation of duties; the API recuses them anyway. A
+    // memberless board therefore fails loudly here, which is the correct signal to go
+    // configure one. Standard changes auto-approve and ignore the roster entirely.
+    setErr(null);
+    try {
+      await api.post(`/changes/${sel.id}/submit-cab`, {});
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.detail : 'Failed to submit to the CAB');
+      return;
+    }
     open(sel.id); load();
   }
   async function decide(vote: 'approve' | 'reject' | 'abstain') {
     if (!sel) return;
-    await api.post(`/changes/${sel.id}/vote`, { vote }).catch(() => {});
+    setErr(null);
+    try {
+      await api.post(`/changes/${sel.id}/vote`, { vote });
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.detail : 'Failed to record your vote');
+      return;
+    }
     open(sel.id); load();
   }
   async function schedule() {
@@ -189,6 +202,19 @@ export default function ChangesPage() {
                   </div>
                 </div>
                 {sel.description && <p className="whitespace-pre-wrap text-xs text-fg/80">{sel.description}</p>}
+
+                {sel.votes.length === 0 && sel.cab_steps.length > 0 && (
+                  // Pre-voting changes approved through approvals/approval_steps.
+                  <div className="rounded-md border border-border p-2">
+                    <div className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted">CAB board (legacy approval)</div>
+                    {sel.cab_steps.map((s) => (
+                      <div key={s.id} className="flex items-center justify-between text-xs">
+                        <span className="text-muted">approver</span>
+                        <Badge tone={s.decision === 'approved' ? 'success' : s.decision === 'rejected' ? 'danger' : 'neutral'}>{s.decision ?? 'pending'}</Badge>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {sel.votes.length > 0 && (
                   <div className="rounded-md border border-border p-2">

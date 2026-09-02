@@ -163,27 +163,65 @@ export function ecabRoster<T extends { user_id: string }>(members: T[], chairId?
   return second ? [chair, second] : [chair];
 }
 
-/**
- * Quorum actually snapshotted onto a change. Clamped to the roster so a board whose
- * quorum exceeds the voters present (an ECAB cut, a shrunken board) cannot deadlock. Pure.
- */
-export function snapshotQuorum(boardQuorum: number, rosterWeight: number): number {
-  return Math.max(1, Math.min(Math.trunc(boardQuorum) || 1, rosterWeight));
+export interface QuorumSnapshot {
+  /** Effective quorum this vote runs at. */
+  quorum: number;
+  /** What the board asked for, before clamping. */
+  requested: number;
+  /** True when the roster could not satisfy the board's configured quorum. */
+  clamped: boolean;
 }
 
-export type VoteEligibility = 'ok' | 'not_a_voter' | 'not_open';
+/**
+ * Quorum actually snapshotted onto a change. Clamped to the roster so a board whose
+ * quorum exceeds the voters present (an ECAB cut, a recused raiser, a shrunken board)
+ * cannot deadlock in `cab_review` forever. Pure.
+ *
+ * The clamp WEAKENS the board's configured rule, so it is never silent: the requested
+ * quorum and the `clamped` flag are returned, recorded in the audit detail, and returned
+ * to the submitter, so a board that has quietly fallen below its own quorum is visible.
+ */
+export function snapshotQuorum(boardQuorum: number, rosterWeight: number): QuorumSnapshot {
+  const requested = Math.max(1, Math.trunc(boardQuorum) || 1);
+  const quorum = Math.max(1, Math.min(requested, rosterWeight));
+  return { quorum, requested, clamped: quorum < requested };
+}
+
+/**
+ * Segregation of duties: the person who raised a change may not vote on it. Removes the
+ * raiser from a submit-time roster. Pure.
+ *
+ * Enforced here, at roster construction, rather than at cast time, so the quorum snapshot
+ * is computed over the genuinely eligible set instead of one that can never be reached.
+ */
+export function recuseRaiser<T extends { user_id: string }>(voters: T[], raiserId: string | null): T[] {
+  if (!raiserId) return [...voters];
+  return voters.filter((v) => v.user_id !== raiserId);
+}
+
+/** May this actor cancel the change? Its raiser, or a change manager. Pure. */
+export function mayCancel(opts: { actorId: string; createdBy: string | null; hasImplement: boolean }): boolean {
+  return opts.hasImplement || (!!opts.createdBy && opts.createdBy === opts.actorId);
+}
+
+export type VoteEligibility = 'ok' | 'not_a_voter' | 'self_raised' | 'not_open';
 
 /**
  * May this actor cast a vote right now? Pure; the `change.vote` permission is checked
  * separately (both must hold). Membership is reported first: someone who was never on
  * the roster is told that, not that the vote closed.
  *
+ * Segregation of duties: the raiser of a change may never vote on it. `recuseRaiser`
+ * already keeps them off the roster at submit time; this is the second line of defence,
+ * so no future roster path can reintroduce a self-approval.
+ *
  * Re-voting: a member MAY change their vote while the change is still `cab_review`
  * (deliberation continues until the resolver finalizes). Once the resolver moves the
  * change out of `cab_review` the ballot is closed.
  */
-export function voteEligibility(status: string, hasVoteRow: boolean): VoteEligibility {
+export function voteEligibility(status: string, hasVoteRow: boolean, isRaiser = false): VoteEligibility {
   if (!hasVoteRow) return 'not_a_voter';
+  if (isRaiser) return 'self_raised';
   if (status !== 'cab_review') return 'not_open';
   return 'ok';
 }
@@ -317,8 +355,15 @@ export async function submitForCab(actor: Principal, changeId: string, input: Su
       return { status: 'approved' as const, cab: false };
     }
 
+    // An explicit board must belong to this org (or be the global default); without the
+    // predicate a caller could point their change at another tenant's board.
     const board = input.boardId
-      ? (await sql.query('SELECT * FROM cab_boards WHERE id=$1', [input.boardId])).rows[0]
+      ? (
+          await sql.query(
+            'SELECT * FROM cab_boards WHERE id=$1 AND (organization_id IS NULL OR organization_id=$2)',
+            [input.boardId, change.organization_id],
+          )
+        ).rows[0]
       : await resolveBoard(sql, change.organization_id);
     if (input.boardId && !board) throw Errors.notFound('CAB board not found');
     let members: Array<{ user_id: string; weight: number }> = board?.members
@@ -329,19 +374,26 @@ export async function submitForCab(actor: Principal, changeId: string, input: Su
 
     // Standing roster first; ad-hoc reviewers are appended, de-duplicated against it
     // and against each other (one ballot per person — change_votes is unique per voter).
-    const voters = members.map((m) => ({ user_id: m.user_id, weight: m.weight ?? 1, ad_hoc: false }));
-    const seen = new Set(voters.map((v) => v.user_id));
+    const proposed = members.map((m) => ({ user_id: m.user_id, weight: m.weight ?? 1, ad_hoc: false }));
+    const seen = new Set(proposed.map((v) => v.user_id));
     for (const id of input.extraVoterIds ?? []) {
       if (seen.has(id)) continue;
       seen.add(id);
-      voters.push({ user_id: id, weight: 1, ad_hoc: true });
+      proposed.push({ user_id: id, weight: 1, ad_hoc: true });
     }
+    // Segregation of duties: the raiser cannot be one of their own change's voters, whether
+    // they sit on the standing board or tried to add themselves as an ad-hoc reviewer.
+    const voters = recuseRaiser(proposed, change.created_by);
     if (!voters.length) {
-      throw Errors.badRequest('no CAB voters: configure the board (PUT /api/v1/cab/board) or pass extraVoterIds');
+      throw Errors.badRequest(
+        proposed.length
+          ? "the change's raiser cannot vote on it; add other board members (PUT /api/v1/cab/board) or ad-hoc reviewers"
+          : 'no CAB voters: configure the board (PUT /api/v1/cab/board) or pass extraVoterIds',
+      );
     }
 
     const rosterWeight = voters.reduce((sum, v) => sum + v.weight, 0);
-    const quorum = snapshotQuorum(board?.quorum ?? 1, rosterWeight);
+    const { quorum, requested: quorumRequested, clamped } = snapshotQuorum(board?.quorum ?? 1, rosterWeight);
     const threshold = (board?.threshold ?? 'majority') as Threshold;
     const deadline = voteDeadlineFor(change.change_type as ChangeType, new Date());
 
@@ -357,7 +409,7 @@ export async function submitForCab(actor: Principal, changeId: string, input: Su
               vote_deadline=$5, updated_at=now() WHERE id=$1`,
       [changeId, board?.id ?? null, quorum, threshold, deadline.toISOString()],
     );
-    await audit(actor, { action: 'change.submit_cab', organizationId: change.organization_id, resourceType: 'change', resourceId: changeId, detail: { voters: voters.length, quorum, threshold, vote_deadline: deadline.toISOString() } });
+    await audit(actor, { action: 'change.submit_cab', organizationId: change.organization_id, resourceType: 'change', resourceId: changeId, detail: { voters: voters.length, quorum, quorum_requested: quorumRequested, quorum_clamped: clamped, recused: proposed.length - voters.length, threshold, vote_deadline: deadline.toISOString() } });
     publish('change.cab_requested', change.organization_id, {
       change_id: changeId,
       voter_ids: voters.map((v) => v.user_id),
@@ -368,6 +420,10 @@ export async function submitForCab(actor: Principal, changeId: string, input: Su
       cab: true,
       voters: voters.length,
       quorum,
+      // Surfaced so a board that has fallen below its own configured quorum is visible
+      // to the submitter rather than silently voting at a weaker rule.
+      quorum_requested: quorumRequested,
+      quorum_clamped: clamped,
       threshold,
       vote_deadline: deadline.toISOString(),
     };
@@ -380,13 +436,19 @@ export async function submitForCab(actor: Principal, changeId: string, input: Su
  */
 export async function castVote(actor: Principal, changeId: string, vote: VoteValue, reason?: string) {
   return withOrgContext(orgContextFor(actor), async (sql) => {
-    const change = (await sql.query('SELECT * FROM changes WHERE id=$1', [changeId])).rows[0];
+    // FOR UPDATE serializes concurrent voters. Without it two voters in READ COMMITTED
+    // each read `cab_review`, each resolve against a roster missing the other's uncommitted
+    // ballot, and the second UPDATE overwrites the first — approve-then-reject is reachable.
+    // The lock makes the second voter re-read the committed status and be turned away (409)
+    // if the first already finalized the change.
+    const change = (await sql.query('SELECT * FROM changes WHERE id=$1 FOR UPDATE', [changeId])).rows[0];
     if (!change) throw Errors.notFound('change not found');
     authorize(actor, 'change.vote', { organizationId: change.organization_id });
 
     const row = (await sql.query('SELECT * FROM change_votes WHERE change_id=$1 AND voter_id=$2', [changeId, actor.id])).rows[0];
-    const eligibility = voteEligibility(change.status, !!row);
+    const eligibility = voteEligibility(change.status, !!row, change.created_by === actor.id);
     if (eligibility === 'not_a_voter') throw Errors.forbidden('you are not a CAB voter for this change');
+    if (eligibility === 'self_raised') throw Errors.forbidden('you raised this change and cannot vote on it');
     if (eligibility === 'not_open') throw Errors.conflict(`change is ${change.status}, not in CAB review`);
 
     const changed = !!row.vote;
@@ -415,6 +477,13 @@ export async function cancelChange(actor: Principal, changeId: string, reason?: 
     const change = (await sql.query('SELECT * FROM changes WHERE id=$1', [changeId])).rows[0];
     if (!change) throw Errors.notFound('change not found');
     authorize(actor, 'change.create', { organizationId: change.organization_id });
+    // `change.create` is held by every change raiser, so it alone would let anyone withdraw
+    // anyone else's approved change. Cancelling is the raiser's own act, or a change
+    // manager's (change.implement).
+    const hasImplement = can(actor, 'change.implement', { organizationId: change.organization_id });
+    if (!mayCancel({ actorId: actor.id, createdBy: change.created_by, hasImplement })) {
+      throw Errors.forbidden('only the change raiser or a change manager may cancel this change');
+    }
     if (!canTransition(change.status as ChangeStatus, 'cancelled')) {
       throw Errors.conflict(`cannot cancel a change that is ${change.status}`);
     }

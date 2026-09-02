@@ -1,20 +1,108 @@
 // Change Advisory Board (CAB) administration: the standing board (members, chair,
 // quorum, threshold), blackout windows, and change templates. Voting itself lives
 // in changes.ts; this module owns board CONFIG + the roster used at submit time.
-// Boards/blackouts/templates are org-scoped with an org-NULL global default.
+//
+// Boards/blackouts/templates are org-scoped with an org-NULL GLOBAL default. Migration
+// 0052's RLS policy makes org-NULL rows visible from every org context (that is the point
+// — every tenant inherits the global default), which means RLS alone cannot protect them
+// from writes. So every mutation here resolves an explicit scope first: `cab.manage` for
+// the actor's own org, and the platform-wide `cab.manage.global` for any org-NULL row.
 import { withOrgContext, type Sql } from '../db/pool.js';
 import { orgContextFor } from '../auth/principal.js';
-import { authorize } from '../authz/pdp.js';
+import { authorize, can } from '../authz/pdp.js';
 import { audit } from './audit.js';
 import { Errors } from '../errors.js';
 import type { Principal } from '../types.js';
 import type { Threshold } from './changes.js';
 
-/** Org the actor is administering: their own org (customer) or an explicit/global org (nexus). */
-function targetOrg(actor: Principal, orgId?: string | null): string | null {
-  if (actor.plane === 'customer') return actor.organizationId;
-  return orgId ?? null; // nexus: explicit org, or null = global default
+// ---- Scope resolution (pure) ----
+
+/** The slice of a Principal that scope resolution depends on. */
+export interface CabScopeActor {
+  plane: 'nexus' | 'customer';
+  organizationId: string | null;
+  /** Holds `cab.manage.global` (admin.superuser satisfies it via the PDP wildcard). */
+  canManageGlobal: boolean;
 }
+
+export type ScopeDecision =
+  | { ok: true; organizationId: string | null }
+  | { ok: false; reason: string };
+
+/**
+ * Which scope does a CAB *write* target, and may this actor write it? Pure.
+ *
+ * A global (organization_id IS NULL) board/blackout/template is inherited by every
+ * organization, so creating, editing, or deleting one is a platform-wide act and needs
+ * `cab.manage.global`. Note the default for a nexus caller who names no org is GLOBAL —
+ * exactly the case that must be gated, and the reason this is not left implicit.
+ */
+export function resolveWriteScope(actor: CabScopeActor, requested?: string | null): ScopeDecision {
+  if (actor.plane === 'customer') {
+    if (!actor.organizationId) return { ok: false, reason: 'customer principal has no organization' };
+    // A customer admin manages exactly one board: their own. They may not reach global.
+    if (requested === null) {
+      return { ok: false, reason: 'global CAB configuration requires cab.manage.global' };
+    }
+    if (requested !== undefined && requested !== actor.organizationId) {
+      return { ok: false, reason: 'out of organization scope' };
+    }
+    return { ok: true, organizationId: actor.organizationId };
+  }
+  // Nexus plane: an explicit org targets that org (the PDP then checks assignment scope).
+  if (typeof requested === 'string' && requested) return { ok: true, organizationId: requested };
+  if (!actor.canManageGlobal) {
+    return {
+      ok: false,
+      reason: 'global CAB configuration requires cab.manage.global (name an organizationId to configure a single org)',
+    };
+  }
+  return { ok: true, organizationId: null };
+}
+
+/**
+ * Which scope does a CAB *read* target? Pure. Reads are not gated on `cab.manage.global`
+ * — global rows are meant to be visible to the orgs that inherit them — but the caller
+ * still needs `cab.manage` (enforced by the callers below).
+ */
+export function resolveReadScope(actor: CabScopeActor, requested?: string | null): ScopeDecision {
+  if (actor.plane === 'customer') {
+    if (!actor.organizationId) return { ok: false, reason: 'customer principal has no organization' };
+    if (requested !== undefined && requested !== null && requested !== actor.organizationId) {
+      return { ok: false, reason: 'out of organization scope' };
+    }
+    return { ok: true, organizationId: actor.organizationId };
+  }
+  return { ok: true, organizationId: typeof requested === 'string' && requested ? requested : null };
+}
+
+function scopeActor(actor: Principal): CabScopeActor {
+  return {
+    plane: actor.plane,
+    organizationId: actor.organizationId,
+    canManageGlobal: can(actor, 'cab.manage.global'),
+  };
+}
+
+/** Resolve + authorize a CAB write. Returns the organization_id the row must carry. */
+function authorizeWrite(actor: Principal, requested?: string | null): string | null {
+  authorize(actor, 'cab.manage'); // RBAC half first, so non-holders get the plain reason
+  const d = resolveWriteScope(scopeActor(actor), requested);
+  if (!d.ok) throw Errors.forbidden(d.reason);
+  authorize(actor, 'cab.manage', { organizationId: d.organizationId }); // ABAC half
+  return d.organizationId;
+}
+
+/** Resolve + authorize a CAB read. Returns the organization_id whose rows to show. */
+function authorizeRead(actor: Principal, requested?: string | null): string | null {
+  authorize(actor, 'cab.manage');
+  const d = resolveReadScope(scopeActor(actor), requested);
+  if (!d.ok) throw Errors.forbidden(d.reason);
+  authorize(actor, 'cab.manage', { organizationId: d.organizationId });
+  return d.organizationId;
+}
+
+// ---- Roster resolution ----
 
 /** Resolve the board that governs an org's changes: the org's default, else the global default. */
 export async function resolveBoard(sql: Sql, orgId: string | null) {
@@ -51,8 +139,7 @@ export interface BoardInput {
 
 /** Read the org's standing board (cab.manage). */
 export async function getBoard(actor: Principal, orgId?: string | null) {
-  authorize(actor, 'cab.manage');
-  const org = targetOrg(actor, orgId);
+  const org = authorizeRead(actor, orgId);
   return withOrgContext(orgContextFor(actor), async (sql) => {
     const board = await resolveBoard(sql, org);
     return board ?? { organization_id: org, name: 'Change Advisory Board', quorum: 1, threshold: 'majority', members: [] };
@@ -61,8 +148,7 @@ export async function getBoard(actor: Principal, orgId?: string | null) {
 
 /** Create or update the org's default standing board and its members (cab.manage). */
 export async function putBoard(actor: Principal, input: BoardInput) {
-  authorize(actor, 'cab.manage');
-  const org = targetOrg(actor, input.organizationId);
+  const org = authorizeWrite(actor, input.organizationId);
   const members = input.members ?? [];
   return withOrgContext(orgContextFor(actor), async (sql) => {
     let board = (
@@ -81,12 +167,14 @@ export async function putBoard(actor: Principal, input: BoardInput) {
       board = (
         await sql.query(
           `UPDATE cab_boards SET name=COALESCE($2,name), chair_id=$3, quorum=COALESCE($4,quorum),
-             threshold=COALESCE($5,threshold), updated_at=now() WHERE id=$1 RETURNING *`,
-          [board.id, input.name ?? null, chairId, input.quorum ?? null, input.threshold ?? null],
+             threshold=COALESCE($5,threshold), updated_at=now()
+           WHERE id=$1 AND organization_id IS NOT DISTINCT FROM $6 RETURNING *`,
+          [board.id, input.name ?? null, chairId, input.quorum ?? null, input.threshold ?? null, org],
         )
       ).rows[0];
+      if (!board) throw Errors.notFound('CAB board not found in this scope');
     }
-    // Replace the membership set.
+    // Replace the membership set (the board itself is already scope-checked above).
     await sql.query('DELETE FROM cab_board_members WHERE board_id=$1', [board.id]);
     for (const m of members) {
       await sql.query(
@@ -95,7 +183,7 @@ export async function putBoard(actor: Principal, input: BoardInput) {
         [board.id, m.userId, m.role ?? (m.userId === chairId ? 'chair' : 'member'), m.weight ?? 1],
       );
     }
-    await audit(actor, { action: 'cab.board.update', organizationId: org, resourceType: 'cab_board', resourceId: board.id, detail: { members: members.length, quorum: board.quorum, threshold: board.threshold } });
+    await audit(actor, { action: 'cab.board.update', organizationId: org, resourceType: 'cab_board', resourceId: board.id, detail: { global: org === null, members: members.length, quorum: board.quorum, threshold: board.threshold } });
     return resolveBoard(sql, org);
   });
 }
@@ -103,7 +191,7 @@ export async function putBoard(actor: Principal, input: BoardInput) {
 // ---- Blackout windows ----
 
 export async function listBlackouts(actor: Principal, orgId?: string | null) {
-  const org = targetOrg(actor, orgId);
+  const org = authorizeRead(actor, orgId);
   return withOrgContext(orgContextFor(actor), async (sql) => {
     return (
       await sql.query(
@@ -118,8 +206,7 @@ export async function createBlackout(
   actor: Principal,
   input: { organizationId?: string | null; name: string; startsAt: string; endsAt: string; reason?: string },
 ) {
-  authorize(actor, 'cab.manage');
-  const org = targetOrg(actor, input.organizationId);
+  const org = authorizeWrite(actor, input.organizationId);
   if (new Date(input.endsAt) <= new Date(input.startsAt)) throw Errors.badRequest('endsAt must be after startsAt');
   return withOrgContext(orgContextFor(actor), async (sql) => {
     const row = (
@@ -129,7 +216,7 @@ export async function createBlackout(
         [org, input.name, input.startsAt, input.endsAt, input.reason ?? null, actor.id],
       )
     ).rows[0];
-    await audit(actor, { action: 'cab.blackout.create', organizationId: org, resourceType: 'change_blackout', resourceId: row.id });
+    await audit(actor, { action: 'cab.blackout.create', organizationId: org, resourceType: 'change_blackout', resourceId: row.id, detail: { global: org === null } });
     return row;
   });
 }
@@ -137,8 +224,13 @@ export async function createBlackout(
 export async function deleteBlackout(actor: Principal, id: string) {
   authorize(actor, 'cab.manage');
   return withOrgContext(orgContextFor(actor), async (sql) => {
-    await sql.query('DELETE FROM change_blackouts WHERE id=$1', [id]);
-    await audit(actor, { action: 'cab.blackout.delete', organizationId: actor.organizationId, resourceType: 'change_blackout', resourceId: id });
+    // Authorize against the row's OWN org, not the caller's — a global row needs the
+    // platform-wide grant, and the audit must name the org the row actually belonged to.
+    const row = (await sql.query('SELECT id, organization_id FROM change_blackouts WHERE id=$1', [id])).rows[0];
+    if (!row) throw Errors.notFound('blackout not found');
+    const org = authorizeWrite(actor, row.organization_id);
+    await sql.query('DELETE FROM change_blackouts WHERE id=$1 AND organization_id IS NOT DISTINCT FROM $2', [id, org]);
+    await audit(actor, { action: 'cab.blackout.delete', organizationId: org, resourceType: 'change_blackout', resourceId: id, detail: { global: org === null } });
     return { deleted: true };
   });
 }
@@ -146,7 +238,7 @@ export async function deleteBlackout(actor: Principal, id: string) {
 // ---- Change templates ----
 
 export async function listTemplates(actor: Principal, orgId?: string | null) {
-  const org = targetOrg(actor, orgId);
+  const org = authorizeRead(actor, orgId);
   return withOrgContext(orgContextFor(actor), async (sql) => {
     return (
       await sql.query(
@@ -165,8 +257,7 @@ export async function createTemplate(
     implementationPlan?: string; testPlan?: string; backoutPlan?: string;
   },
 ) {
-  authorize(actor, 'cab.manage');
-  const org = targetOrg(actor, input.organizationId);
+  const org = authorizeWrite(actor, input.organizationId);
   return withOrgContext(orgContextFor(actor), async (sql) => {
     const row = (
       await sql.query(
@@ -177,7 +268,7 @@ export async function createTemplate(
          input.description ?? null, input.implementationPlan ?? null, input.testPlan ?? null, input.backoutPlan ?? null],
       )
     ).rows[0];
-    await audit(actor, { action: 'cab.template.create', organizationId: org, resourceType: 'change_template', resourceId: row.id });
+    await audit(actor, { action: 'cab.template.create', organizationId: org, resourceType: 'change_template', resourceId: row.id, detail: { global: org === null } });
     return row;
   });
 }
@@ -185,8 +276,11 @@ export async function createTemplate(
 export async function deleteTemplate(actor: Principal, id: string) {
   authorize(actor, 'cab.manage');
   return withOrgContext(orgContextFor(actor), async (sql) => {
-    await sql.query('DELETE FROM change_templates WHERE id=$1', [id]);
-    await audit(actor, { action: 'cab.template.delete', organizationId: actor.organizationId, resourceType: 'change_template', resourceId: id });
+    const row = (await sql.query('SELECT id, organization_id FROM change_templates WHERE id=$1', [id])).rows[0];
+    if (!row) throw Errors.notFound('template not found');
+    const org = authorizeWrite(actor, row.organization_id);
+    await sql.query('DELETE FROM change_templates WHERE id=$1 AND organization_id IS NOT DISTINCT FROM $2', [id, org]);
+    await audit(actor, { action: 'cab.template.delete', organizationId: org, resourceType: 'change_template', resourceId: id, detail: { global: org === null } });
     return { deleted: true };
   });
 }

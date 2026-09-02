@@ -45,6 +45,7 @@ const PERMISSIONS: Array<[string, string]> = [
   ['change.implement', 'change'],
   ['change.vote', 'change'],
   ['cab.manage', 'change'],
+  ['cab.manage.global', 'change'],
   ['problem.manage', 'problem'],
   ['queue.manage', 'queue'],
   ['queue.read', 'queue'],

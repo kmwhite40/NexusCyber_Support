@@ -3,6 +3,7 @@ import {
   requiresCab, canTransition, detectWindowConflicts, allStepsApproved,
   tallyVotes, resolveVote, deriveRisk,
   addBusinessDays, voteDeadlineFor, ecabRoster, snapshotQuorum, voteEligibility, requiresPir,
+  recuseRaiser, mayCancel,
 } from '../src/modules/changes.js';
 
 describe('requiresCab', () => {
@@ -169,13 +170,49 @@ describe('ecabRoster', () => {
 });
 
 describe('snapshotQuorum', () => {
+  it('passes the board quorum through untouched when the roster can meet it', () => {
+    expect(snapshotQuorum(2, 5)).toEqual({ quorum: 2, requested: 2, clamped: false });
+    expect(snapshotQuorum(3, 3)).toEqual({ quorum: 3, requested: 3, clamped: false });
+  });
   it('clamps quorum to the roster so a vote cannot deadlock', () => {
-    expect(snapshotQuorum(5, 2)).toBe(2);
-    expect(snapshotQuorum(2, 5)).toBe(2);
+    expect(snapshotQuorum(5, 2)).toEqual({ quorum: 2, requested: 5, clamped: true });
   });
   it('never returns less than one', () => {
-    expect(snapshotQuorum(0, 3)).toBe(1);
-    expect(snapshotQuorum(3, 0)).toBe(1);
+    expect(snapshotQuorum(0, 3)).toEqual({ quorum: 1, requested: 1, clamped: false });
+    expect(snapshotQuorum(3, 0)).toEqual({ quorum: 1, requested: 3, clamped: true });
+  });
+  it('reports the board-configured quorum so the weakening is never silent', () => {
+    // A board configured at 5 whose membership fell to 3 must not quietly vote at 3.
+    const snap = snapshotQuorum(5, 3);
+    expect(snap.requested).toBe(5);
+    expect(snap.clamped).toBe(true);
+  });
+});
+
+describe('recuseRaiser (segregation of duties)', () => {
+  const v = (id: string) => ({ user_id: id, weight: 1 });
+  it('drops the change raiser from their own roster', () => {
+    expect(recuseRaiser([v('a'), v('b'), v('c')], 'b').map((x) => x.user_id)).toEqual(['a', 'c']);
+  });
+  it('drops the raiser even when they added themselves as an ad-hoc reviewer', () => {
+    expect(recuseRaiser([v('a')], 'a')).toEqual([]);
+  });
+  it('leaves the roster alone when the raiser is not on it', () => {
+    expect(recuseRaiser([v('a'), v('b')], 'z').map((x) => x.user_id)).toEqual(['a', 'b']);
+    expect(recuseRaiser([v('a')], null).map((x) => x.user_id)).toEqual(['a']);
+  });
+});
+
+describe('mayCancel', () => {
+  it('lets the raiser withdraw their own change', () => {
+    expect(mayCancel({ actorId: 'u1', createdBy: 'u1', hasImplement: false })).toBe(true);
+  });
+  it('lets a change manager cancel anyone\'s change', () => {
+    expect(mayCancel({ actorId: 'u2', createdBy: 'u1', hasImplement: true })).toBe(true);
+  });
+  it("refuses another author cancelling someone else's change", () => {
+    expect(mayCancel({ actorId: 'u2', createdBy: 'u1', hasImplement: false })).toBe(false);
+    expect(mayCancel({ actorId: 'u2', createdBy: null, hasImplement: false })).toBe(false);
   });
 });
 
@@ -186,6 +223,9 @@ describe('voteEligibility', () => {
   });
   it('allows a roster member while the change is still in cab_review', () => {
     expect(voteEligibility('cab_review', true)).toBe('ok');
+  });
+  it('refuses the raiser even if a roster row somehow exists (SoD backstop)', () => {
+    expect(voteEligibility('cab_review', true, true)).toBe('self_raised');
   });
   it('closes the ballot once the change has been resolved', () => {
     expect(voteEligibility('approved', true)).toBe('not_open');
