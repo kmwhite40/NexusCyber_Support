@@ -25,6 +25,47 @@ export function derivePriority(impact: number, urgency: number): string {
   return PRIORITY_MATRIX[impact]?.[urgency] ?? 'P3';
 }
 
+// `customFields` on this path is caller-supplied (M2M / external-GRC integration, 0051) with
+// no form definition to validate against — unlike the catalog intake path (forms.ts /
+// sensitive-fields.ts), which knows which answer keys are `sensitive` and routes them to
+// ticket_sensitive_fields instead of tickets.custom_fields. There is no equivalent "form" here
+// to consult, so this borrows the same source of truth: any key name currently flagged
+// `sensitive` on ANY form field (global or this org's) is off-limits in customFields, on the
+// theory that an integration writing a key an admin already designated as PII-shaped is very
+// likely trying to smuggle PII into the wholesale-readable column. Refuse loudly (422) rather
+// than silently stripping — a caller that thinks it stored a value it didn't is its own bug.
+//
+// What this does NOT catch: PII stored under a key nobody has ever flagged sensitive (e.g. a
+// caller sends `contact_email` instead of `personal_email`), or the same PII smuggled as free
+// text inside an allowed key (e.g. baked into `description`). It is a deny-list on key *names*
+// sourced from admin-configured intent, not content inspection — it closes the one gap where
+// this path could re-introduce a name the platform has already promised to protect.
+export function rejectSensitiveCustomFields(
+  customFields: Record<string, unknown> | undefined,
+  sensitiveKeys: ReadonlySet<string>,
+): void {
+  if (!customFields) return;
+  const hits = Object.keys(customFields).filter((k) => sensitiveKeys.has(k));
+  if (hits.length) {
+    throw Errors.validation(
+      `customFields contains reserved sensitive field name(s): ${hits.join(', ')}. ` +
+        'These keys are reserved for PII and are never accepted in custom_fields.',
+    );
+  }
+}
+
+/** Every field key any form (global or this org's, per RLS on request_forms) currently
+ *  flags `sensitive`. Scoped by the caller's org context, same as every other query here. */
+async function knownSensitiveFieldKeys(sql: Sql): Promise<Set<string>> {
+  const { rows } = await sql.query(
+    `SELECT DISTINCT ff.key
+       FROM form_fields ff
+       JOIN request_forms rf ON rf.id = ff.form_id
+      WHERE ff.sensitive = true`,
+  );
+  return new Set(rows.map((r: { key: string }) => r.key));
+}
+
 async function nextTicketNumber(sql: Sql, orgId: string): Promise<string> {
   // Serialize per-org number allocation: MAX(number)+1 otherwise races under concurrent
   // creates and collides on the (organization_id, ticket_number) unique key. The lock is
@@ -71,6 +112,12 @@ export async function createTicket(actor: Principal, input: CreateTicketInput) {
   const priority = derivePriority(impact, urgency);
 
   return withOrgContext(orgContextFor(actor), async (sql) => {
+    // Guard both branches below (idempotent-upsert AND fresh insert) before either touches
+    // the database — a caller who gets refused here made zero writes, not a half-applied one.
+    if (input.customFields) {
+      rejectSensitiveCustomFields(input.customFields, await knownSensitiveFieldKeys(sql));
+    }
+
     // Idempotent upsert: a repeated sync of the same source item (external_ref) returns
     // the existing ticket — updated in place — instead of creating a duplicate.
     if (input.externalRef) {
