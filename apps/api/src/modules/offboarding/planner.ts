@@ -247,11 +247,22 @@ export function planOffboard(input: OffboardPlanInput): OffboardPlan {
  * jobs/offboarding-sweeper.ts.
  */
 export function offboardFingerprint(plan: OffboardPlan): string {
+  // Graph does not promise ordering on group or licence collections. Hashing the raw array
+  // order would report drift on an unchanged plan and force an administrator to re-approve a
+  // teardown that had not changed — training people to click through the one checkpoint that
+  // matters. Sort the SETS; membership is what was approved, sequence is not.
+  const canonical = (detail: Record<string, unknown>) => {
+    const out: Record<string, unknown> = { ...detail };
+    for (const key of ['groupIds', 'skuIds']) {
+      if (Array.isArray(out[key])) out[key] = [...(out[key] as string[])].sort();
+    }
+    return out;
+  };
   const material = JSON.stringify({
     upn: plan.upn,
     inactiveName: plan.inactiveName,
     privileged: plan.privileged,
-    steps: plan.steps.map((s) => [s.key, s.manual, s.detail]),
+    steps: plan.steps.map((s) => [s.key, s.manual, canonical(s.detail)]),
   });
   return createHash('sha256').update(material).digest('hex');
 }

@@ -158,3 +158,32 @@ describe('failure handling', () => {
     expect(final.params).toContain(ORG);
   });
 });
+
+// The inversion is only worth anything if it actually holds. Two ways it did not:
+describe('the inversion has to be real', () => {
+  it('does not claim success when blocking sign-in actually failed', async () => {
+    // Reporting "sign-in blocked and sessions revoked" while the account is still enabled is
+    // worse than reporting a failure: it tells the desk the dangerous half is handled.
+    h.setDbRows(dueRun('a-stale-fingerprint-from-approval-time'));
+    h.ops.blockSignin.mockRejectedValueOnce(new Error('graph 403'));
+    const out = await sweepDueOffboardings(new Date('2026-09-05T21:00:00Z'));
+    const final = h.queries.filter((q) => /SET status = \$2/.test(q.text)).pop()!;
+    expect(final.params[1]).toBe('failed');
+    expect(String(final.params[2])).not.toMatch(/sign-in blocked/i);
+    expect(out.needsReview).toBe(0);
+  });
+
+  it('still disables the account when the rebuilt plan has picked up a blocker', async () => {
+    // e.g. someone edited last_day between approval and the scheduled moment. The plan is no
+    // longer executable, but that is precisely NOT a reason to leave a terminated employee
+    // signed in — the security steps destroy no data.
+    h.readOffboardTenantState.mockImplementation(async () => ({
+      ...STATE, answers: { last_day: 'not-a-date' },
+    }));
+    h.setDbRows(dueRun('whatever-it-was-at-approval'));
+    await sweepDueOffboardings(new Date('2026-09-05T21:00:00Z'));
+    expect(h.ops.blockSignin).toHaveBeenCalled();
+    expect(h.ops.revokeSessions).toHaveBeenCalled();
+    expect(h.ops.removeLicenses).not.toHaveBeenCalled();
+  });
+});

@@ -34,7 +34,13 @@ export async function executeOffboardPlan(
   ops: OffboardOps,
   opts: { onlySecuritySteps?: boolean } = {},
 ): Promise<OffboardOutcome[]> {
-  if (plan.blockers.length > 0) {
+  // Blockers refuse a FULL run — but never the security-only path.
+  //
+  // The security steps destroy no data, and the situation that produces a blocker at fire time
+  // (someone edited last_day, a licence pool moved) is emphatically not a reason to leave a
+  // terminated employee signed in. Refusing here inverted the very priority this engine exists
+  // to enforce: it made a stale form field sufficient to keep an account enabled.
+  if (plan.blockers.length > 0 && !opts.onlySecuritySteps) {
     throw new Error(`refusing to execute: plan carries ${plan.blockers.length} blocker(s)`);
   }
 

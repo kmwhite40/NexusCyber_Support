@@ -57,7 +57,10 @@ export async function sweepDueOffboardings(
       // a script to replay blindly against a directory that may have moved on.
       const state = await readOffboardTenantState(run.ticket_id);
       const fresh = planOffboard(state);
-      const drifted = offboardFingerprint(fresh) !== run.plan?.fingerprint;
+      // Blockers on the rebuilt plan count as drift: whatever was approved, THIS is not
+      // executable, so only the security steps may run.
+      const drifted = offboardFingerprint(fresh) !== run.plan?.fingerprint
+        || fresh.blockers.length > 0;
 
       if (!state.user) {
         await finish(run, 'failed', 'the account no longer exists in the tenant');
@@ -70,13 +73,23 @@ export async function sweepDueOffboardings(
       );
 
       if (drifted) {
-        needsReview += 1;
-        logger.warn(
-          { runId: run.id, ticketId: run.ticket_id },
-          'offboarding plan changed since approval; blocked sign-in and revoked sessions, halted the rest for review',
-        );
-        await finish(run, 'needs_review',
-          'plan changed since approval; sign-in blocked and sessions revoked, data-affecting steps halted');
+        // Read the outcomes before claiming anything. Reporting "sign-in blocked and sessions
+        // revoked" while the account is still enabled is worse than reporting a failure: it
+        // tells the desk the dangerous half is handled when it is not.
+        const failedSecurity = outcomes.find((o) => o.status === 'failed');
+        if (failedSecurity) {
+          await finish(run, 'failed',
+            `plan changed since approval AND the account could not be secured — `
+            + `${failedSecurity.key}: ${failedSecurity.error ?? 'step failed'}`);
+        } else {
+          needsReview += 1;
+          logger.warn(
+            { runId: run.id, ticketId: run.ticket_id },
+            'offboarding plan changed since approval; blocked sign-in and revoked sessions, halted the rest for review',
+          );
+          await finish(run, 'needs_review',
+            'plan changed since approval; sign-in blocked and sessions revoked, data-affecting steps halted');
+        }
       } else if (outcomes.some((o) => o.status === 'failed')) {
         const failed = outcomes.find((o) => o.status === 'failed')!;
         await finish(run, 'failed', `${failed.key}: ${failed.error ?? 'step failed'}`);

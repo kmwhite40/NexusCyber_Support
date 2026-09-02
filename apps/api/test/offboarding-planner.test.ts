@@ -177,3 +177,19 @@ describe('planOffboard — name resolution', () => {
     expect(plan.inactiveName).not.toMatch(/__/);
   });
 });
+
+describe('offboardFingerprint — stability against irrelevant variation', () => {
+  it('does not report drift merely because Graph returned the same groups in another order', () => {
+    // Graph does not promise ordering. Hashing the raw array order would park an unchanged plan
+    // at needs_review and make an administrator re-approve a teardown that had not changed.
+    const a = planOffboard(baseInput({ groupIds: ['g-1', 'g-2', 'g-3'], licenseSkuIds: ['s-1', 's-2'] }));
+    const b = planOffboard(baseInput({ groupIds: ['g-3', 'g-1', 'g-2'], licenseSkuIds: ['s-2', 's-1'] }));
+    expect(offboardFingerprint(a)).toBe(offboardFingerprint(b));
+  });
+
+  it('still reports drift when the SET of groups actually changes', () => {
+    const a = planOffboard(baseInput({ groupIds: ['g-1', 'g-2'] }));
+    const b = planOffboard(baseInput({ groupIds: ['g-1', 'g-9'] }));
+    expect(offboardFingerprint(a)).not.toBe(offboardFingerprint(b));
+  });
+});
