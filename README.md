@@ -111,9 +111,22 @@ scripts/probe-provisioning-tenant.sh   # READ-ONLY tenant probe (SKUs, Cloud PC
                                        # policies, API version, TAP policy)
 
 Integration tests (`apps/api/test/integration/*.int.test.ts`) skip silently unless
-`DATABASE_URL` is set. Source `.env` to run them against the dev database — note that
-`npm run migrate -- --env-file ...` passes the flag to the *script*, not to node, and
-falls back to the default DSN.
+`DATABASE_URL` is set. To run migrations or those tests against the dev database:
+
+```bash
+cd <repo root>
+set -a; . ./.env; set +a          # exports DATABASE_URL (dev DB is on port 5544)
+npm --workspace apps/api run migrate
+```
+
+Two traps, both of which fail in confusing ways:
+
+- **`npm run migrate -- --env-file ...` does not work.** The `--` forwards the flag to the
+  *script*, not to node, so `DATABASE_URL` stays unset and `config.ts` falls back to its
+  default of `localhost:5432` — while the dev database is on **5544**. Source `.env` instead.
+- **Run workspace scripts from the repo root, or name the workspace.** `npm run` resolves the
+  workspace from your current directory, so `npm run migrate` inside `apps/web/...` fails with
+  `Missing script: "migrate"` — only `apps/api` has one.
 ```
 
 ## Enterprise hardening
