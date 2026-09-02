@@ -257,7 +257,11 @@ describe('resolveRecipients — CAB voting lifecycle', () => {
     });
     const out = await resolveRecipients(sql, evt('change.cab_requested', { change_id: 'chg-1', voter_ids: ['v1', 'v2'] }));
     expect(emails(out)).toEqual(['chair@acme', 'member@acme']);
-    expect(calls[0].params).toEqual(['chg-1', 'org-1']); // tenant-scoped: change_id AND organization_id
+    expect(calls[0].params).toEqual(['chg-1', 'org-1']);
+    // Pin the PREDICATE, not just the parameter list: a query that binds organization_id
+    // as $2 but never puts it in the WHERE clause would still pass the assertion above
+    // (and the mock's "matching org" tests below) while leaking cross-tenant in production.
+    expect(calls[0].text).toContain('cv.organization_id = $2');
   });
 
   it('cab_requested resolves strictly from change_votes, ignoring the event payload\'s voter_ids', async () => {
@@ -288,6 +292,13 @@ describe('resolveRecipients — CAB voting lifecycle', () => {
     const out = await resolveRecipients(sql, evt('change.vote_cast', { change_id: 'chg-1', voter_id: 'v2', vote: 'approve' }));
     expect(out).toEqual([{ userId: 'chair-1', email: 'chair@acme' }]);
     expect(calls[0].params).toEqual(['chg-1', 'org-1']);
+    expect(calls[0].text).toContain('c.organization_id = $2'); // pins the predicate, not just the param
+  });
+
+  it('vote_cast suppresses the notification when the chair casts their own vote', async () => {
+    const { sql } = makeChangeSql({ chair: { user_id: 'chair-1', email: 'chair@acme' }, chairOrg: 'org-1' });
+    const out = await resolveRecipients(sql, evt('change.vote_cast', { change_id: 'chg-1', voter_id: 'chair-1', vote: 'approve' }));
+    expect(out).toEqual([]);
   });
 
   it('vote_cast resolves nobody when the board has no chair configured', async () => {
@@ -309,6 +320,7 @@ describe('resolveRecipients — CAB voting lifecycle', () => {
       const out = await resolveRecipients(sql, evt(type, { change_id: 'chg-1' }));
       expect(out).toEqual([{ userId: 'raiser-1', email: 'raiser@acme' }]);
       expect(calls[0].params).toEqual(['chg-1', 'org-1']);
+      expect(calls[0].text).toContain('c.organization_id = $2'); // pins the predicate, not just the param
     },
   );
 });

@@ -35,10 +35,13 @@ async function ticketDetails(
 /** Change fields used to render CAB templates. Events carry only change_id (plus
  *  whatever the publisher already knew, e.g. vote_deadline/window_start); the dispatcher
  *  looks the title up once. Never selects risk/impact/plan text — templates surface only
- *  the title and id. */
-async function changeDetails(sql: Sql, changeId: string | undefined): Promise<{ title?: string }> {
+ *  the title and id. Org-scoped for consistency with the CAB recipient resolvers (this
+ *  runs on the admin pool, so RLS does not bound it) — harmless today since a
+ *  mis-addressed event already resolves zero recipients, but a mismatched org here should
+ *  still surface nothing rather than another tenant's change title. */
+async function changeDetails(sql: Sql, changeId: string | undefined, orgId: string | null): Promise<{ title?: string }> {
   if (!changeId) return {};
-  const { rows } = await sql.query('SELECT title FROM changes WHERE id = $1', [changeId]);
+  const { rows } = await sql.query('SELECT title FROM changes WHERE id = $1 AND organization_id = $2', [changeId, orgId]);
   return rows[0] ?? {};
 }
 
@@ -128,7 +131,7 @@ export async function dispatch(
   // change.* events carry only change_id — look the title up once (never risk/impact/plan
   // text; templates surface only title + id, per the "nothing sensitive" requirement).
   const changeRef = d.change_id as string | undefined;
-  const c = evt.type.startsWith('change.') ? await changeDetails(sql, changeRef) : {};
+  const c = evt.type.startsWith('change.') ? await changeDetails(sql, changeRef, orgId) : {};
   const tpl = renderTemplate(evt.type, {
     orgName: await orgName(sql, orgId),
     ticketId: ref,

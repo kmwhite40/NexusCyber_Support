@@ -260,6 +260,9 @@ export async function resolveRecipients(sql: Sql, evt: DomainEvent): Promise<Rec
           AND u.email IS NOT NULL AND ${NOT_OPTED_OUT}`,
       [changeId, evt.organization_id],
     );
+    // The chair does not need to be told they cast their own vote — vote_overdue has no
+    // voter_id, so this only ever suppresses vote_cast on the chair's own ballot.
+    if (rows[0]?.user_id === data.voter_id) return [];
     return dedupe(rows);
   }
 
