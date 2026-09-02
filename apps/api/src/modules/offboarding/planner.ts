@@ -32,3 +32,141 @@ export function inactiveDisplayName(last: string, first: string, lastDay: string
   const clean = (s: string) => s.replace(/[\s_]+/g, '').trim();
   return `ZZ_Inactive_${clean(last)}_${clean(first)}_${lastDay}`;
 }
+
+export type OffboardStepKey =
+  | 'block_signin' | 'revoke_sessions' | 'rename_account'
+  | 'convert_shared_mailbox' | 'remove_licenses' | 'remove_groups_dls_roles';
+
+export interface OffboardStep {
+  key: OffboardStepKey;
+  label: string;
+  /** True when no API can perform this — a human must do it and confirm. See the mailbox step. */
+  manual: boolean;
+  detail: Record<string, unknown>;
+}
+export interface Blocker { code: string; message: string }
+
+export interface OffboardPlan {
+  upn: string;
+  currentDisplayName: string;
+  inactiveName: string;
+  privileged: boolean;
+  steps: OffboardStep[];
+  blockers: Blocker[];
+}
+
+export interface OffboardPlanInput {
+  answers: Record<string, unknown>;
+  user: { id: string; userPrincipalName: string; displayName: string; accountEnabled: boolean } | null;
+  directoryRoleCount: number;
+  licenseSkuIds: string[];
+  groupIds: string[];
+  mailboxType: 'user' | 'shared' | 'none';
+}
+
+/**
+ * THE ORDERING CONSTRAINT, in one place, because it is the whole reason this planner exists.
+ *
+ * `convert_shared_mailbox` MUST precede `remove_licenses`: a mailbox can only be converted to
+ * shared while it is still licensed. Strip the licence first and the mailbox drops into
+ * soft-delete and the conversion fails — destroying the very artifact the runbook was trying to
+ * preserve.
+ *
+ * `revoke_sessions` MUST follow `block_signin`: revoking first leaves a window in which a live
+ * session mints fresh tokens against an account that is still enabled.
+ */
+export const OFFBOARD_STEP_ORDER: OffboardStepKey[] = [
+  'block_signin', 'revoke_sessions', 'rename_account',
+  'convert_shared_mailbox', 'remove_licenses', 'remove_groups_dls_roles',
+];
+
+const ALREADY_OFFBOARDED_PREFIX = 'ZZ_Inactive_';
+
+export function planOffboard(input: OffboardPlanInput): OffboardPlan {
+  const blockers: Blocker[] = [];
+  const first = String(input.answers.legal_first_name ?? '');
+  const last = String(input.answers.legal_last_name ?? '');
+  const lastDay = String(input.answers.last_day ?? '');
+
+  // Any directory role at all makes this a privileged account, which is what selects the 7-year
+  // retention path in phase 2 rather than the 1-year default.
+  const privileged = input.directoryRoleCount > 0;
+
+  let inactiveName = '';
+  try {
+    inactiveName = inactiveDisplayName(last, first, lastDay);
+  } catch (e) {
+    // Reported, never thrown: a planner that throws gives the admin a stack trace instead of a
+    // readable reason, and the other blockers below would never be collected.
+    blockers.push({ code: 'bad_last_day', message: (e as Error).message });
+  }
+
+  if (!input.user) {
+    blockers.push({ code: 'user_not_found', message: 'The account was not found in the tenant.' });
+  } else if (!input.user.accountEnabled && input.user.displayName.startsWith(ALREADY_OFFBOARDED_PREFIX)) {
+    // Disabled AND renamed means a previous run finished. Disabled alone is a normal pre-state
+    // — HR often disables early — and must still be completable.
+    blockers.push({
+      code: 'already_offboarded',
+      message: `${input.user.userPrincipalName} is already disabled and renamed; refusing to re-run.`,
+    });
+  }
+
+  if (input.answers.legal_hold === true) {
+    blockers.push({
+      code: 'legal_hold',
+      message: 'Legal hold is set: this plan would convert the mailbox and reclaim licenses.',
+    });
+  }
+
+  // Only emit a conversion when there is a user mailbox to preserve. A shared or absent mailbox
+  // has nothing to convert, and emitting a manual step nobody can complete would stall the run
+  // at that step forever — the executor halts there by design.
+  const wantsConversion = input.mailboxType === 'user';
+
+  const all: Record<OffboardStepKey, OffboardStep> = {
+    block_signin: {
+      key: 'block_signin', label: 'Block sign-in', manual: false,
+      detail: { userId: input.user?.id },
+    },
+    revoke_sessions: {
+      key: 'revoke_sessions', label: 'Revoke sessions and refresh tokens', manual: false,
+      detail: { userId: input.user?.id },
+    },
+    rename_account: {
+      key: 'rename_account', label: `Rename to ${inactiveName}`, manual: false,
+      detail: { userId: input.user?.id, displayName: inactiveName },
+    },
+    convert_shared_mailbox: {
+      key: 'convert_shared_mailbox',
+      label: 'Convert mailbox to shared (manual — Exchange Online PowerShell)',
+      manual: true,
+      detail: { upn: input.user?.userPrincipalName },
+    },
+    remove_licenses: {
+      key: 'remove_licenses', label: `Reclaim ${input.licenseSkuIds.length} license(s)`, manual: false,
+      detail: { skuIds: input.licenseSkuIds },
+    },
+    remove_groups_dls_roles: {
+      key: 'remove_groups_dls_roles',
+      label: `Remove ${input.groupIds.length} group/DL membership(s) and directory roles`,
+      manual: false,
+      detail: { groupIds: input.groupIds, directoryRoleCount: input.directoryRoleCount },
+    },
+  };
+
+  // Built by filtering the canonical order, never by pushing in ad-hoc sequence: the order is
+  // the safety property, so there is exactly one place it is expressed.
+  const steps = OFFBOARD_STEP_ORDER
+    .filter((k) => (k === 'convert_shared_mailbox' ? wantsConversion : true))
+    .map((k) => all[k]);
+
+  return {
+    upn: input.user?.userPrincipalName ?? '',
+    currentDisplayName: input.user?.displayName ?? '',
+    inactiveName,
+    privileged,
+    steps,
+    blockers,
+  };
+}

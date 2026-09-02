@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { inactiveDisplayName } from '../src/modules/offboarding/planner.js';
+import {
+  inactiveDisplayName, planOffboard, OFFBOARD_STEP_ORDER, type OffboardPlanInput,
+} from '../src/modules/offboarding/planner.js';
 
 // The disabled-account name is the only place the retention clock (1yr standard / 7yr
 // privileged) is readable straight off the account, so its format is load-bearing rather than
@@ -22,5 +24,90 @@ describe('inactiveDisplayName', () => {
 
   it('refuses a missing last day', () => {
     expect(() => inactiveDisplayName('Doe', 'Jane', '')).toThrow(/ISO date/);
+  });
+});
+
+const baseInput = (over: Partial<OffboardPlanInput> = {}): OffboardPlanInput => ({
+  answers: { legal_first_name: 'Jane', legal_last_name: 'Doe', last_day: '2026-09-02' },
+  user: { id: 'u-1', userPrincipalName: 'jane.doe@sbsfederal.com', displayName: 'Jane Doe', accountEnabled: true },
+  directoryRoleCount: 0,
+  licenseSkuIds: ['sku-e3'],
+  groupIds: ['g-1'],
+  mailboxType: 'user',
+  ...over,
+});
+
+describe('planOffboard', () => {
+  it('emits the six steps in the one order that preserves the mailbox', () => {
+    expect(planOffboard(baseInput()).steps.map((s) => s.key)).toEqual(OFFBOARD_STEP_ORDER);
+  });
+
+  it('marks the mailbox conversion manual — Graph has no conversion endpoint', () => {
+    const plan = planOffboard(baseInput());
+    expect(plan.steps.filter((s) => s.manual).map((s) => s.key)).toEqual(['convert_shared_mailbox']);
+  });
+
+  it('never places license removal before the mailbox conversion', () => {
+    // THE constraint this planner exists to protect: an unlicensed mailbox drops into
+    // soft-delete and can no longer be converted to shared.
+    const keys = planOffboard(baseInput()).steps.map((s) => s.key);
+    expect(keys.indexOf('convert_shared_mailbox')).toBeLessThan(keys.indexOf('remove_licenses'));
+  });
+
+  it('revokes sessions only after blocking sign-in', () => {
+    // Revoking first would leave a window where a live session mints fresh tokens against a
+    // still-enabled account.
+    const keys = planOffboard(baseInput()).steps.map((s) => s.key);
+    expect(keys.indexOf('block_signin')).toBeLessThan(keys.indexOf('revoke_sessions'));
+  });
+
+  it('omits the conversion when there is no user mailbox to preserve', () => {
+    const keys = planOffboard(baseInput({ mailboxType: 'none' })).steps.map((s) => s.key);
+    expect(keys).not.toContain('convert_shared_mailbox');
+    expect(keys).toContain('remove_licenses');
+  });
+
+  it('omits the conversion when the mailbox is already shared', () => {
+    const keys = planOffboard(baseInput({ mailboxType: 'shared' })).steps.map((s) => s.key);
+    expect(keys).not.toContain('convert_shared_mailbox');
+  });
+
+  it('flags a privileged account so the 7-year retention path applies', () => {
+    expect(planOffboard(baseInput({ directoryRoleCount: 2 })).privileged).toBe(true);
+    expect(planOffboard(baseInput()).privileged).toBe(false);
+  });
+
+  it('blocks on legal hold, because the plan would touch the mailbox and licenses', () => {
+    const plan = planOffboard(baseInput({ answers: { ...baseInput().answers, legal_hold: true } }));
+    expect(plan.blockers.map((b) => b.code)).toContain('legal_hold');
+  });
+
+  it('blocks when the account is not in the tenant', () => {
+    expect(planOffboard(baseInput({ user: null })).blockers.map((b) => b.code)).toContain('user_not_found');
+  });
+
+  it('blocks a re-run of an account already disabled and renamed', () => {
+    const plan = planOffboard(baseInput({
+      user: { id: 'u-1', userPrincipalName: 'jane.doe@sbsfederal.com', displayName: 'ZZ_Inactive_Doe_Jane_2026-09-02', accountEnabled: false },
+    }));
+    expect(plan.blockers.map((b) => b.code)).toContain('already_offboarded');
+  });
+
+  it('does not treat a merely disabled account as already offboarded', () => {
+    // Disabled but not renamed is a normal pre-state (HR disabled early); offboarding should
+    // still be able to finish the job.
+    const plan = planOffboard(baseInput({
+      user: { id: 'u-1', userPrincipalName: 'jane.doe@sbsfederal.com', displayName: 'Jane Doe', accountEnabled: false },
+    }));
+    expect(plan.blockers.map((b) => b.code)).not.toContain('already_offboarded');
+  });
+
+  it('reports a bad last day as a blocker rather than throwing out of the planner', () => {
+    const plan = planOffboard(baseInput({ answers: { legal_first_name: 'Jane', legal_last_name: 'Doe', last_day: 'soon' } }));
+    expect(plan.blockers.map((b) => b.code)).toContain('bad_last_day');
+  });
+
+  it('carries the computed inactive name so the executor never derives it', () => {
+    expect(planOffboard(baseInput()).inactiveName).toBe('ZZ_Inactive_Doe_Jane_2026-09-02');
   });
 });
