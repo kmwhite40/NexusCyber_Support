@@ -199,6 +199,30 @@ describe('VotePanel', () => {
     expect(await screen.findByText(/not in CAB review/i)).toBeInTheDocument();
   });
 
+  it('names its units on a weighted board, where the totals are not head counts', () => {
+    // tallyVotes sums WEIGHT. With a x3 chair the roster is 4 weight across 2 people, so
+    // "roster 4" beside two visible rows reads as a bug unless the unit is stated.
+    const change = makeChange({
+      cab_quorum: 4,
+      votes: [ballot({ id: 'v1', voter_id: ME, weight: 3 }), ballot({ id: 'v2', voter_id: OTHER })],
+      // The server tally is weighted: 4 weight pending across 2 people.
+      cab_tally: { approve: 0, reject: 0, abstain: 0, pending: 4, cast: 0, roster: 4 },
+    });
+    render(<VotePanel change={change} meId={ME} canVote onVoted={vi.fn()} />);
+
+    expect(screen.getByText(/figures are vote weight, not head count/i)).toBeInTheDocument();
+    expect(screen.getByText(/roster 4 weight/i)).toBeInTheDocument();
+    expect(screen.getByText(/4 more weights needed/i)).toBeInTheDocument();
+    expect(screen.getByText('×3')).toBeInTheDocument(); // the heavy ballot is identified
+  });
+
+  it('keeps plain vote wording on an ordinary one-member-one-vote board', () => {
+    render(<VotePanel change={makeChange({ cab_quorum: 2 })} meId={ME} canVote onVoted={vi.fn()} />);
+    expect(screen.getByText(/2 more votes needed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/vote weight, not head count/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^×/)).not.toBeInTheDocument();
+  });
+
   it('marks a vote past its deadline as overdue', () => {
     render(
       <VotePanel

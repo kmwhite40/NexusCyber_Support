@@ -57,8 +57,13 @@ export interface VoteTally {
   pending: number; cast: number; roster: number;
 }
 
-/** GET /changes/:id — the whole `changes` row plus the CAB roster and tally. */
-export interface ChangeRecord extends Change {
+/**
+ * The bare `changes` row, as returned by POST /changes. It carries NO `votes`,
+ * `cab_steps` or `cab_tally` — only `getChange` joins those on — so it is a separate
+ * type from `ChangeRecord`. Typing a create as `ChangeRecord` would compile and then
+ * throw the moment anything fed the result to the vote panel.
+ */
+export interface ChangeRow extends Change {
   organization_id: string;
   description: string | null;
   impact: RiskBand | null;
@@ -81,6 +86,10 @@ export interface ChangeRecord extends Change {
   pir_outcome: PirOutcome | null;
   pir_notes: string | null;
   pir_at: string | null;
+}
+
+/** GET /changes/:id — the `changes` row plus the CAB roster and tally joined on. */
+export interface ChangeRecord extends ChangeRow {
   cab_steps: CabStep[];
   votes: ChangeVote[];
   cab_tally: VoteTally | null;
@@ -110,6 +119,9 @@ export interface VoteResult { status: ChangeStatus; tally: VoteTally; quorum: nu
 export interface ScheduleResult { status: string; conflicts: string[]; blackouts: Array<{ id: string; name: string }> }
 
 export interface CabBoardMember { user_id: string; role: 'chair' | 'member'; weight: number }
+/** What PUT /cab/board expects per member. `weight` must be round-tripped: putBoard
+ *  deletes and re-inserts the whole membership set, defaulting anything omitted to 1. */
+export interface CabBoardMemberInput { userId: string; role?: 'chair' | 'member'; weight?: number }
 export interface CabBoard {
   id?: string;
   organization_id: string | null;
@@ -214,10 +226,25 @@ export function isRecusedRaiser(change: Pick<ChangeRecord, 'created_by'>, userId
   return !!userId && !!change.created_by && change.created_by === userId;
 }
 
-/** Does this user hold an uncast ballot on this change? Pure — drives the vote buttons. */
-export function pendingBallotFor(votes: ChangeVote[], userId: string | null | undefined): ChangeVote | null {
+/**
+ * This user's ballot on this change, cast or not — null if they hold none. Pure.
+ * Callers decide what to do with a ballot that already has a vote on it.
+ */
+export function ballotFor(votes: ChangeVote[], userId: string | null | undefined): ChangeVote | null {
   if (!userId) return null;
   return votes.find((v) => v.voter_id === userId) ?? null;
+}
+
+/**
+ * Does any ballot on this roster carry a weight other than 1? Pure.
+ *
+ * Matters for wording, not arithmetic: `tallyVotes` sums WEIGHT, so `roster`, `cast`,
+ * `pending` and the quorum are weight units, not head counts. On an unweighted board the
+ * two coincide and plain "votes" reads best; on a weighted board they diverge and the
+ * numbers would not reconcile with the rows on screen unless the units are named.
+ */
+export function isWeightedRoster(votes: Array<{ weight: number }>): boolean {
+  return votes.some((v) => (v.weight ?? 1) !== 1);
 }
 
 // ---- API ----
@@ -235,7 +262,7 @@ export const changesApi = {
     title: string; description?: string; changeType?: string; risk?: string;
     impact?: string; likelihood?: string; implementationPlan?: string; testPlan?: string;
     backoutPlan?: string; templateId?: string; organizationId?: string;
-  }) => api.post<ChangeRecord>('/changes', body),
+  }) => api.post<ChangeRow>('/changes', body),
   submitCab: (id: string, body: { extraVoterIds?: string[]; boardId?: string } = {}) =>
     api.post<SubmitCabResult>(`/changes/${id}/submit-cab`, body),
   vote: (id: string, vote: VoteValue, reason?: string) =>
@@ -265,7 +292,7 @@ export const cabApi = {
     chairId?: string | null;
     quorum?: number;
     threshold?: Threshold;
-    members?: Array<{ userId: string; role?: 'chair' | 'member'; weight?: number }>;
+    members?: CabBoardMemberInput[];
   }) => api.put<{ data: CabBoard }>('/cab/board', input).then((r) => r.data),
 
   blackouts: (organizationId: string) =>

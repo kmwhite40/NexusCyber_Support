@@ -14,7 +14,7 @@ import * as React from 'react';
 import { Button, Badge, Textarea } from '@/components/ui/primitives';
 import { ApiError } from '@/lib/api';
 import {
-  changesApi, quorumProgress, quorumClamp, isRecusedRaiser, pendingBallotFor,
+  changesApi, quorumProgress, quorumClamp, isRecusedRaiser, ballotFor, isWeightedRoster,
   THRESHOLD_LABEL, type ChangeRecord, type ChangeVote, type VoteValue,
 } from '@/lib/changes';
 
@@ -52,10 +52,15 @@ export function VotePanel({
 
   const tally = change.cab_tally;
   const progress = quorumProgress(tally, change.cab_quorum);
+  // tallyVotes sums WEIGHT, so every figure below is weight units. On an unweighted board
+  // that equals a head count and "votes" reads best; on a weighted one it does not, and
+  // saying "votes" would leave the totals irreconcilable with the rows on screen.
+  const weighted = isWeightedRoster(change.votes);
+  const unit = weighted ? 'weight' : 'vote';
   const clamp = quorumClamp(change);
   const threshold = change.cab_threshold ?? 'majority';
   const open = change.status === 'cab_review';
-  const myBallot = pendingBallotFor(change.votes, meId);
+  const myBallot = ballotFor(change.votes, meId);
   const iAmRaiser = isRecusedRaiser(change, meId);
   // "Pending ballot" is the gate for the controls: a roster row that has not been cast.
   // A member who already voted may still change it while the vote is open (the API
@@ -109,6 +114,7 @@ export function VotePanel({
         <Badge tone="danger">{tally?.reject ?? 0} reject</Badge>
         <Badge tone="neutral">{tally?.abstain ?? 0} abstain</Badge>
         <Badge tone="warning">{tally?.pending ?? 0} pending</Badge>
+        {weighted && <span className="text-[11px] text-muted">weighted board — figures are vote weight, not head count</span>}
       </div>
 
       {/* Quorum progress */}
@@ -116,12 +122,12 @@ export function VotePanel({
         <div className="flex items-center justify-between text-[11px] text-muted">
           <span>
             Quorum {progress.cast} of {progress.quorum}
-            {tally ? ` · roster ${tally.roster}` : ''}
+            {tally ? ` · roster ${tally.roster}${weighted ? ' weight' : ''}` : ''}
           </span>
           <span className={progress.met ? 'text-success' : undefined}>
             {progress.met
               ? 'quorum met'
-              : `${progress.remaining} more vote${progress.remaining === 1 ? '' : 's'} needed`}
+              : `${progress.remaining} more ${unit}${progress.remaining === 1 ? '' : 's'} needed`}
           </span>
         </div>
         <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-2" role="presentation">
@@ -135,8 +141,8 @@ export function VotePanel({
       {clamp && (
         <p className="mt-2 rounded border border-warning/30 bg-warning/10 p-2 text-[11px] text-warning">
           Quorum weakened: this board is configured for a quorum of {clamp.requested}, but only{' '}
-          {clamp.effective} eligible voter{clamp.effective === 1 ? '' : 's'} were on the roster when it was
-          submitted, so the vote runs at a quorum of {clamp.effective}.
+          {clamp.effective} eligible {unit}{clamp.effective === 1 ? '' : 's'} {weighted ? 'was' : 'were'} on the
+          roster when it was submitted, so the vote runs at a quorum of {clamp.effective}.
         </p>
       )}
 
@@ -148,6 +154,11 @@ export function VotePanel({
               <span className={meId && v.voter_id === meId ? 'font-medium text-fg' : 'text-muted'}>
                 {voterLabel(v, meId)}
               </span>
+              {(v.weight ?? 1) !== 1 && (
+                <span className="ml-1 text-[11px] text-muted" title="This ballot counts as this much vote weight">
+                  ×{v.weight}
+                </span>
+              )}
               {v.reason && <span className="block truncate text-[11px] text-muted">“{v.reason}”</span>}
             </span>
             <Badge tone={v.vote ? VOTE_TONE[v.vote] : 'warning'}>{v.vote ?? 'pending'}</Badge>

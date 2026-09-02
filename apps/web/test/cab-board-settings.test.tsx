@@ -35,6 +35,7 @@ const BOB = '77777777-7777-7777-7777-777777777777';
 function routeGet(over: Record<string, unknown> = {}) {
   mockedApi.get.mockImplementation((url: string) => {
     if (url.startsWith('/cab/board')) return Promise.resolve(over['board'] ?? { data: { organization_id: ORG, name: 'Change Advisory Board', quorum: 2, threshold: 'majority', members: [{ user_id: ALICE, role: 'chair', weight: 1 }] } });
+    if (url.startsWith('/organizations')) return Promise.resolve({ data: [] });
     if (url.startsWith('/cab/blackouts')) return Promise.resolve(over['blackouts'] ?? { data: [] });
     if (url.startsWith('/cab/templates')) return Promise.resolve(over['templates'] ?? { data: [] });
     if (url.startsWith('/users/search')) return Promise.resolve({ data: [{ id: BOB, display_name: 'Bob Member', email: 'bob@example.gov' }] });
@@ -103,10 +104,10 @@ describe('CabBoardSettings', () => {
     await userEvent.click(screen.getByRole('button', { name: /save board/i }));
     await waitFor(() => expect(mockedApi.put).toHaveBeenCalled());
 
-    const body = mockedApi.put.mock.calls[0][1] as { members: Array<{ userId: string; role: string }>; chairId: string };
+    const body = mockedApi.put.mock.calls[0][1] as { members: Array<{ userId: string; role: string; weight: number }>; chairId: string };
     expect(body.members).toEqual([
-      { userId: ALICE, role: 'chair' },
-      { userId: BOB, role: 'member' },
+      { userId: ALICE, role: 'chair', weight: 1 },
+      { userId: BOB, role: 'member', weight: 1 },
     ]);
     expect(body.chairId).toBe(ALICE);
   });
@@ -170,6 +171,66 @@ describe('CabBoardSettings', () => {
 
     expect(await screen.findByText('Fiscal year end')).toBeInTheDocument();
     expect(screen.getAllByText('global')).toHaveLength(1); // the blackout, not the org template
+  });
+
+  it('preserves a member’s vote weight across a save that never touched it', async () => {
+    // PUT /cab/board deletes and re-inserts the whole membership set, defaulting an
+    // omitted weight to 1. Dropping weight from the draft therefore silently demotes every
+    // weighted member the first time an admin edits quorum — and tallyVotes/resolveVote
+    // are weighted, and the weight is snapshotted into change_votes at submit, so that is
+    // a silent change to how future votes resolve.
+    routeGet({
+      board: { data: { organization_id: ORG, name: 'Change Advisory Board', quorum: 3, threshold: 'majority', members: [
+        { user_id: ALICE, role: 'chair', weight: 3 },
+        { user_id: BOB, role: 'member', weight: 1 },
+      ] } },
+    });
+    renderSettings();
+    await waitFor(() => expect(screen.getByDisplayValue('Change Advisory Board')).toBeInTheDocument());
+
+    // Touch something unrelated, then save.
+    const quorum = screen.getByLabelText('Quorum');
+    await userEvent.clear(quorum);
+    await userEvent.type(quorum, '2');
+    await userEvent.click(screen.getByRole('button', { name: /save board/i }));
+    await waitFor(() => expect(mockedApi.put).toHaveBeenCalled());
+
+    const body = mockedApi.put.mock.calls[0][1] as { members: Array<{ userId: string; weight: number }>; quorum: number };
+    expect(body.quorum).toBe(2);
+    expect(body.members).toEqual([
+      { userId: ALICE, role: 'chair', weight: 3 },
+      { userId: BOB, role: 'member', weight: 1 },
+    ]);
+  });
+
+  it('shows a member’s weight and measures the quorum against roster weight', async () => {
+    routeGet({
+      board: { data: { organization_id: ORG, name: 'Change Advisory Board', quorum: 3, threshold: 'majority', members: [
+        { user_id: ALICE, role: 'chair', weight: 3 },
+      ] } },
+    });
+    renderSettings();
+    await waitFor(() => expect(screen.getByDisplayValue('Change Advisory Board')).toBeInTheDocument());
+
+    // One member, but three vote weight — a quorum of 3 IS reachable, so no warning.
+    expect(await screen.findByText('×3')).toBeInTheDocument();
+    expect(screen.queryByText(/cannot be reached/i)).not.toBeInTheDocument();
+
+    const quorum = screen.getByLabelText('Quorum');
+    await userEvent.clear(quorum);
+    await userEvent.type(quorum, '4');
+    expect(screen.getByText(/carrying 3 vote weight/i)).toBeInTheDocument();
+  });
+
+  it('keeps showing a member’s name after the search box is retyped', async () => {
+    renderSettings();
+    expect(await screen.findByText(/alice chair/i)).toBeInTheDocument();
+
+    // The candidate list is replaced on every keystroke; names must not be resolved from
+    // it alone or an already-added member relabels to a raw UUID.
+    await userEvent.type(screen.getByLabelText(/search for a board member/i), 'zzz');
+    await waitFor(() => expect(mockedApi.get.mock.calls.some(([u]) => (u as string).includes('zzz'))).toBe(true));
+    expect(screen.getByText(/alice chair/i)).toBeInTheDocument();
   });
 
   it('surfaces a refused save rather than looking like it worked', async () => {

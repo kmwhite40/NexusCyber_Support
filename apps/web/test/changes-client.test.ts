@@ -9,7 +9,7 @@
 // changes shape breaks here rather than in a render.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
-  changesApi, cabApi, quorumProgress, quorumClamp, isRecusedRaiser, pendingBallotFor,
+  changesApi, cabApi, quorumProgress, quorumClamp, isRecusedRaiser, ballotFor, isWeightedRoster,
   statusTone, riskTone, type ChangeVote,
 } from '@/lib/changes';
 import { api } from '@/lib/api';
@@ -140,10 +140,17 @@ describe('roster helpers', () => {
 
   it('finds the viewer’s own ballot, cast or not', () => {
     const votes = [ballot('u1', 'approve'), ballot('u2')];
-    expect(pendingBallotFor(votes, 'u2')).toMatchObject({ voter_id: 'u2', vote: null });
-    expect(pendingBallotFor(votes, 'u1')).toMatchObject({ vote: 'approve' });
-    expect(pendingBallotFor(votes, 'u3')).toBeNull();
-    expect(pendingBallotFor(votes, null)).toBeNull();
+    expect(ballotFor(votes, 'u2')).toMatchObject({ voter_id: 'u2', vote: null });
+    expect(ballotFor(votes, 'u1')).toMatchObject({ vote: 'approve' });
+    expect(ballotFor(votes, 'u3')).toBeNull();
+    expect(ballotFor(votes, null)).toBeNull();
+  });
+
+  it('detects a weighted roster, so the tally can name its units', () => {
+    // tallyVotes sums weight: on a weighted board "roster 4" is not four people.
+    expect(isWeightedRoster([{ weight: 1 }, { weight: 1 }])).toBe(false);
+    expect(isWeightedRoster([{ weight: 1 }, { weight: 2 }])).toBe(true);
+    expect(isWeightedRoster([])).toBe(false);
   });
 });
 

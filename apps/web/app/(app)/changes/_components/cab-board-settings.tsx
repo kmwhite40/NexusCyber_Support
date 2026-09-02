@@ -24,10 +24,15 @@ const THRESHOLDS: ReadonlyArray<{ value: Threshold; label: string }> = [
 ];
 
 interface Candidate { id: string; label: string }
-interface DraftMember { userId: string; role: 'chair' | 'member' }
-
-const labelFor = (id: string, candidates: Candidate[]) =>
-  candidates.find((c) => c.id === id)?.label ?? id;
+/**
+ * `weight` is carried even though this screen does not edit it. PUT /cab/board DELETEs the
+ * whole membership set and re-inserts it, defaulting an omitted weight to 1 — so dropping
+ * it here would silently reset every weighted member the first time an admin touched
+ * quorum, threshold or membership. Weights are load-bearing: tallyVotes/resolveVote are
+ * weighted and the weight is snapshotted into change_votes at submit, so that reset would
+ * quietly change how future votes resolve.
+ */
+interface DraftMember { userId: string; role: 'chair' | 'member'; weight: number }
 
 /** ISO string for a `datetime-local` value; '' when the field is empty. */
 const localToIso = (v: string) => (v ? new Date(v).toISOString() : '');
@@ -97,7 +102,12 @@ function BoardEditor({ organizationId, canListPlatformUsers }: { organizationId:
   const [quorum, setQuorum] = React.useState('1');
   const [threshold, setThreshold] = React.useState<Threshold>('majority');
   const [candidates, setCandidates] = React.useState<Candidate[]>([]);
+  // Names accumulate and are never dropped. `candidates` is replaced on every keystroke of
+  // the search box, so resolving member names from it alone relabelled anyone already on
+  // the board as a raw UUID as soon as the admin typed a new query.
+  const [names, setNames] = React.useState<Record<string, string>>({});
   const [query, setQuery] = React.useState('');
+  const labelFor = React.useCallback((id: string) => names[id] ?? id, [names]);
   const [saving, setSaving] = React.useState(false);
   const [err, setErr] = React.useState<string | null>(null);
   const [saved, setSaved] = React.useState(false);
@@ -110,7 +120,7 @@ function BoardEditor({ organizationId, canListPlatformUsers }: { organizationId:
         setName(b.name ?? 'Change Advisory Board');
         setQuorum(String(b.quorum ?? 1));
         setThreshold(b.threshold ?? 'majority');
-        setMembers((b.members ?? []).map((m) => ({ userId: m.user_id, role: m.role })));
+        setMembers((b.members ?? []).map((m) => ({ userId: m.user_id, role: m.role, weight: m.weight ?? 1 })));
       })
       .catch((e) => setErr(e instanceof ApiError ? e.detail : 'Failed to load the board'));
   }, [organizationId]);
@@ -133,14 +143,20 @@ function BoardEditor({ organizationId, canListPlatformUsers }: { organizationId:
           .filter((u) => !term || (u.display_name ?? '').toLowerCase().includes(term) || u.email.toLowerCase().includes(term))
           .map((u) => ({ id: u.id, label: `${u.display_name ?? u.email} (staff)` })),
       ];
-      setCandidates(merged.filter((c, i) => merged.findIndex((x) => x.id === c.id) === i));
+      const deduped = merged.filter((c, i) => merged.findIndex((x) => x.id === c.id) === i);
+      setCandidates(deduped);
+      setNames((prev) => {
+        const next = { ...prev };
+        for (const c of deduped) next[c.id] = c.label;
+        return next;
+      });
     });
     return () => { live = false; };
   }, [query, organizationId, canListPlatformUsers]);
 
   function addMember(id: string) {
     if (!id || members.some((m) => m.userId === id)) return;
-    setMembers([...members, { userId: id, role: members.length === 0 ? 'chair' : 'member' }]);
+    setMembers([...members, { userId: id, role: members.length === 0 ? 'chair' : 'member', weight: 1 }]);
     setSaved(false);
   }
   function removeMember(id: string) {
@@ -153,9 +169,12 @@ function BoardEditor({ organizationId, canListPlatformUsers }: { organizationId:
   }
 
   const quorumNum = Math.max(1, parseInt(quorum || '1', 10) || 1);
+  // Quorum is compared against roster WEIGHT, not head count — tallyVotes sums weight.
+  const rosterWeight = members.reduce((sum, m) => sum + (m.weight || 1), 0);
+  const weighted = members.some((m) => (m.weight || 1) !== 1);
   // The API clamps a quorum it cannot reach down to the roster at submit time, which
   // weakens the rule. Say so here, where it can still be fixed, not only in the vote panel.
-  const overQuorum = members.length > 0 && quorumNum > members.length;
+  const overQuorum = members.length > 0 && quorumNum > rosterWeight;
 
   async function save() {
     setSaving(true);
@@ -169,7 +188,8 @@ function BoardEditor({ organizationId, canListPlatformUsers }: { organizationId:
         quorum: quorumNum,
         threshold,
         chairId: chair?.userId ?? null,
-        members: members.map((m) => ({ userId: m.userId, role: m.role })),
+        // weight round-trips unchanged; see the DraftMember note above.
+        members: members.map((m) => ({ userId: m.userId, role: m.role, weight: m.weight })),
       });
       setBoard(next);
       setSaved(true);
@@ -211,10 +231,10 @@ function BoardEditor({ organizationId, canListPlatformUsers }: { organizationId:
 
             {overQuorum && (
               <p className="rounded border border-warning/30 bg-warning/10 p-2 text-[11px] text-warning">
-                A quorum of {quorumNum} cannot be reached by {members.length} member{members.length === 1 ? '' : 's'}.
-                Changes submitted to this board will vote at a quorum clamped down to the eligible
-                roster — and the raiser is recused from their own change, so the roster is often
-                smaller still.
+                A quorum of {quorumNum} cannot be reached by {members.length} member{members.length === 1 ? '' : 's'}
+                {weighted ? ` carrying ${rosterWeight} vote weight` : ''}. Changes submitted to this board will
+                vote at a quorum clamped down to the eligible roster — and the raiser is recused from
+                their own change, so the roster is often smaller still.
               </p>
             )}
 
@@ -226,14 +246,21 @@ function BoardEditor({ organizationId, canListPlatformUsers }: { organizationId:
                 <ul className="space-y-1">
                   {members.map((m) => (
                     <li key={m.userId} className="flex items-center justify-between gap-2 rounded-md border border-border px-2 py-1 text-xs">
-                      <span className="truncate text-fg">{labelFor(m.userId, candidates)}</span>
+                      <span className="truncate text-fg">
+                        {labelFor(m.userId)}
+                        {m.weight !== 1 && (
+                          <span className="ml-1 text-[11px] text-muted" title="Vote weight, set outside this screen and preserved on save">
+                            ×{m.weight}
+                          </span>
+                        )}
+                      </span>
                       <span className="flex shrink-0 items-center gap-2">
                         {m.role === 'chair' ? (
                           <Badge tone="brand">chair</Badge>
                         ) : (
                           <Button size="sm" variant="ghost" onClick={() => makeChair(m.userId)}>Make chair</Button>
                         )}
-                        <Button size="sm" variant="ghost" aria-label={`Remove ${labelFor(m.userId, candidates)}`} onClick={() => removeMember(m.userId)}>
+                        <Button size="sm" variant="ghost" aria-label={`Remove ${labelFor(m.userId)}`} onClick={() => removeMember(m.userId)}>
                           Remove
                         </Button>
                       </span>
