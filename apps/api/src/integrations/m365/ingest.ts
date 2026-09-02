@@ -177,7 +177,13 @@ export async function ingestMessage(
   // autocommitted statement. Without an explicit BEGIN, the lock would be dropped the
   // instant the lock statement itself finished, protecting nothing against a second
   // ingestMessage call (e.g. a concurrent poll tick or webhook delivery) racing the same
-  // org. Wrap just the allocate+insert critical section in one real transaction.
+  // org. Wrap the allocate+insert critical section in one real transaction.
+  //
+  // The dedupe marker (setState(seenKey)) commits in the SAME transaction as the ticket
+  // insert — not after it — so a crash between the two can never leave a committed ticket
+  // with no dedupe marker (which would otherwise re-create a duplicate ticket from the
+  // same email on the next poll). setState is a plain parameterized INSERT ... ON
+  // CONFLICT on this same client; nothing about it depends on committing on its own.
   let ticketNumber: string;
   let ticketId: string;
   let submittedAt: string;
@@ -193,13 +199,14 @@ export async function ingestMessage(
     );
     ticketId = tRows[0].id as string;
     submittedAt = new Date(tRows[0].created_at).toISOString();
+    await setState(sql, seenKey, true);
     await sql.query('COMMIT');
   } catch (err) {
-    await sql.query('ROLLBACK');
+    // Don't let a failed ROLLBACK (e.g. a dropped connection) mask the real failure above.
+    await sql.query('ROLLBACK').catch(() => {});
     throw err;
   }
 
-  await setState(sql, seenKey, true);
   logger.info({ ticketId, from: msg.fromAddress }, 'inbound mail -> ticket created');
 
   // Drive the standard notification pipeline — this path previously did a raw INSERT
