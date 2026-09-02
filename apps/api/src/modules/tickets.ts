@@ -417,6 +417,9 @@ export async function assignTicket(
 // DEFAULT_TRANSITIONS there is the built-in fallback. transition() resolves the effective
 // map per org + ticket type.
 
+/** States that carry a completion stamp. Leaving one is a reopen; moving between them is not. */
+const TERMINAL_STATUSES = new Set(['resolved', 'closed']);
+
 export async function transition(actor: Principal, id: string, to: string, opts: { resolutionCode?: string; closureNotes?: string } = {}) {
   authorize(actor, 'ticket.update');
   return withOrgContext(orgContextFor(actor), async (sql) => {
@@ -437,6 +440,16 @@ export async function transition(actor: Principal, id: string, to: string, opts:
       await sql.query(`UPDATE sla_instances SET state='met' WHERE ticket_id=$1 AND metric='resolution' AND state NOT IN ('met','breached')`, [id]);
     }
     if (to === 'closed') sets.push('closed_at=now()');
+
+    // Leaving a terminal state must clear the terminal stamps. Without this a reopened ticket
+    // kept the resolved_at from its earlier resolve, so the row read as resolved AND open at the
+    // same time — an active status carrying a resolution timestamp. That is what "I resolved it
+    // and it still sits there as if it's open" actually looked like in the data.
+    //
+    // resolved -> closed is NOT a reopen and is deliberately excluded: that resolution really
+    // happened, and its timestamp is part of the record.
+    const LEAVING_TERMINAL = TERMINAL_STATUSES.has(t.status) && !TERMINAL_STATUSES.has(to);
+    if (LEAVING_TERMINAL) sets.push('resolved_at=NULL', 'closed_at=NULL');
     // Leaving the intake states means work has started — that's the first response.
     if ((t.status === 'new' || t.status === 'triage') && to !== 'new' && to !== 'triage') {
       await markResponseMet(sql, id);
@@ -460,8 +473,7 @@ export async function transition(actor: Principal, id: string, to: string, opts:
     if (to === 'resolved') publish('ticket.resolved', t.organization_id, { ticket_id: id, org_id: t.organization_id, resolution_code: opts.resolutionCode });
     if (to === 'closed') publish('ticket.closed', t.organization_id, { ticket_id: id, org_id: t.organization_id });
     // Reopen = leaving a terminal state (resolved/closed) back into active work.
-    const TERMINAL = new Set(['resolved', 'closed']);
-    if (TERMINAL.has(t.status) && !TERMINAL.has(to)) {
+    if (LEAVING_TERMINAL) {
       publish('ticket.reopened', t.organization_id, { ticket_id: id, org_id: t.organization_id, from: t.status, to });
     }
     return rows[0];
