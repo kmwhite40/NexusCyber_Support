@@ -6,7 +6,7 @@ import { logger } from '../../logger.js';
 import type { Sql } from '../../db/pool.js';
 import type { GraphClient } from './graph-client.js';
 import { publish } from '../../events/bus.js';
-import { derivePriority } from '../../modules/tickets.js';
+import { derivePriority, nextTicketNumber } from '../../modules/tickets.js';
 
 const INTEGRATION = 'm365';
 const DELTA_KEY = 'inbox_delta';
@@ -151,18 +151,6 @@ export async function ingestMessage(
     }
   }
 
-  // Generate a ticket number (mirrors modules/tickets.ts nextTicketNumber).
-  const { rows: nRows } = await sql.query(
-    `SELECT COALESCE(MAX((regexp_replace(ticket_number, '\\D','','g'))::int), 0) + 1 AS n
-       FROM tickets WHERE organization_id = $1`,
-    [orgId],
-  );
-  const { rows: pRows } = await sql.query(
-    'SELECT left(upper(name),4) AS p FROM organizations WHERE id=$1',
-    [orgId],
-  );
-  const ticketNumber = `${pRows[0].p}-${String(nRows[0].n).padStart(6, '0')}`;
-
   // Link the sender to an existing user in the org (best-effort) so they own the
   // ticket and can see it in the portal. The acknowledgment below still reaches the
   // raw address even when the sender has no account.
@@ -182,15 +170,34 @@ export async function ingestMessage(
   // Email tickets default to a normal-priority assessment (impact/urgency 3) like
   // portal-created tickets, so triage + the acknowledgment show a real priority.
   const priority = derivePriority(3, 3);
-  const { rows: tRows } = await sql.query(
-    `INSERT INTO tickets
-       (organization_id, ticket_number, type, requester_id, source_channel, subject, description, status, impact, urgency, priority)
-     VALUES ($1,$2,'incident',$3,'email',$4,$5,'new',3,3,$6)
-     RETURNING id, created_at, priority`,
-    [orgId, ticketNumber, requesterId, msg.subject, msg.bodyPreview, priority],
-  );
-  const ticketId = tRows[0].id as string;
-  const submittedAt = new Date(tRows[0].created_at).toISOString();
+
+  // nextTicketNumber's advisory lock is transaction-scoped (releases at COMMIT/ROLLBACK).
+  // This job runs inside withSystemContext, which — unlike withOrgContext — does NOT open
+  // a transaction around its callback: each `sql.query` here is otherwise its own
+  // autocommitted statement. Without an explicit BEGIN, the lock would be dropped the
+  // instant the lock statement itself finished, protecting nothing against a second
+  // ingestMessage call (e.g. a concurrent poll tick or webhook delivery) racing the same
+  // org. Wrap just the allocate+insert critical section in one real transaction.
+  let ticketNumber: string;
+  let ticketId: string;
+  let submittedAt: string;
+  try {
+    await sql.query('BEGIN');
+    ticketNumber = await nextTicketNumber(sql, orgId);
+    const { rows: tRows } = await sql.query(
+      `INSERT INTO tickets
+         (organization_id, ticket_number, type, requester_id, source_channel, subject, description, status, impact, urgency, priority)
+       VALUES ($1,$2,'incident',$3,'email',$4,$5,'new',3,3,$6)
+       RETURNING id, created_at, priority`,
+      [orgId, ticketNumber, requesterId, msg.subject, msg.bodyPreview, priority],
+    );
+    ticketId = tRows[0].id as string;
+    submittedAt = new Date(tRows[0].created_at).toISOString();
+    await sql.query('COMMIT');
+  } catch (err) {
+    await sql.query('ROLLBACK');
+    throw err;
+  }
 
   await setState(sql, seenKey, true);
   logger.info({ ticketId, from: msg.fromAddress }, 'inbound mail -> ticket created');

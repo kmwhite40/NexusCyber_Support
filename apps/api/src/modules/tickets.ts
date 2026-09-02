@@ -66,10 +66,22 @@ async function knownSensitiveFieldKeys(sql: Sql): Promise<Set<string>> {
   return new Set(rows.map((r: { key: string }) => r.key));
 }
 
-async function nextTicketNumber(sql: Sql, orgId: string): Promise<string> {
-  // Serialize per-org number allocation: MAX(number)+1 otherwise races under concurrent
-  // creates and collides on the (organization_id, ticket_number) unique key. The lock is
-  // transaction-scoped (createTicket runs inside withOrgContext's transaction).
+/**
+ * Allocate the next `<PREFIX>-000123` ticket number for an org. Shared by every ticket
+ * creation path (agent/customer create here, service-catalog requests in catalog.ts,
+ * and mail-to-ticket ingest in integrations/m365/ingest.ts) so the advisory-lock key is
+ * derived identically everywhere — two call sites hashing the org id differently would
+ * each serialize against a different lock and protect nothing.
+ *
+ * Serializes per-org number allocation: MAX(number)+1 otherwise races under concurrent
+ * creates and collides on the (organization_id, ticket_number) unique key.
+ * `pg_advisory_xact_lock` is transaction-scoped — it releases at COMMIT/ROLLBACK — so
+ * EVERY caller must invoke this from inside an actual transaction (withOrgContext's, or
+ * an explicit BEGIN/COMMIT around a withSystemContext callback, which does not open one
+ * on its own). A caller that isn't in a transaction gets no protection: the lock is
+ * dropped the instant this function's own lock statement finishes.
+ */
+export async function nextTicketNumber(sql: Sql, orgId: string): Promise<string> {
   await sql.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [orgId]);
   const { rows } = await sql.query(
     `SELECT COALESCE(MAX((regexp_replace(ticket_number, '\\D','','g'))::int), 0) + 1 AS n
