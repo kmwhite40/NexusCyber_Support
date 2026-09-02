@@ -81,6 +81,17 @@ async function knownSensitiveFieldKeys(sql: Sql): Promise<Set<string>> {
  * on its own). A caller that isn't in a transaction gets no protection: the lock is
  * dropped the instant this function's own lock statement finishes.
  */
+/**
+ * Derive the `<PREFIX>` half of a ticket number from an organization name: the first
+ * four letters/digits, uppercased. Punctuation and whitespace are skipped rather than
+ * sliced blindly — an org stored as " Strategic Business Systems (Federal)" (untrimmed
+ * at signup) otherwise yields " STR", which mails out as "[ STR-000001] ...".
+ */
+export function ticketNumberPrefix(orgName: string | null | undefined): string {
+  const letters = (orgName ?? '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+  return letters.slice(0, 4) || 'TCKT';
+}
+
 export async function nextTicketNumber(sql: Sql, orgId: string): Promise<string> {
   await sql.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [orgId]);
   const { rows } = await sql.query(
@@ -89,10 +100,8 @@ export async function nextTicketNumber(sql: Sql, orgId: string): Promise<string>
     [orgId],
   );
   const n = rows[0].n as number;
-  const prefix = (
-    await sql.query('SELECT left(upper(name),4) AS p FROM organizations WHERE id=$1', [orgId])
-  ).rows[0].p;
-  return `${prefix}-${String(n).padStart(6, '0')}`;
+  const orgRow = (await sql.query('SELECT name FROM organizations WHERE id=$1', [orgId])).rows[0];
+  return `${ticketNumberPrefix(orgRow?.name)}-${String(n).padStart(6, '0')}`;
 }
 
 export interface CreateTicketInput {

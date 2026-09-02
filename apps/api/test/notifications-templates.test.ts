@@ -162,3 +162,71 @@ describe('renderTemplate', () => {
     });
   });
 });
+
+describe('ticket.created (service-desk alert)', () => {
+  const full = {
+    orgName: 'Acme',
+    ticketId: 't-1',
+    ticketNumber: 'ACME-000042',
+    subject: 'VPN disconnects every few minutes',
+    customerName: 'Jane Doe',
+    requesterEmail: 'jane@acme.com',
+    priority: 'P2',
+    ticketType: 'incident',
+    status: 'new',
+    sourceChannel: 'email',
+    submittedAt: '2026-06-13T14:30:00.000Z',
+    responseDueAt: '2026-06-13T18:30:00.000Z',
+    description: 'The tunnel drops roughly every ten minutes on the Boston office link.',
+    webOrigin: 'https://anchor.azurewebsites.us',
+  };
+
+  it('puts the number, type, priority and subject in the subject line', () => {
+    const out = renderTemplate('ticket.created', full);
+    expect(out.subject).toBe('[ACME-000042] New incident (P2): VPN disconnects every few minutes');
+  });
+
+  it('carries the real ticket record in the body', () => {
+    const out = renderTemplate('ticket.created', full);
+    expect(out.text).toContain('Ticket ID: ACME-000042');
+    expect(out.text).toContain('Organization: Acme');
+    expect(out.text).toContain('Requester: Jane Doe <jane@acme.com>');
+    expect(out.text).toContain('Priority: P2');
+    expect(out.text).toContain('Type: Incident');
+    expect(out.text).toContain('Status: New');
+    expect(out.text).toContain('Received Via: Email');
+    expect(out.text).toContain('Submitted Date/Time: 2026-06-13 14:30 UTC');
+    expect(out.text).toContain('Response Due: 2026-06-13 18:30 UTC');
+    expect(out.text).toContain('Subject: VPN disconnects every few minutes');
+    expect(out.text).toContain('The tunnel drops roughly every ten minutes');
+    expect(out.text).toContain('https://anchor.azurewebsites.us/tickets/t-1');
+    expect(out.text).toContain('Automated Notification');
+    expect(out.html).toContain('<li><strong>Ticket ID:</strong> ACME-000042</li>');
+    expect(out.html).toContain('href="https://anchor.azurewebsites.us/tickets/t-1"');
+  });
+
+  it('omits rows it has no data for instead of printing blanks', () => {
+    const out = renderTemplate('ticket.created', { orgName: 'Acme', ticketNumber: 'ACME-1', subject: 'help' });
+    expect(out.subject).toBe('[ACME-1] New ticket: help');
+    expect(out.text).not.toMatch(/Requester:\s*$/m);
+    expect(out.text).not.toContain('Response Due:');
+    expect(out.text).not.toContain('undefined');
+    expect(out.text).toContain('Sign in to the support portal');
+  });
+
+  it('truncates a long description rather than mailing the whole thread', () => {
+    const out = renderTemplate('ticket.created', { ...full, description: 'x'.repeat(2000) });
+    expect(out.text).toContain('…');
+    expect(out.text.length).toBeLessThan(1500);
+  });
+
+  it('escapes user-controlled description and requester fields in the html body', () => {
+    const out = renderTemplate('ticket.created', {
+      ...full,
+      customerName: '<script>alert(1)</script>',
+      description: '<img src=x onerror=alert(1)>',
+    });
+    expect(out.html).not.toContain('<script>');
+    expect(out.html).not.toContain('<img src=x');
+  });
+});

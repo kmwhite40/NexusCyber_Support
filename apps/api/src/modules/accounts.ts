@@ -56,7 +56,9 @@ export async function registerCustomer(input: RegisterInput): Promise<AuthResult
       const org = await sql.query(
         `INSERT INTO organizations (name, cloud, enclave_id, status)
          VALUES ($1,$2,$3,'active') RETURNING id`,
-        [input.organizationName, input.cloud ?? 'commercial', config.enclave],
+        // Trim: the name seeds the ticket-number prefix and every email header,
+        // so stray whitespace from a signup form must not reach the database.
+        [input.organizationName.trim(), input.cloud ?? 'commercial', config.enclave],
       );
       const orgId = org.rows[0].id as string;
 
@@ -461,7 +463,7 @@ export async function createOrganizationAdmin(
       `INSERT INTO organizations (name, cloud, enclave_id, status, entra_tenant_id)
        VALUES ($1, $2, $3, 'active', $4)
        RETURNING id, name, cloud, entra_tenant_id`,
-      [input.name, cloud, enclaveId, input.entraTenantId ?? null],
+      [input.name.trim(), cloud, enclaveId, input.entraTenantId ?? null],
     );
     await audit(actor, {
       action: 'org.create',

@@ -9,7 +9,12 @@ export interface TemplateContext {
   metric?: string;
   severity?: string;
   customerName?: string;
+  requesterEmail?: string;
   submittedAt?: string;
+  responseDueAt?: string;
+  ticketType?: string;
+  sourceChannel?: string;
+  description?: string;
   priority?: string;
   status?: string;
   visibility?: string;
@@ -49,6 +54,31 @@ function fmtWhen(s?: string): string {
   return `${d.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
 }
 
+// 'service_request' -> 'Service Request'. Enum-ish DB values (type, status,
+// source_channel) are snake_case; emails should read like English.
+function titleize(s?: string): string {
+  if (!s) return '';
+  return s
+    .replace(/[_-]+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (ch) => ch.toUpperCase());
+}
+
+// Free-text the customer wrote. Desk alerts carry enough to triage from the
+// inbox, not the whole mail thread (ingested email bodies can be huge).
+const EXCERPT_MAX = 500;
+function excerpt(s?: string): string {
+  const t = (s ?? '').replace(/\r\n/g, '\n').trim();
+  if (!t) return '';
+  return t.length <= EXCERPT_MAX ? t : `${t.slice(0, EXCERPT_MAX).trimEnd()}…`;
+}
+
+// "Label: value" rows, dropping the ones we have no data for — a desk alert
+// full of empty labels reads as a broken template.
+function detailRows(rows: Array<[string, string | undefined]>): Array<[string, string]> {
+  return rows.filter((r): r is [string, string] => Boolean(r[1] && r[1].trim()));
+}
+
 function wrap(title: string, lines: string[]): RenderedTemplate {
   const text = [title, '', ...lines].join('\n');
   const html =
@@ -59,11 +89,64 @@ function wrap(title: string, lines: string[]): RenderedTemplate {
 type Renderer = (c: TemplateContext) => RenderedTemplate;
 
 const TEMPLATES: Record<string, Renderer> = {
-  'ticket.created': (c) =>
-    wrap(`[${c.ticketNumber}] New ticket: ${c.subject ?? ''}`, [
-      `A new ticket was created for ${c.orgName ?? 'your organization'}.`,
-      `Subject: ${c.subject ?? ''}`,
-    ]),
+  // Agent-facing: the service desk triages straight from this email, so it carries
+  // the whole ticket record (requester, priority, SLA clock, description excerpt)
+  // plus a deep link. Recipients are internal only (notifications-recipients.ts).
+  'ticket.created': (c) => {
+    const brand = 'Anchor Support';
+    const number = c.ticketNumber ?? '';
+    const subject = c.subject ?? '(no subject)';
+    const kind = titleize(c.ticketType).toLowerCase() || 'ticket';
+    const org = c.orgName ?? 'an unknown organization';
+    const requester = c.customerName?.trim()
+      ? c.requesterEmail
+        ? `${c.customerName.trim()} <${c.requesterEmail}>`
+        : c.customerName.trim()
+      : c.requesterEmail;
+    const body = excerpt(c.description);
+    const link = c.webOrigin && c.ticketId ? `${c.webOrigin}/tickets/${c.ticketId}` : '';
+    const rows = detailRows([
+      ['Ticket ID', number],
+      ['Organization', c.orgName],
+      ['Requester', requester],
+      ['Priority', c.priority],
+      ['Type', titleize(c.ticketType)],
+      ['Status', titleize(c.status)],
+      ['Received Via', titleize(c.sourceChannel)],
+      ['Submitted Date/Time', fmtWhen(c.submittedAt)],
+      ['Response Due', fmtWhen(c.responseDueAt)],
+      ['Subject', subject],
+    ]);
+    const headline = `A new ${kind} was submitted for ${org} and is awaiting triage.`;
+    const text = [
+      `New ${kind}${number ? ` ${number}` : ''}`,
+      '',
+      headline,
+      '',
+      'Ticket Details:',
+      ...rows.map(([k, v]) => `${k}: ${v}`),
+      ...(body ? ['', 'Description:', body] : []),
+      '',
+      link ? `Open the ticket: ${link}` : `Sign in to the support portal to review and assign this ticket.`,
+      '',
+      brand,
+      'Automated Notification',
+    ].join('\n');
+    const html =
+      `<h2>New ${escapeHtml(kind)}${number ? ` ${escapeHtml(number)}` : ''}</h2>` +
+      `<p>${escapeHtml(headline)}</p>` +
+      `<p><strong>Ticket Details:</strong></p>` +
+      `<ul>` +
+      rows.map(([k, v]) => `<li><strong>${k}:</strong> ${escapeHtml(v)}</li>`).join('') +
+      `</ul>` +
+      (body ? `<p><strong>Description:</strong></p><blockquote>${escapeHtml(body)}</blockquote>` : '') +
+      (link
+        ? `<p><a href="${escapeHtml(link)}">Open the ticket &rarr;</a></p>`
+        : `<p>Sign in to the support portal to review and assign this ticket.</p>`) +
+      `<p>${brand}<br/><em>Automated Notification</em></p>`;
+    const priorityTag = c.priority ? ` (${c.priority})` : '';
+    return { subject: `[${number}] New ${kind}${priorityTag}: ${subject}`, html, text };
+  },
   'ticket.acknowledged': (c) => {
     const brand = 'Anchor Support';
     const name = (c.customerName ?? '').trim() || 'there';

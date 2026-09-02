@@ -20,11 +20,16 @@ import { config } from '../config.js';
 async function ticketDetails(
   sql: Sql,
   ticketId: string | undefined,
-): Promise<{ ticket_number?: string; subject?: string; priority?: string; status?: string; created_at?: string; customer_name?: string }> {
+): Promise<{
+  ticket_number?: string; subject?: string; priority?: string; status?: string; created_at?: string;
+  customer_name?: string; requester_email?: string; type?: string; source_channel?: string;
+  description?: string; response_due_at?: string;
+}> {
   if (!ticketId) return {};
   const { rows } = await sql.query(
     `SELECT t.ticket_number, t.subject, t.priority, t.status, t.created_at,
-            u.display_name AS customer_name
+            t.type, t.source_channel, t.description, t.response_due_at,
+            u.display_name AS customer_name, u.email AS requester_email
        FROM tickets t LEFT JOIN users u ON u.id = t.requester_id
       WHERE t.id = $1`,
     [ticketId],
@@ -142,7 +147,12 @@ export async function dispatch(
     metric: d.metric,
     severity: d.severity,
     customerName: d.customer_name ?? t.customer_name,
+    requesterEmail: d.requester_email ?? t.requester_email,
+    ticketType: d.type ?? t.type,
+    sourceChannel: d.source_channel ?? t.source_channel,
+    description: d.description ?? t.description,
     submittedAt: d.submitted_at ?? (t.created_at ? new Date(t.created_at).toISOString() : undefined),
+    responseDueAt: t.response_due_at ? new Date(t.response_due_at).toISOString() : undefined,
     visibility: d.visibility,
     commentExcerpt: d.comment_excerpt,
     resolutionCode: d.resolution_code,

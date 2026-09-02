@@ -31,7 +31,7 @@ describe('ingest', () => {
       'FROM integration_state': { rows: [] }, // not seen before
       'FROM organization_domains': { rows: [{ organization_id: 'org-acme' }] },
       'SELECT COALESCE(MAX': { rows: [{ n: 5 }] },
-      'left(upper(name)': { rows: [{ p: 'ACME' }] },
+      'SELECT name FROM organizations': { rows: [{ name: 'Acme' }] },
       'INSERT INTO tickets': { rows: [{ id: 't-new', created_at: '2026-06-13T14:30:00.000Z', priority: 'P3' }] },
     });
     const out = await ingestMessage(sql, msg);
@@ -106,7 +106,7 @@ describe('ingest', () => {
       'FROM integration_state': { rows: [] },
       'FROM organization_domains': { rows: [{ organization_id: 'org-acme' }] },
       'SELECT COALESCE(MAX': { rows: [{ n: 5 }] },
-      'left(upper(name)': { rows: [{ p: 'ACME' }] },
+      'SELECT name FROM organizations': { rows: [{ name: 'Acme' }] },
       'FROM users WHERE organization_id': { rows: [{ id: 'user-sender', display_name: 'Sam Sender' }] }, // sender has an account
       'INSERT INTO tickets': { rows: [{ id: 't-new', created_at: '2026-06-13T14:30:00.000Z', priority: 'P3' }] },
     });
@@ -173,7 +173,7 @@ describe('ingest', () => {
       'FROM organization_domains': { rows: [{ organization_id: 'org-acme' }] },
       'ticket_number=$2': { rows: [] }, // no such ticket -> fall through to create
       'SELECT COALESCE(MAX': { rows: [{ n: 9 }] },
-      'left(upper(name)': { rows: [{ p: 'ACME' }] },
+      'SELECT name FROM organizations': { rows: [{ name: 'Acme' }] },
       'FROM users WHERE organization_id': { rows: [] },
       'INSERT INTO tickets': { rows: [{ id: 't-fresh', created_at: '2026-06-13T00:00:00.000Z', priority: 'P3' }] },
     });
