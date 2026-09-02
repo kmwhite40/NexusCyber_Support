@@ -621,6 +621,57 @@ async function run() {
       );
     }
 
+    // ---- Link catalog items to their request forms ----
+    //
+    // This mapping has to live HERE, even though the migrations that create the forms already
+    // carry `UPDATE service_catalog_items SET form_key=...` statements, because migrate runs
+    // BEFORE seed. On a fresh database those UPDATEs match zero rows — the catalog rows do not
+    // exist yet — and silently do nothing. Seed then inserts the items and (until now) never
+    // mentioned form_key, so every seed-created item came up with form_key NULL.
+    //
+    // That failed silently in the worst way: createRequest validates answers against the linked
+    // form's fields, so with no form it dropped EVERY answer as unknown and stored
+    // `custom_fields = {}`. No error anywhere; the requester's input just vanished. Long-lived
+    // databases were unaffected only by accident, having been seeded before those migrations
+    // existed. Seed runs last, so seed is the only place that can reliably close the link.
+    //
+    // Guarded on the form existing, and idempotent. Items created by migrations rather than by
+    // seed are included too — setting them again is a no-op and keeps one list authoritative.
+    const catalogFormLinks: Array<[string, string]> = [
+      ['account.password_reset', 'password_reset'],
+      ['account.unlock', 'account_unlock'],
+      ['aws.account_provisioning', 'aws_account_provisioning'],
+      ['aws.identity_center', 'aws_identity_center'],
+      ['aws.s3_secure_bucket', 'aws_s3_bucket'],
+      ['azure.keyvault_access', 'azure_keyvault_access'],
+      ['azure.landing_zone', 'azure_landing_zone'],
+      ['azure.pim_role', 'azure_pim_role'],
+      ['device.intune_enrollment', 'device_intune_enrollment'],
+      ['group.membership_change', 'group_membership'],
+      ['license.assignment', 'license_assignment'],
+      ['m365.guest_access', 'm365_guest_access'],
+      ['m365.offboard', 'm365_offboard'],
+      ['m365.purview_dlp_exception', 'purview_dlp_exception'],
+      ['m365.shared_mailbox', 'shared_mailbox'],
+      ['ops.service_outage', 'service_outage'],
+      ['security.incident_report', 'security_incident'],
+      ['security.phishing_report', 'phishing_report'],
+      ['support.remote_session', 'remote_session'],
+      ['user.offboarding', 'offboarding'],
+      ['user.provisioning', 'user_onboarding'],
+    ];
+    for (const [itemKey, formKey] of catalogFormLinks) {
+      await sql.query(
+        `UPDATE service_catalog_items SET form_key = $2
+          WHERE key = $1
+            AND EXISTS (
+              SELECT 1 FROM request_forms rf
+               WHERE rf.key = $2 AND rf.organization_id IS NULL
+            )`,
+        [itemKey, formKey],
+      );
+    }
+
     // ---- ConMon checks ----
     const conmonChecks = [
       ['mfa_coverage', 'MFA coverage ≥ threshold', 'identity', 1, ['IA-2'], 'high'],
