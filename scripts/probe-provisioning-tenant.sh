@@ -33,6 +33,28 @@
 # that answers the question by itself.
 #
 # ----------------------------------------------------------------------------
+# What actually got probed against the live tenant on 2026-09-01
+# ----------------------------------------------------------------------------
+# Probe 1 (/subscribedSkus, open item #1) is answerable with a delegated
+# DIRECTORY-READ identity — e.g. `az rest --method get --url
+# https://graph.microsoft.us/v1.0/subscribedSkus` under an interactively
+# logged-in `az login` session against the GCC High cloud. No app registration
+# or client-credentials flow was needed to resolve it; ordinary directory read
+# is enough. That is how open item #1 got resolved (see the design doc).
+#
+# Probes 2-4 (Cloud PC provisioning policies, the v1.0/beta question, and the
+# TAP authentication method policy — open items #2/#3/#4) genuinely need MORE
+# than directory read: both `/deviceManagement/virtualEndpoint/*` (tried on
+# v1.0 and beta) and `/policies/authenticationMethodsPolicy/...` were tried
+# with the same delegated directory-read identity and both came back
+# `accessDenied`, before ever reaching a version- or policy-specific response.
+# Don't bother retrying those with a plain `az login` / directory-read
+# credential — save the attempt. They need either the `Anchor-Provisioning`
+# app registration with its consented scopes (CloudPC.ReadWrite.All,
+# Policy.Read.All — see the permission table below), or a session that
+# already holds those permissions.
+#
+# ----------------------------------------------------------------------------
 # Required Microsoft Graph APPLICATION permissions (admin consent required)
 # ----------------------------------------------------------------------------
 #   - Organization.Read.All   -> GET /subscribedSkus                      (probe 1)

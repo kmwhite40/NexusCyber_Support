@@ -37,7 +37,10 @@ and drives a Windows 365 Cloud PC to completion.
 - Exactly one Windows 365 provisioning policy: **`SBSFederal Cloud PC`** — Windows 11 Enterprise
   image, License type Enterprise, already assigned to a group.
 - Minimum license baseline for every new user: **Microsoft 365 E3 GCC High**, **Defender for
-  Endpoint P2**, and a third SKU recorded on the form as "Office 365 Plan (2)" (see Open Items).
+  Endpoint**, and the Windows 365 Cloud PC SKU that the paper form recorded as "Office 365 Plan
+  (2)" — see Open Item 1 (RESOLVED) below for the exact `skuPartNumber`/`skuId` and a zero-width-
+  character landmine in the tenant's own catalog data that is worth reading before configuring
+  `M365_PROV_BASELINE_SKUS` by hand.
 - **Hard ordering constraint:** the license must be attached *before* the user is added to the
   provisioning policy's group. Adding an unlicensed user to the group yields a Cloud PC that
   silently never builds.
@@ -286,24 +289,77 @@ Follows the codebase's existing pure-function-first pattern (`resolveVote`, `pla
 
 ## Open items to confirm against the tenant
 
-These are deliberately unresolved; each is a question for the SBS tenant admin, and each has a
-defined fallback so implementation is not blocked.
+Each of these was a question for the SBS tenant admin, with a defined fallback so implementation
+was never blocked. Item 1 was resolved by probing `/subscribedSkus` on the live tenant on
+2026-09-01 with a delegated directory-read identity. Items 2 and 4 remain open — probed the same
+day, but the identity used had directory read only, not the Intune/Cloud PC or policy read the
+probes need. Item 3 is therefore also still open, as a consequence of item 4's probe never
+getting past authorization.
 
-1. **The third baseline SKU.** "Office 365 Plan (2)" does not read as a Windows 365 SKU, and a
-   Cloud PC requires a Windows 365 Enterprise license specifically. Either that is the W365 SKU
-   under an unfamiliar display name, or the entitlement is assigned separately and the baseline is
-   four licenses. Resolution: enumerate `/subscribedSkus` in the tenant and record exact
-   `skuPartNumber` values in `M365_PROV_BASELINE_SKUS`. The design already resolves by ID, so this
-   changes configuration only, never code.
-2. **Administrative-unit scoping** of the `Anchor-Provisioning` permissions. Depends on how SBS's
-   AUs are laid out. Fallback: tenant-wide application permissions, with the UPN allow-list and
-   privileged-account refusal as compensating controls.
+1. **The third baseline SKU — RESOLVED.** "Office 365 Plan (2)" on the paper form turned out to
+   mean the Windows 365 Cloud PC plan at the **2 vCPU** configuration — "(2)" denoted the core
+   count, not a second Office plan. The concern that a Windows 365 licence might be missing from
+   the tenant entirely was unfounded, but only because of that reading; nothing about the SKU's
+   own name says "Windows 365" or "Cloud PC." The three confirmed baseline SKUs, by exact
+   `skuPartNumber`:
+
+   | Licence | `skuPartNumber` |
+   |---|---|
+   | Microsoft 365 E3 GCC High | `SPE_E3_USGOV_GCCHIGH` |
+   | Defender for Endpoint | `MDATP_GCC_High_USGOV_GCCHIGH` |
+   | Windows 365 Cloud PC, 2 vCPU/4GB/64GB | `CPC_E_2C_4GB_64GB_USGOV_GCCHIGH` (as typed) |
+
+   **The Cloud PC `skuPartNumber` is not safe to copy-paste.** The tenant's own
+   `/subscribedSkus` response carries a **ZERO WIDTH SPACE (U+200B)** at index 17, between
+   `64GB` and `_USGOV` — invisible in a browser, a terminal, or most editors, and not something
+   any operator can type. The string an operator writes into `M365_PROV_BASELINE_SKUS`
+   (`CPC_E_2C_4GB_64GB_USGOV_GCCHIGH`) is therefore never byte-equal to what the tenant returns.
+   Before this was diagnosed, an exact-string match in the planner turned that into a
+   `sku_missing` blocker for a SKU that visibly *is* present — fails closed, but for the wrong
+   reason, and sends whoever is debugging it hunting in the wrong place. `planRun` (and the
+   Cloud PC policy `displayName` lookup, and group-name resolution) now match through
+   `normalizeForMatch` (`apps/api/src/modules/provisioning/planner.ts`), which strips zero-width
+   characters (U+200B/U+200C/U+200D/U+FEFF) and case-folds before comparing — see that file for
+   the fix. **The unambiguous identifier for this SKU is its `skuId`:
+   `6bd7db5d-58d9-4ab9-b240-114e5f0d2e00`** — use it (not the part-number string) whenever an
+   invisible-character mismatch is a live concern, e.g. cross-checking the Entra admin center by
+   eye.
+
+   **Seat position, confirmed the same probe (constrains rollout):**
+
+   | SKU | Enabled | Consumed | Free |
+   |---|---:|---:|---:|
+   | Windows 365 Cloud PC (2 vCPU) | 10 | 8 | **2** |
+   | Microsoft 365 E3 GCC High | — | — | 3 |
+   | Defender for Endpoint | — | — | 3 |
+
+   The Cloud PC seat count is the binding constraint: **at most two more users can be fully
+   provisioned** (identity + all three licences + Cloud PC) before more Windows 365 seats are
+   purchased. The planner's `no_seats` blocker (`planRun`, per-SKU `enabled - consumed <= 0`
+   check) surfaces this correctly in the dry-run preview when it is hit — no code change needed
+   to make that constraint visible to an admin running a preview.
+
+2. **Administrative-unit scoping** of the `Anchor-Provisioning` permissions — still OPEN. Depends
+   on how SBS's AUs are laid out. Fallback unchanged: tenant-wide application permissions, with
+   the UPN allow-list and privileged-account refusal as compensating controls. Attempted
+   2026-09-01 against `/deviceManagement/virtualEndpoint/provisioningPolicies` (the closest read
+   available to probe Intune/Cloud PC scoping) with a delegated directory-read identity; the
+   request was rejected `accessDenied` on both `v1.0` and `beta` before reaching any
+   AU-scoping-specific response. Answering this needs either the `Anchor-Provisioning` app
+   registration with its consented scopes, or a session holding Intune/Cloud PC read.
 3. **v1.0 vs beta** for the `/deviceManagement/virtualEndpoint` operations **in GCC High
-   specifically**. Resolution: probe both during implementation. The `apiVersion` option on the
-   Graph client exists precisely so the answer is a configuration detail.
-4. **TAP policy enabled** in the tenant. Temporary Access Pass must be enabled as an
-   authentication method. Fallback if it is not: the `issue_tap` step is marked `skipped` and the
-   admin sets the first credential out-of-band; the rest of the run is unaffected.
+   specifically** — still OPEN, and unresolved as a direct consequence of item 2/4's probes: both
+   attempts (2026-09-01) were rejected on authorization (`accessDenied`) before the response ever
+   got far enough to reveal a version-specific difference, so this probe never really ran. The
+   `apiVersion` option on the Graph client still exists precisely so the answer is a
+   configuration detail once a credential with the right scope is available to probe it.
+4. **TAP policy enabled** in the tenant — still OPEN. Attempted 2026-09-01 against
+   `/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/temporaryAccessPass`
+   with a delegated directory-read identity; rejected `accessDenied` — that identity has
+   directory read but not the policy-read permission this endpoint needs. Fallback unchanged: if
+   TAP turns out not to be enabled, the `issue_tap` step is marked `skipped` and the admin sets
+   the first credential out-of-band; the rest of the run is unaffected. Needs the
+   `Anchor-Provisioning` app registration (or an equivalently-scoped session) to resolve.
 
 ## Out of scope
 

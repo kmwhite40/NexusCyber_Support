@@ -45,7 +45,7 @@ import {
   isTapPolicyDisabledError,
   type DirectoryGroup,
 } from '../../integrations/m365/provisioning-graph.js';
-import { planRun, deriveUpn, planFingerprint, type Plan } from './planner.js';
+import { planRun, deriveUpn, planFingerprint, normalizeForMatch, type Plan } from './planner.js';
 import {
   executePlan, TapPolicyUnavailableError, TAP_SKIPPED_NOTICE,
   type ProvisioningOps, type StepOutcome,
@@ -59,20 +59,23 @@ import type { Principal } from '../../types.js';
 /**
  * Maps requested group NAMES to directory ids. Pure.
  *
- * Matching is case- and whitespace-insensitive because these names are free text typed on a
- * request form, not picked from a list. A name that does not resolve is REPORTED, never
- * dropped: silently skipping it would hand the new hire an account missing the access their
- * supervisor asked for, with nothing anywhere saying so.
+ * Matching goes through planner.ts's normalizeForMatch (case- and whitespace-insensitive, and
+ * strips zero-width characters) because these names are free text typed on a request form, not
+ * picked from a list — the same reasoning, and now the same function, as the SKU part-number
+ * and Cloud PC policy displayName matches in planner.ts's planRun, kept consistent rather than
+ * each spot growing its own slightly different normalisation. A name that does not resolve is
+ * REPORTED, never dropped: silently skipping it would hand the new hire an account missing the
+ * access their supervisor asked for, with nothing anywhere saying so.
  */
 export function resolveGroupIds(
   names: string[],
   directory: DirectoryGroup[],
 ): { groupIds: string[]; missing: string[] } {
-  const byName = new Map(directory.map((g) => [g.displayName.trim().toLowerCase(), g.id]));
+  const byName = new Map(directory.map((g) => [normalizeForMatch(g.displayName), g.id]));
   const groupIds: string[] = [];
   const missing: string[] = [];
   for (const n of names) {
-    const id = byName.get(n.trim().toLowerCase());
+    const id = byName.get(normalizeForMatch(n));
     if (!id) { missing.push(n); continue; }
     // The same group can be named twice (e.g. "All Staff" and "all staff" on one form).
     // Adding a member twice is an error in Graph, so de-duplicate here rather than in the

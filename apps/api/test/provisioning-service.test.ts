@@ -76,6 +76,23 @@ describe('resolveGroupIds', () => {
     expect(resolveGroupIds(['All Staff', 'all staff'], directory))
       .toEqual({ groupIds: ['g1'], missing: [] });
   });
+
+  // Same class of landmine as the SKU part-number match in planner.test.ts: a zero-width space
+  // on either side (the directory's displayName, or the name typed on the request form) must
+  // not defeat the match. resolveGroupIds goes through planner.ts's normalizeForMatch now,
+  // specifically so this stays consistent with the SKU/Cloud PC policy matches rather than
+  // drifting into its own rule.
+  it('matches through a zero-width space in the directory displayName', () => {
+    const withZeroWidth = [{ id: 'g3', displayName: 'All\u200BStaff' }];
+    expect(resolveGroupIds(['AllStaff'], withZeroWidth).groupIds).toEqual(['g3']);
+  });
+
+  it('matches through a zero-width space in the requested name', () => {
+    // directory's 'All Staff' has a real U+0020 space between the words; normalizeForMatch
+    // strips only zero-width characters, not ordinary whitespace, so the ZWSP here sits
+    // alongside the real space rather than replacing it.
+    expect(resolveGroupIds(['All \u200BStaff'], directory).groupIds).toEqual(['g1']);
+  });
 });
 
 describe('normalizeGroups', () => {

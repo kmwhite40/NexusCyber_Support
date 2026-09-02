@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deriveUpn, planRun, planFingerprint } from '../src/modules/provisioning/planner.js';
+import { deriveUpn, planRun, planFingerprint, normalizeForMatch } from '../src/modules/provisioning/planner.js';
 
 const tenant = {
   skus: [
@@ -35,6 +35,45 @@ describe('deriveUpn', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// The real landmine: a ZERO WIDTH SPACE (U+200B) probed live on the SBS Federal GCC High
+// tenant's /subscribedSkus response for the Windows 365 Cloud PC SKU
+// (skuId 6bd7db5d-58d9-4ab9-b240-114e5f0d2e00), sitting between `64GB` and `_USGOV`. No
+// operator can type that character, so the typed form below is what a human would actually put
+// in M365_PROV_BASELINE_SKUS, and the tenant form below (with the ZWSP at index 17) is what
+// /subscribedSkus actually returns. Both strings are used verbatim, not a stand-in example.
+// ---------------------------------------------------------------------------
+const CPC_TYPED = 'CPC_E_2C_4GB_64GB_USGOV_GCCHIGH';
+const CPC_TENANT = 'CPC_E_2C_4GB_64GB\u200B_USGOV_GCCHIGH';
+
+describe('normalizeForMatch', () => {
+  it('the typed form and the tenant form are NOT equal as plain strings (the bug this fixes)', () => {
+    expect(CPC_TYPED).not.toBe(CPC_TENANT);
+    expect(CPC_TENANT.length).toBe(CPC_TYPED.length + 1);
+    expect(CPC_TENANT.charCodeAt(17)).toBe(0x200b);
+  });
+
+  it('normalizes the real tenant string and the typed string to the same value', () => {
+    expect(normalizeForMatch(CPC_TENANT)).toBe(normalizeForMatch(CPC_TYPED));
+  });
+
+  it('strips U+200C, U+200D and U+FEFF too, not just U+200B', () => {
+    expect(normalizeForMatch('A\u200Cb\u200Dc\uFEFFd')).toBe('abcd');
+  });
+
+  it('trims surrounding whitespace', () => {
+    expect(normalizeForMatch('  SPE_E3_USGOV_GCCHIGH  ')).toBe('spe_e3_usgov_gcchigh');
+  });
+
+  it('is case-insensitive', () => {
+    expect(normalizeForMatch('Spe_E3_Usgov_Gcchigh')).toBe('spe_e3_usgov_gcchigh');
+  });
+
+  it('does not fold two genuinely different identifiers to the same value', () => {
+    expect(normalizeForMatch('SPE_E3_USGOV_GCCHIGH')).not.toBe(normalizeForMatch('MDATP_XPLAT'));
+  });
+});
+
 describe('planRun', () => {
   it('orders licences before the Cloud PC group assignment', () => {
     const keys = planRun(base).steps.map((s) => s.key);
@@ -51,6 +90,36 @@ describe('planRun', () => {
     expect(p.blockers.map((b) => b.code)).toContain('sku_missing');
   });
 
+  // --- The live-tenant landmine, run through planRun end to end ---
+  //
+  // /subscribedSkus returns CPC_TENANT (ZWSP and all) as this SKU's real skuPartNumber; an
+  // operator configuring M365_PROV_BASELINE_SKUS can only ever type CPC_TYPED. Before this fix,
+  // `tenant.skus.find((s) => s.skuPartNumber === part)` never matched the two, and a SKU that
+  // IS present in the tenant produced a false sku_missing blocker.
+  it('resolves the real tenant SKU (zero-width space and all) against the typed config value', () => {
+    const cpcTenant = { skuId: '6bd7db5d-58d9-4ab9-b240-114e5f0d2e00', skuPartNumber: CPC_TENANT, enabled: 10, consumed: 8 };
+    const p = planRun({
+      ...base,
+      tenant: { ...tenant, skus: [...tenant.skus, cpcTenant] },
+      baselineSkus: ['SPE_E3_USGOV_GCCHIGH', 'MDATP_XPLAT', CPC_TYPED],
+    });
+    expect(p.blockers.map((b) => b.code)).not.toContain('sku_missing');
+    const step = p.steps.find((s) => s.key === 'assign_licenses');
+    expect(step?.detail.skuIds).toContain(cpcTenant.skuId);
+    // The tenant's real value (with the ZWSP) is never rewritten anywhere in the plan.
+    expect((step?.detail.skuPartNumbers as string[]).includes(CPC_TYPED)).toBe(true);
+  });
+
+  it('still blocks a SKU that is genuinely absent even once zero-width normalisation is applied', () => {
+    const cpcTenant = { skuId: '6bd7db5d-58d9-4ab9-b240-114e5f0d2e00', skuPartNumber: CPC_TENANT, enabled: 10, consumed: 8 };
+    const p = planRun({
+      ...base,
+      tenant: { ...tenant, skus: [...tenant.skus, cpcTenant] },
+      baselineSkus: ['SPE_E3_USGOV_GCCHIGH', 'MDATP_XPLAT', 'COMPLETELY_DIFFERENT_SKU'],
+    });
+    expect(p.blockers).toEqual([{ code: 'sku_missing', message: 'License COMPLETELY_DIFFERENT_SKU is not present in the tenant.' }]);
+  });
+
   it('blocks when a baseline SKU has no seats left', () => {
     const p = planRun({ ...base, tenant: { ...tenant,
       skus: [{ skuId: 'e3', skuPartNumber: 'SPE_E3_USGOV_GCCHIGH', enabled: 2, consumed: 2 },
@@ -61,6 +130,19 @@ describe('planRun', () => {
   it('blocks when the named Cloud PC policy does not exist', () => {
     const p = planRun({ ...base, answers: { ...answers, cloud_pc_policy: 'Nope' } });
     expect(p.blockers.map((b) => b.code)).toContain('policy_missing');
+  });
+
+  // The Cloud PC policy displayName match goes through the same normalizeForMatch as the SKU
+  // match above, for the same reason: it is tenant/admin data, not something this planner
+  // controls, and a stray zero-width character or casing difference must not turn a policy
+  // that IS present into a false policy_missing blocker.
+  it('resolves the Cloud PC policy through a zero-width space in the tenant displayName', () => {
+    const p = planRun({
+      ...base,
+      tenant: { ...tenant, policies: [{ id: 'p1', displayName: 'SBSFederal\u200B Cloud PC', groupIds: ['g-cloudpc'] }] },
+    });
+    expect(p.blockers.map((b) => b.code)).not.toContain('policy_missing');
+    expect(p.steps.map((s) => s.key)).toContain('assign_cloudpc');
   });
 
   it('blocks when the UPN belongs to a privileged account', () => {

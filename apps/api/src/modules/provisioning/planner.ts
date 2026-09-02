@@ -23,6 +23,44 @@ export interface PlanInput {
 }
 
 const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+
+/**
+ * Normalises a value for MATCHING ONLY — never for display or storage — before comparing a
+ * hand-configured or hand-typed identifier (a baseline SKU part number, a Cloud PC policy
+ * display name, a group name) against what the tenant actually returns.
+ *
+ * This exists because of a real landmine found probing the live SBS Federal GCC High tenant:
+ * `/subscribedSkus` reports the Windows 365 Cloud PC SKU as
+ * `CPC_E_2C_4GB_64GB​_USGOV_GCCHIGH` (skuId 6bd7db5d-58d9-4ab9-b240-114e5f0d2e00) — a ZERO
+ * WIDTH SPACE (U+200B) sits between `64GB` and `_USGOV`, invisible in any editor and impossible
+ * for an operator to type. An exact-string match against a hand-configured
+ * `M365_PROV_BASELINE_SKUS` value therefore fails for a SKU that IS present, and planRun's
+ * `sku_missing` blocker sends the operator hunting in the wrong place. Fails closed, which is
+ * the right direction, but for the wrong reason.
+ *
+ * Stripped: zero-width space (U+200B), zero-width non-joiner (U+200C), zero-width joiner
+ * (U+200D), and zero-width no-break space / BOM (U+FEFF) — wherever they occur, not just a
+ * leading BOM, since the tenant's own catalog data is the untrusted side here and there is no
+ * guarantee the anomaly always lands at position 0. Surrounding whitespace is trimmed too.
+ *
+ * Case-folded as well, deliberately: these are catalog identifiers and directory display names,
+ * not case-sensitive tokens. Folding here is consistent with the rest of this codebase's
+ * treatment of the same class of comparison — resolveGroupIds (modules/provisioning/index.ts)
+ * already matches group names case-insensitively because they are "free text typed on a request
+ * form," and provisioning-graph.ts notes that Graph itself compares directory string properties
+ * case-insensitively. A stricter, case-sensitive standard here would be a third, inconsistent
+ * rule with no upside.
+ *
+ * MATCHING ONLY: callers must keep using the tenant's real value (invisible characters and all)
+ * for anything that gets displayed to the admin or written to a plan/step detail. Silently
+ * rewriting tenant data to look "clean" would make the preview lie about what Graph will
+ * actually be asked to attach.
+ */
+const ZERO_WIDTH_RE = /[\u200B\u200C\u200D\uFEFF]/g;
+export function normalizeForMatch(value: string): string {
+  return value.replace(ZERO_WIDTH_RE, '').trim().toLowerCase();
+}
+
 /** UPN-safe: letters and digits only, so apostrophes, spaces, and any stray '@' can never
  *  break the local part or smuggle the identity into a different namespace. This intentionally
  *  strips diacritics (Renée -> renee) and non-Latin scripts (CJK, Cyrillic, etc.) entirely,
@@ -90,10 +128,15 @@ export function planRun(input: PlanInput): Plan {
     });
   }
   // Resolve the baseline by SKU part number; a missing SKU or an exhausted pool fails the
-  // dry run closed rather than leaving a half-licensed account behind.
+  // dry run closed rather than leaving a half-licensed account behind. Matched via
+  // normalizeForMatch (see its doc comment above) rather than `===`, so a zero-width space or
+  // stray casing in either the tenant's catalog data or the hand-typed config value cannot turn
+  // a SKU that IS present into a false sku_missing blocker. skuIds/skuId below still come from
+  // `sku` (the tenant's real record) — only the comparison is normalised, never what gets
+  // stored or shown.
   const skuIds: string[] = [];
   for (const part of baselineSkus) {
-    const sku = tenant.skus.find((s) => s.skuPartNumber === part);
+    const sku = tenant.skus.find((s) => normalizeForMatch(s.skuPartNumber) === normalizeForMatch(part));
     if (!sku) { blockers.push({ code: 'sku_missing', message: `License ${part} is not present in the tenant.` }); continue; }
     if (sku.enabled - sku.consumed <= 0) { blockers.push({ code: 'no_seats', message: `No seats remaining for ${part}.` }); continue; }
     skuIds.push(sku.skuId);
@@ -104,7 +147,10 @@ export function planRun(input: PlanInput): Plan {
   const policyName = str(answers.cloud_pc_policy);
   let policyGroupId: string | null = null;
   if (policyName) {
-    const policy = tenant.policies.find((p) => p.displayName === policyName);
+    // Same normalizeForMatch reasoning as the SKU loop above: a Cloud PC provisioning policy's
+    // displayName is tenant catalog/admin data, not something this planner controls, so it is
+    // matched the same defensive way rather than with `===`.
+    const policy = tenant.policies.find((p) => normalizeForMatch(p.displayName) === normalizeForMatch(policyName));
     if (!policy) blockers.push({ code: 'policy_missing', message: `Cloud PC policy "${policyName}" was not found.` });
     else if (policy.groupIds.length === 0) blockers.push({ code: 'policy_unassigned', message: `Cloud PC policy "${policyName}" has no assignment group.` });
     else policyGroupId = policy.groupIds[0];
