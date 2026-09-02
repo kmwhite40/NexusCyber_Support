@@ -153,6 +153,83 @@ async function userGroupIds(graph: { get: (p: string) => Promise<any> }, userId:
     .filter(Boolean);
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * THE HUMAN-IN-THE-LOOP GATE, server-side.
+ *
+ * "HR approves, then a tech arms the teardown" was enforced only by the ticket page choosing not
+ * to render a panel. A hidden button is not an authorization control: anything that could call
+ * the endpoint bypassed it entirely, and any provisioning.execute holder could arm a teardown on
+ * an unapproved ticket. This is the offboarding counterpart of
+ * requireApprovedOnboardingRequest, and it checks three things the client cannot assert:
+ *
+ *  1. the ticket really is a user.offboarding request — the only intake whose answers this
+ *     planner knows how to read;
+ *  2. an approval record EXISTS (no approvals at all means it did not come through the intake
+ *     this gate governs);
+ *  3. every approval on it is `approved` — none requested, none rejected.
+ */
+async function requireApprovedOffboardingRequest(ticket: TicketRow): Promise<void> {
+  if (ticket.category !== OFFBOARDING_CATALOG_KEY) {
+    throw Errors.badRequest(`only a ${OFFBOARDING_CATALOG_KEY} request can be offboarded`);
+  }
+  const approvals = await withSystemContext(async (sql: Sql) => {
+    const { rows } = await sql.query(
+      "SELECT status FROM approvals WHERE subject_type = 'ticket' AND subject_id = $1",
+      [ticket.id],
+    );
+    return rows as Array<{ status: string }>;
+  });
+  if (approvals.length === 0) {
+    throw Errors.badRequest(
+      'this request carries no approval record; offboarding requires a completed approval',
+    );
+  }
+  const outstanding = approvals.filter((a) => a.status !== 'approved');
+  if (outstanding.length > 0) {
+    throw Errors.badRequest(
+      `offboarding requires every approval to be approved; ${outstanding.length} is not `
+      + `(${[...new Set(outstanding.map((a) => a.status))].join(', ')})`,
+    );
+  }
+}
+
+/**
+ * Binds a run to the ONE organization that owns the provisioning tenant.
+ *
+ * Without this, a holder of provisioning.execute scoped to some OTHER customer org could drive
+ * account teardown in the SBS tenant from a ticket in their own org. The tenant is single, so
+ * the owning org is single too, and any other org is simply not a place a teardown can come
+ * from. Refuses rather than degrading: a write request from the wrong org must not proceed
+ * quietly.
+ */
+async function requireOffboardingTenantOrg(ticket: TicketRow): Promise<void> {
+  // entra_tenant_id is a uuid column; a non-uuid configured tenant id must not reach it as a
+  // cast error, and cannot match anything anyway.
+  const tenantOrg = UUID_RE.test(config.provisioning.tenantId)
+    ? await withSystemContext(async (sql: Sql) => {
+      const { rows } = await sql.query(
+        'SELECT id FROM organizations WHERE entra_tenant_id = $1',
+        [config.provisioning.tenantId],
+      );
+      return rows[0]?.id as string | undefined ?? null;
+    })
+    : null;
+
+  if (!tenantOrg) {
+    throw Errors.badRequest(
+      'no organization is mapped to the provisioning tenant (organizations.entra_tenant_id), '
+      + 'so there is no tenant this ticket could offboard from',
+    );
+  }
+  if (ticket.organization_id !== tenantOrg) {
+    throw Errors.badRequest(
+      'this ticket does not belong to the organization that owns the provisioning tenant',
+    );
+  }
+}
+
 /** THE ONLY planning path. Both preview and schedule come through here. */
 async function buildPlan(ticketId: string): Promise<{ plan: OffboardPlan; ticket: TicketRow; userId: string | null }> {
   const state = await readOffboardTenantState(ticketId);
@@ -166,9 +243,8 @@ export async function preview(actor: Principal, ticketId: string): Promise<Previ
   requireEnabled();
   const ticket = await loadTicket(ticketId);
   authorize(actor, 'provisioning.execute', { organizationId: ticket.organization_id });
-  if (ticket.category !== OFFBOARDING_CATALOG_KEY) {
-    throw Errors.badRequest(`only a ${OFFBOARDING_CATALOG_KEY} request can be offboarded`);
-  }
+  await requireOffboardingTenantOrg(ticket);
+  await requireApprovedOffboardingRequest(ticket);
   const { plan } = await buildPlan(ticketId);
   return { ...plan, fingerprint: offboardFingerprint(plan) };
 }
@@ -186,6 +262,10 @@ export async function schedule(
   requireEnabled();
   const ticket = await loadTicket(ticketId);
   authorize(actor, 'provisioning.execute', { organizationId: ticket.organization_id });
+  // Same gates as preview. Arming a run is the consequential half, so it must not be reachable
+  // on grounds preview would have refused.
+  await requireOffboardingTenantOrg(ticket);
+  await requireApprovedOffboardingRequest(ticket);
 
   const when = new Date(scheduledFor);
   if (Number.isNaN(when.getTime())) {

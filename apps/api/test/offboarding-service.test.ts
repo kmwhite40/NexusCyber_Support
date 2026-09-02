@@ -105,9 +105,20 @@ const defaultRows = () => (text: string, params: unknown[]) => {
       ? [{ id: DEPARTING, email: 'jane.doe@sbsfederal.com', display_name: 'Jane Doe' }]
       : [];
   }
+  // A completed approval on the ticket.
+  if (/FROM approvals/.test(text)) return [{ status: 'approved' }];
+  // The organization that owns the provisioning tenant (organizations.entra_tenant_id).
+  if (/entra_tenant_id/.test(text)) return [{ id: TICKET_ORG }];
   if (/INSERT INTO provisioning_runs/.test(text)) return [{ id: 'run-1' }];
   return [];
 };
+
+/** defaultRows with one table's answer replaced — for the refusal cases below. */
+const rowsExcept = (override: (text: string, params: unknown[]) => any[] | null) =>
+  (text: string, params: unknown[]) => {
+    const o = override(text, params);
+    return o === null ? defaultRows()(text, params) : o;
+  };
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -206,13 +217,10 @@ describe('(e) the run is persisted correctly', () => {
   });
 
   it('refuses to schedule a plan carrying blockers', async () => {
-    h.setDbRows((text: string) => {
-      if (/FROM tickets/.test(text)) {
-        return [{ id: TICKET, organization_id: TICKET_ORG, category: 'user.offboarding',
-                  custom_fields: { ...ANSWERS, legal_hold: true } }];
-      }
-      return [];
-    });
+    h.setDbRows(rowsExcept((text) => (/FROM tickets/.test(text)
+      ? [{ id: TICKET, organization_id: TICKET_ORG, category: 'user.offboarding',
+           custom_fields: { ...ANSWERS, legal_hold: true } }]
+      : null)));
     const { fingerprint } = await offboarding.preview(actor, TICKET);
     await expect(offboarding.schedule(actor, TICKET, fingerprint, '2099-01-01T00:00:00Z'))
       .rejects.toThrow(/blocker/i);
@@ -228,26 +236,71 @@ describe('(f) the departing account is resolved from the ticket, not from form t
   });
 
   it('blocks when the request names no departing user at all', async () => {
-    h.setDbRows((text: string) => {
-      if (/FROM tickets/.test(text)) {
-        return [{ id: TICKET, organization_id: TICKET_ORG, category: 'user.offboarding',
-                  custom_fields: { last_day: '2026-09-02' } }];
-      }
-      return [];
-    });
+    h.setDbRows(rowsExcept((text) => (/FROM tickets/.test(text)
+      ? [{ id: TICKET, organization_id: TICKET_ORG, category: 'user.offboarding',
+           custom_fields: { last_day: '2026-09-02' } }]
+      : null)));
     const plan = await offboarding.preview(actor, TICKET);
     expect(plan.blockers.map((b) => b.code)).toContain('no_departing_user');
   });
 
   it('blocks when the referenced user is not a known Nexus record', async () => {
-    h.setDbRows((text: string) => {
+    h.setDbRows(rowsExcept((text, params) => {
       if (/FROM tickets/.test(text)) {
         return [{ id: TICKET, organization_id: TICKET_ORG, category: 'user.offboarding',
                   custom_fields: { departing_user: 'ffffffff-ffff-ffff-ffff-ffffffffffff', last_day: '2026-09-02' } }];
       }
-      return [];  // no matching users row
-    });
+      if (/FROM users/.test(text)) return [];  // the reference names nobody
+      return null;
+    }));
     const plan = await offboarding.preview(actor, TICKET);
     expect(plan.blockers.map((b) => b.code)).toContain('no_departing_user');
+  });
+});
+
+// These gates exist on the ONBOARDING side (requireApprovedOnboardingRequest,
+// requireProvisioningTenantOrg) and were not ported. Without them any provisioning.execute
+// holder could arm a teardown on an unapproved ticket, or drive writes into the SBS tenant from
+// a ticket belonging to some other customer org. A hidden button is not an authorization
+// control; the ticket page comment claimed the server enforced this, and it did not.
+describe('(g) scheduling is gated on the request itself, not just the permission', () => {
+  it('refuses a ticket that is not an offboarding request', async () => {
+    h.setDbRows(rowsExcept((text) => (/FROM tickets/.test(text)
+      ? [{ id: TICKET, organization_id: TICKET_ORG, category: 'incident', custom_fields: ANSWERS }]
+      : null)));
+    await expect(offboarding.schedule(actor, TICKET, 'fp', '2099-01-01T00:00:00Z'))
+      .rejects.toThrow(/user\.offboarding/i);
+  });
+
+  it('refuses when the request carries no approval at all', async () => {
+    h.setDbRows(rowsExcept((text) => (/FROM approvals/.test(text) ? [] : null)));
+    await expect(offboarding.schedule(actor, TICKET, 'fp', '2099-01-01T00:00:00Z'))
+      .rejects.toThrow(/approval/i);
+  });
+
+  it('refuses when an approval is still outstanding', async () => {
+    h.setDbRows(rowsExcept((text) => (/FROM approvals/.test(text)
+      ? [{ status: 'approved' }, { status: 'requested' }] : null)));
+    await expect(offboarding.schedule(actor, TICKET, 'fp', '2099-01-01T00:00:00Z'))
+      .rejects.toThrow(/approved/i);
+  });
+
+  it('refuses when an approval was rejected', async () => {
+    h.setDbRows(rowsExcept((text) => (/FROM approvals/.test(text)
+      ? [{ status: 'rejected' }] : null)));
+    await expect(offboarding.schedule(actor, TICKET, 'fp', '2099-01-01T00:00:00Z'))
+      .rejects.toThrow(/approved/i);
+  });
+
+  it('refuses a ticket from an org that does not own the provisioning tenant', async () => {
+    h.setDbRows(rowsExcept((text) => (/entra_tenant_id/.test(text)
+      ? [{ id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' }] : null)));
+    await expect(offboarding.schedule(actor, TICKET, 'fp', '2099-01-01T00:00:00Z'))
+      .rejects.toThrow(/does not belong to the organization/i);
+  });
+
+  it('refuses preview on the same grounds, not just schedule', async () => {
+    h.setDbRows(rowsExcept((text) => (/FROM approvals/.test(text) ? [] : null)));
+    await expect(offboarding.preview(actor, TICKET)).rejects.toThrow(/approval/i);
   });
 });
