@@ -16,7 +16,18 @@ interface Change {
   window_end: string | null;
 }
 interface CabStep { id: string; approver_id: string; decision: string | null; reason: string | null }
-interface ChangeDetail extends Change { description: string | null; backout_plan: string | null; cab_steps: CabStep[] }
+interface ChangeVote { id: string; voter_id: string; vote: 'approve' | 'reject' | 'abstain' | null; reason: string | null; ad_hoc: boolean }
+interface VoteTally { approve: number; reject: number; abstain: number; pending: number; cast: number; roster: number }
+interface ChangeDetail extends Change {
+  description: string | null;
+  backout_plan: string | null;
+  cab_steps: CabStep[];
+  votes: ChangeVote[];
+  cab_tally: VoteTally | null;
+  cab_quorum: number | null;
+  cab_threshold: string | null;
+  vote_deadline: string | null;
+}
 
 const statusTone = (s: string) =>
   s === 'approved' || s === 'closed' ? 'success' : s === 'rejected' ? 'danger' : s === 'cab_review' ? 'warning' : 'neutral';
@@ -30,7 +41,7 @@ export default function ChangesPage() {
   const [form, setForm] = React.useState({ title: '', changeType: 'normal', risk: 'medium', description: '' });
   const [err, setErr] = React.useState<string | null>(null);
 
-  const canApprove = can('change.approve');
+  const canVote = can('change.vote');
   const canImplement = can('change.implement');
 
   const load = React.useCallback(() => {
@@ -57,14 +68,15 @@ export default function ChangesPage() {
 
   async function submitCab() {
     if (!sel) return;
-    // Submit to a 2-member CAB drawn from the current agent (self) — in production this is
-    // a configured board. For standard changes the API auto-approves and ignores approvers.
-    await api.post(`/changes/${sel.id}/submit-cab`, { approverIds: me ? [me.id] : [] }).catch(() => {});
+    // The standing board (GET/PUT /cab/board) supplies the roster; until the board-settings
+    // UI lands (plan Task 6) the current agent is added as an ad-hoc voter so the flow works
+    // on a freshly seeded, memberless board. Standard changes auto-approve and ignore this.
+    await api.post(`/changes/${sel.id}/submit-cab`, { extraVoterIds: me ? [me.id] : [] }).catch(() => {});
     open(sel.id); load();
   }
-  async function decide(approve: boolean) {
+  async function decide(vote: 'approve' | 'reject' | 'abstain') {
     if (!sel) return;
-    await api.post(`/changes/${sel.id}/cab-decision`, { approve }).catch(() => {});
+    await api.post(`/changes/${sel.id}/vote`, { vote }).catch(() => {});
     open(sel.id); load();
   }
   async function schedule() {
@@ -72,6 +84,11 @@ export default function ChangesPage() {
     const start = new Date(Date.now() + 86400000); start.setUTCHours(2, 0, 0, 0);
     const end = new Date(start.getTime() + 2 * 3600000);
     await api.post(`/changes/${sel.id}/schedule`, { windowStart: start.toISOString(), windowEnd: end.toISOString() }).catch(() => {});
+    open(sel.id); load();
+  }
+  async function recordPir(outcome: string) {
+    if (!sel) return;
+    await api.post(`/changes/${sel.id}/pir`, { outcome }).catch(() => {});
     open(sel.id); load();
   }
   async function advance(to: string) {
@@ -173,13 +190,20 @@ export default function ChangesPage() {
                 </div>
                 {sel.description && <p className="whitespace-pre-wrap text-xs text-fg/80">{sel.description}</p>}
 
-                {sel.cab_steps.length > 0 && (
+                {sel.votes.length > 0 && (
                   <div className="rounded-md border border-border p-2">
-                    <div className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted">CAB board</div>
-                    {sel.cab_steps.map((s) => (
-                      <div key={s.id} className="flex items-center justify-between text-xs">
-                        <span className="text-muted">approver</span>
-                        <Badge tone={s.decision === 'approved' ? 'success' : s.decision === 'rejected' ? 'danger' : 'neutral'}>{s.decision ?? 'pending'}</Badge>
+                    <div className="mb-1 flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-muted">
+                      <span>CAB board</span>
+                      {sel.cab_tally && (
+                        <span className="normal-case tracking-normal">
+                          {sel.cab_tally.cast} of {sel.cab_tally.roster} cast · quorum {sel.cab_quorum ?? '—'} · {(sel.cab_threshold ?? 'majority').replace(/_/g, ' ')}
+                        </span>
+                      )}
+                    </div>
+                    {sel.votes.map((v) => (
+                      <div key={v.id} className="flex items-center justify-between text-xs">
+                        <span className="text-muted">{v.ad_hoc ? 'ad-hoc reviewer' : 'board member'}</span>
+                        <Badge tone={v.vote === 'approve' ? 'success' : v.vote === 'reject' ? 'danger' : 'neutral'}>{v.vote ?? 'pending'}</Badge>
                       </div>
                     ))}
                   </div>
@@ -187,14 +211,30 @@ export default function ChangesPage() {
 
                 <div className="flex flex-wrap gap-2 border-t border-border pt-3">
                   {sel.status === 'draft' && can('change.create') && <Button size="sm" onClick={submitCab}>Submit to CAB</Button>}
-                  {sel.status === 'cab_review' && canApprove && (
+                  {sel.status === 'cab_review' && canVote && sel.votes.some((v) => v.voter_id === me?.id) && (
                     <>
-                      <Button size="sm" onClick={() => decide(true)}>Approve</Button>
-                      <Button size="sm" variant="danger" onClick={() => decide(false)}>Reject</Button>
+                      <Button size="sm" onClick={() => decide('approve')}>Approve</Button>
+                      <Button size="sm" variant="danger" onClick={() => decide('reject')}>Reject</Button>
+                      <Button size="sm" variant="subtle" onClick={() => decide('abstain')}>Abstain</Button>
                     </>
                   )}
                   {sel.status === 'approved' && canImplement && <Button size="sm" onClick={schedule}>Schedule (tomorrow 02:00)</Button>}
-                  {nextImpl[sel.status] && canImplement && <Button size="sm" variant="subtle" onClick={() => advance(nextImpl[sel.status])}>Advance to {nextImpl[sel.status]}</Button>}
+                  {sel.status === 'review' && canImplement ? (
+                    // Closing requires a post-implementation review outcome; recording it closes the change.
+                    <Select
+                      aria-label="Post-implementation review outcome"
+                      value=""
+                      onChange={(e) => e.target.value && recordPir(e.target.value)}
+                    >
+                      <option value="">Record PIR &amp; close…</option>
+                      <option value="successful">Successful</option>
+                      <option value="partial">Partial</option>
+                      <option value="failed">Failed</option>
+                      <option value="rolled_back">Rolled back</option>
+                    </Select>
+                  ) : (
+                    nextImpl[sel.status] && canImplement && <Button size="sm" variant="subtle" onClick={() => advance(nextImpl[sel.status])}>Advance to {nextImpl[sel.status]}</Button>
+                  )}
                 </div>
               </>
             )}

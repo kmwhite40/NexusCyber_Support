@@ -24,6 +24,7 @@ import * as attachments from '../modules/attachments.js';
 import * as kb from '../modules/kb.js';
 import * as links from '../modules/links.js';
 import * as changes from '../modules/changes.js';
+import * as cab from '../modules/cab.js';
 import * as problems from '../modules/problems.js';
 import * as csat from '../modules/csat.js';
 import * as queues from '../modules/queues.js';
@@ -1064,8 +1065,13 @@ export async function registerRoutes(app: FastifyInstance) {
         description: z.string().optional(),
         changeType: z.enum(['standard', 'normal', 'emergency']).optional(),
         risk: z.enum(['low', 'medium', 'high']).optional(),
+        impact: z.enum(['low', 'medium', 'high']).optional(),
+        likelihood: z.enum(['low', 'medium', 'high']).optional(),
         ticketId: z.string().uuid().optional(),
+        implementationPlan: z.string().optional(),
+        testPlan: z.string().optional(),
         backoutPlan: z.string().optional(),
+        templateId: z.string().uuid().optional(),
         organizationId: z.string().uuid().optional(),
       })
       .parse(req.body);
@@ -1083,15 +1089,57 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post('/api/v1/changes/:id/submit-cab', async (req) => {
     const p = await requirePrincipal(req);
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
-    const body = z.object({ approverIds: z.array(z.string().uuid()).default([]) }).parse(req.body ?? {});
-    return changes.submitForCab(p, id, body.approverIds);
+    const body = z
+      .object({
+        extraVoterIds: z.array(z.string().uuid()).default([]),
+        boardId: z.string().uuid().optional(),
+      })
+      .parse(req.body ?? {});
+    return changes.submitForCab(p, id, body);
   });
 
-  app.post('/api/v1/changes/:id/cab-decision', async (req) => {
+  // Replaces the old single-approver POST /changes/:id/cab-decision.
+  app.post('/api/v1/changes/:id/vote', async (req) => {
     const p = await requirePrincipal(req);
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
-    const body = z.object({ approve: z.boolean(), reason: z.string().optional() }).parse(req.body);
-    return changes.cabDecision(p, id, body.approve, body.reason);
+    const body = z
+      .object({ vote: z.enum(['approve', 'reject', 'abstain']), reason: z.string().optional() })
+      .parse(req.body);
+    return changes.castVote(p, id, body.vote, body.reason);
+  });
+
+  app.post('/api/v1/changes/:id/cancel', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ reason: z.string().optional() }).parse(req.body ?? {});
+    return changes.cancelChange(p, id, body.reason);
+  });
+
+  app.post('/api/v1/changes/:id/pir', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z
+      .object({
+        outcome: z.enum(['successful', 'failed', 'rolled_back', 'partial']),
+        notes: z.string().optional(),
+      })
+      .parse(req.body);
+    return changes.recordPir(p, id, body.outcome, body.notes);
+  });
+
+  app.get('/api/v1/changes/:id/comments', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return { data: await changes.listComments(p, id) };
+  });
+
+  app.post('/api/v1/changes/:id/comments', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ body: z.string().min(1) }).parse(req.body);
+    const row = await changes.addComment(p, id, body.body);
+    reply.status(201);
+    return row;
   });
 
   app.post('/api/v1/changes/:id/schedule', async (req) => {
@@ -1106,6 +1154,97 @@ export async function registerRoutes(app: FastifyInstance) {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const body = z.object({ to: z.enum(['implementing', 'review', 'closed']) }).parse(req.body);
     return changes.transitionChange(p, id, body.to);
+  });
+
+  // ---------------- CAB administration (board, blackouts, templates) ----------------
+  app.get('/api/v1/cab/board', async (req) => {
+    const p = await requirePrincipal(req);
+    const q = z.object({ organizationId: z.string().uuid().optional() }).parse(req.query ?? {});
+    return { data: await cab.getBoard(p, q.organizationId) };
+  });
+
+  app.put('/api/v1/cab/board', async (req) => {
+    const p = await requirePrincipal(req);
+    const body = z
+      .object({
+        organizationId: z.string().uuid().nullish(),
+        name: z.string().min(1).optional(),
+        chairId: z.string().uuid().nullish(),
+        quorum: z.number().int().min(1).optional(),
+        threshold: z.enum(['majority', 'two_thirds', 'unanimous']).optional(),
+        members: z
+          .array(
+            z.object({
+              userId: z.string().uuid(),
+              role: z.enum(['chair', 'member']).optional(),
+              weight: z.number().int().min(1).optional(),
+            }),
+          )
+          .optional(),
+      })
+      .parse(req.body ?? {});
+    return { data: await cab.putBoard(p, body) };
+  });
+
+  app.get('/api/v1/cab/blackouts', async (req) => {
+    const p = await requirePrincipal(req);
+    const q = z.object({ organizationId: z.string().uuid().optional() }).parse(req.query ?? {});
+    return { data: await cab.listBlackouts(p, q.organizationId) };
+  });
+
+  app.post('/api/v1/cab/blackouts', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const body = z
+      .object({
+        organizationId: z.string().uuid().nullish(),
+        name: z.string().min(1),
+        startsAt: z.string().datetime(),
+        endsAt: z.string().datetime(),
+        reason: z.string().optional(),
+      })
+      .parse(req.body);
+    const row = await cab.createBlackout(p, body);
+    reply.status(201);
+    return row;
+  });
+
+  app.delete('/api/v1/cab/blackouts/:id', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return cab.deleteBlackout(p, id);
+  });
+
+  app.get('/api/v1/cab/templates', async (req) => {
+    const p = await requirePrincipal(req);
+    const q = z.object({ organizationId: z.string().uuid().optional() }).parse(req.query ?? {});
+    return { data: await cab.listTemplates(p, q.organizationId) };
+  });
+
+  app.post('/api/v1/cab/templates', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const body = z
+      .object({
+        organizationId: z.string().uuid().nullish(),
+        name: z.string().min(1),
+        changeType: z.enum(['standard', 'normal', 'emergency']).optional(),
+        risk: z.enum(['low', 'medium', 'high']).optional(),
+        impact: z.enum(['low', 'medium', 'high']).optional(),
+        likelihood: z.enum(['low', 'medium', 'high']).optional(),
+        description: z.string().optional(),
+        implementationPlan: z.string().optional(),
+        testPlan: z.string().optional(),
+        backoutPlan: z.string().optional(),
+      })
+      .parse(req.body);
+    const row = await cab.createTemplate(p, body);
+    reply.status(201);
+    return row;
+  });
+
+  app.delete('/api/v1/cab/templates/:id', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return cab.deleteTemplate(p, id);
   });
 
   // ---------------- Knowledge base (Confluence-style) ----------------
