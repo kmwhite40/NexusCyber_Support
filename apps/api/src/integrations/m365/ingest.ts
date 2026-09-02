@@ -134,9 +134,29 @@ export async function ingestMessage(
         [orgId, ticket.id, authorId, { visibility: 'customer', via: 'email' }],
       );
       // A customer reply on a resolved/closed ticket reopens it.
+      //
+      // This used to drop the ticket straight into 'in_progress' (or 'triage'), which is not a
+      // legal target from 'resolved' in any workflow map, and it left `resolved_at` stamped
+      // from the earlier resolve while writing no status_changed event. The desk experience was
+      // a ticket that bounced back into active work with nothing on the timeline saying why —
+      // indistinguishable from "my resolve didn't save". Land on 'reopened' (what
+      // DEFAULT_TRANSITIONS actually allows out of 'resolved'), clear the terminal stamps, and
+      // record the change like any other status move.
+      //
+      // 'closed' is deliberately still reopenable here even though the map treats closed as
+      // terminal: inbound mail is an out-of-band channel and a customer writing back to a closed
+      // ticket must not vanish. That is an exception, so it is written down rather than implied.
       if (ticket.status === 'resolved' || ticket.status === 'closed') {
-        const to = ticket.assigned_agent_id ? 'in_progress' : 'triage';
-        await sql.query('UPDATE tickets SET status=$1 WHERE id=$2', [to, ticket.id]);
+        const to = 'reopened';
+        await sql.query(
+          'UPDATE tickets SET status = $1, resolved_at = NULL, closed_at = NULL WHERE id = $2',
+          [to, ticket.id],
+        );
+        await sql.query(
+          `INSERT INTO ticket_events (organization_id, ticket_id, actor_id, event_type, detail)
+           VALUES ($1,$2,$3,'status_changed',$4)`,
+          [orgId, ticket.id, authorId, { from: ticket.status, to, via: 'email' }],
+        );
         publish('ticket.reopened', orgId, { ticket_id: ticket.id, org_id: orgId, from: ticket.status, to });
       }
       // Notify the desk/assignee of the reply (NOT a customer first-response — leaves the

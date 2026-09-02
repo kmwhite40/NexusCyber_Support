@@ -161,8 +161,10 @@ describe('ingest', () => {
     // appended a comment, did NOT open a new ticket
     expect(calls.some((c) => c.text.includes('INSERT INTO ticket_comments'))).toBe(true);
     expect(calls.some((c) => c.text.includes('INSERT INTO tickets'))).toBe(false);
-    // resolved -> reopened (had an assignee -> in_progress), and the desk is notified
-    expect(got['ticket.reopened']?.data.to).toBe('in_progress');
+    // resolved -> reopened. This asserted 'in_progress' until the reopen was fixed: that is
+    // not a legal target from 'resolved', and it left the ticket looking un-resolved with no
+    // timeline entry explaining why. The assignee no longer changes where it lands.
+    expect(got['ticket.reopened']?.data.to).toBe('reopened');
     expect(got['ticket.commented']?.data.ticket_id).toBe('t-existing');
     expect(got['unexpected.created']).toBeUndefined();
   });
@@ -192,4 +194,77 @@ describe('extractTicketNumber', () => {
     expect(extractTicketNumber('New problem with VPN')).toBeNull();
     expect(extractTicketNumber('')).toBeNull();
   });
+});
+
+// A customer reply on a resolved ticket reopens it — that part is intended. HOW it reopened
+// was not: ingest wrote `status` straight to 'in_progress' (or 'triage'), which is not a legal
+// target from 'resolved' in any workflow map, left `resolved_at` stamped from the earlier
+// resolve, and recorded no `status_changed` event. To the desk that reads as "I resolved this
+// and it didn't stick": the ticket is back in an active state, the timeline says nothing about
+// why, and the row still carries a resolve timestamp. Seen in prod on STR-000001/STR-000002,
+// the latter resolved three times in a row.
+describe('ingest — reopening a resolved ticket', () => {
+  const replyMsg = {
+    id: 'm9',
+    internetMessageId: '<reply@x>',
+    fromAddress: 'sender@acme.gov',
+    fromName: '',
+    subject: 'RE: [ACME-000012] still broken',
+    bodyPreview: 'it is happening again',
+  };
+
+  function resolvedTicketSql() {
+    return makeSql({
+      'FROM integration_state': { rows: [] },
+      'FROM organization_domains': { rows: [{ organization_id: 'org-acme' }] },
+      'SELECT id, status, assigned_agent_id FROM tickets': {
+        rows: [{ id: 't-1', status: 'resolved', assigned_agent_id: 'agent-1' }],
+      },
+      'FROM users WHERE organization_id': { rows: [{ id: 'u-1' }] },
+    });
+  }
+
+  it('moves it to a status that is legal from resolved, not straight back into in_progress', async () => {
+    const { sql, calls } = resolvedTicketSql();
+    await ingestMessage(sql, replyMsg);
+    const upd = calls.find((c: any) => c.text.includes('UPDATE tickets SET status'));
+    expect(upd).toBeTruthy();
+    // DEFAULT_TRANSITIONS (workflows.ts) allows resolved -> closed | reopened. Nothing else.
+    expect(upd.params[0]).toBe('reopened');
+  });
+
+  it('clears the resolve stamp, so the row does not read as resolved-and-open at once', async () => {
+    const { sql, calls } = resolvedTicketSql();
+    await ingestMessage(sql, replyMsg);
+    const upd = calls.find((c: any) => c.text.includes('UPDATE tickets SET status'));
+    expect(upd.text.replace(/\s+/g, ' ')).toContain('resolved_at = NULL');
+  });
+
+  it('records a status_changed event, so the timeline explains the flip', async () => {
+    const { sql, calls } = resolvedTicketSql();
+    await ingestMessage(sql, replyMsg);
+    const statusEvents = calls.filter(
+      (c: any) => c.text.includes('INSERT INTO ticket_events') && c.text.includes("'status_changed'"),
+    );
+    expect(statusEvents.length).toBe(1);
+  });
+});
+
+// The closed case carries the same stale-stamp hazard as the resolved one.
+it('clears closed_at when a reply reopens a closed ticket', async () => {
+  const { sql, calls } = makeSql({
+    'FROM integration_state': { rows: [] },
+    'FROM organization_domains': { rows: [{ organization_id: 'org-acme' }] },
+    'SELECT id, status, assigned_agent_id FROM tickets': {
+      rows: [{ id: 't-2', status: 'closed', assigned_agent_id: null }],
+    },
+    'FROM users WHERE organization_id': { rows: [{ id: 'u-1' }] },
+  });
+  await ingestMessage(sql, {
+    id: 'm10', internetMessageId: '<reply2@x>', fromAddress: 'sender@acme.gov',
+    fromName: '', subject: 'RE: [ACME-000013] one more thing', bodyPreview: 'hello',
+  });
+  const upd = calls.find((c: any) => c.text.includes('UPDATE tickets SET status'));
+  expect(upd.params[0]).toBe('reopened');
+  expect(upd.text.replace(/\s+/g, ' ')).toContain('closed_at = NULL');
 });
