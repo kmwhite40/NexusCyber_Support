@@ -2,12 +2,11 @@
 import * as React from 'react';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
-import { Card, CardHeader, CardTitle, CardBody, Button, Badge, Input, Select, Textarea, SegmentedControl } from '@/components/ui/primitives';
-import { EmptyState } from '@/components/ui/data';
-import { changesApi, statusTone, type Change, type ChangeRecord } from '@/lib/changes';
+import { Card, CardBody, Button, Input, Select, Textarea, SegmentedControl } from '@/components/ui/primitives';
+import { changesApi, type Change, type ChangeRecord } from '@/lib/changes';
 import { ChangeCalendar } from './_components/change-calendar';
 import { ChangeList } from './_components/change-list';
-import { VotePanel } from './_components/vote-panel';
+import { ChangeDetail } from './_components/change-detail';
 
 export default function ChangesPage() {
   const { me, can } = useAuth();
@@ -18,17 +17,26 @@ export default function ChangesPage() {
   const [form, setForm] = React.useState({ title: '', changeType: 'normal', risk: 'medium', description: '' });
   const [err, setErr] = React.useState<string | null>(null);
 
-  const canVote = can('change.vote');
-  const canImplement = can('change.implement');
+  const perms = {
+    create: can('change.create'),
+    vote: can('change.vote'),
+    implement: can('change.implement'),
+  };
 
   const load = React.useCallback(() => {
     changesApi.list().then(setRows).catch(() => setRows([]));
   }, []);
   React.useEffect(load, [load]);
 
-  function open(id: string) {
+  const open = React.useCallback((id: string) => {
     changesApi.get(id).then(setSel).catch(() => {});
-  }
+  }, []);
+
+  /** Re-read the open change and the list after any mutation. */
+  const refresh = React.useCallback(() => {
+    if (sel) open(sel.id);
+    load();
+  }, [sel, open, load]);
 
   async function create() {
     setErr(null);
@@ -42,41 +50,6 @@ export default function ChangesPage() {
       setErr(e instanceof ApiError ? e.detail : 'Failed to create change');
     }
   }
-
-  async function submitCab() {
-    if (!sel) return;
-    // The standing board (GET/PUT /cab/board) supplies the roster. The raiser is NEVER
-    // added as their own voter — segregation of duties; the API recuses them anyway. A
-    // memberless board therefore fails loudly here, which is the correct signal to go
-    // configure one. Standard changes auto-approve and ignore the roster entirely.
-    setErr(null);
-    try {
-      await changesApi.submitCab(sel.id);
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.detail : 'Failed to submit to the CAB');
-      return;
-    }
-    open(sel.id); load();
-  }
-  async function schedule() {
-    if (!sel) return;
-    const start = new Date(Date.now() + 86400000); start.setUTCHours(2, 0, 0, 0);
-    const end = new Date(start.getTime() + 2 * 3600000);
-    await changesApi.schedule(sel.id, start.toISOString(), end.toISOString()).catch(() => {});
-    open(sel.id); load();
-  }
-  async function recordPir(outcome: string) {
-    if (!sel) return;
-    await changesApi.pir(sel.id, outcome as 'successful' | 'partial' | 'failed' | 'rolled_back').catch(() => {});
-    open(sel.id); load();
-  }
-  async function advance(to: string) {
-    if (!sel) return;
-    await changesApi.transition(sel.id, to as 'implementing' | 'review' | 'closed').catch(() => {});
-    open(sel.id); load();
-  }
-
-  const nextImpl: Record<string, string> = { scheduled: 'implementing', implementing: 'review', review: 'closed' };
 
   return (
     <div className="space-y-5">
@@ -95,7 +68,7 @@ export default function ChangesPage() {
               { value: 'calendar', label: 'Calendar' },
             ]}
           />
-          {can('change.create') && <Button onClick={() => setCreating((c) => !c)}>{creating ? 'Cancel' : 'New change'}</Button>}
+          {perms.create && <Button onClick={() => setCreating((c) => !c)}>{creating ? 'Cancel' : 'New change'}</Button>}
         </div>
       </div>
 
@@ -130,67 +103,10 @@ export default function ChangesPage() {
       {view === 'calendar' && <ChangeCalendar onOpen={open} />}
 
       {view === 'list' && (
-      <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
-        <ChangeList rows={rows} onOpen={open} />
-
-        <Card>
-          <CardHeader><CardTitle>{sel ? 'Change detail' : 'Select a change'}</CardTitle></CardHeader>
-          <CardBody className="space-y-3">
-            {!sel ? (
-              <EmptyState title="Nothing selected" description="Pick a change from the list." />
-            ) : (
-              <>
-                <div>
-                  <div className="text-sm font-medium text-fg">{sel.title}</div>
-                  <div className="mt-1 flex items-center gap-2">
-                    <Badge tone="neutral">{sel.change_type}</Badge>
-                    <Badge tone={statusTone(sel.status)}>{sel.status.replace(/_/g, ' ')}</Badge>
-                  </div>
-                </div>
-                {sel.description && <p className="whitespace-pre-wrap text-xs text-fg/80">{sel.description}</p>}
-
-                {sel.votes.length === 0 && sel.cab_steps.length > 0 && (
-                  // Pre-voting changes approved through approvals/approval_steps.
-                  <div className="rounded-md border border-border p-2">
-                    <div className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted">CAB board (legacy approval)</div>
-                    {sel.cab_steps.map((s) => (
-                      <div key={s.id} className="flex items-center justify-between text-xs">
-                        <span className="text-muted">approver</span>
-                        <Badge tone={s.decision === 'approved' ? 'success' : s.decision === 'rejected' ? 'danger' : 'neutral'}>{s.decision ?? 'pending'}</Badge>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {sel.votes.length > 0 && (
-                  <VotePanel change={sel} meId={me?.id} canVote={canVote} onVoted={() => { open(sel.id); load(); }} />
-                )}
-
-                <div className="flex flex-wrap gap-2 border-t border-border pt-3">
-                  {sel.status === 'draft' && can('change.create') && <Button size="sm" onClick={submitCab}>Submit to CAB</Button>}
-                  {sel.status === 'approved' && canImplement && <Button size="sm" onClick={schedule}>Schedule (tomorrow 02:00)</Button>}
-                  {sel.status === 'review' && canImplement ? (
-                    // Closing requires a post-implementation review outcome; recording it closes the change.
-                    <Select
-                      aria-label="Post-implementation review outcome"
-                      value=""
-                      onChange={(e) => e.target.value && recordPir(e.target.value)}
-                    >
-                      <option value="">Record PIR &amp; close…</option>
-                      <option value="successful">Successful</option>
-                      <option value="partial">Partial</option>
-                      <option value="failed">Failed</option>
-                      <option value="rolled_back">Rolled back</option>
-                    </Select>
-                  ) : (
-                    nextImpl[sel.status] && canImplement && <Button size="sm" variant="subtle" onClick={() => advance(nextImpl[sel.status])}>Advance to {nextImpl[sel.status]}</Button>
-                  )}
-                </div>
-              </>
-            )}
-          </CardBody>
-        </Card>
-      </div>
+        <div className="grid gap-5 lg:grid-cols-[1fr_400px]">
+          <ChangeList rows={rows} onOpen={open} />
+          <ChangeDetail change={sel} meId={me?.id} perms={perms} onChanged={refresh} />
+        </div>
       )}
     </div>
   );
