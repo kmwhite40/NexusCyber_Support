@@ -1,7 +1,7 @@
 import { it, expect, beforeAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { describeDb } from '../helpers/db.js';
-import { withSystemContext } from '../../src/db/pool.js';
+import { withSystemContext, type Sql } from '../../src/db/pool.js';
 import { loadPrincipal } from '../../src/auth/principal.js';
 import { createRequest } from '../../src/modules/catalog.js';
 import { ingestMessage, type InboundMessage } from '../../src/integrations/m365/ingest.js';
@@ -21,6 +21,30 @@ import type { Principal } from '../../src/types.js';
 // unlocked inline query (or, for the ingest path, with the explicit BEGIN/COMMIT wrapper
 // removed so the advisory lock has no transaction to live in), this test fails — see the
 // task report for the actual failing run.
+//
+// A third test below covers a related fix in the same transaction boundary: the ingest
+// dedupe marker (integration_state) now commits atomically with the ticket instead of
+// after it, so a mid-transaction failure can't leave a committed ticket with no marker.
+/**
+ * Wraps a real client so the one statement that writes the ingest dedupe marker
+ * (`INSERT INTO integration_state ...`, from ingest.ts's `setState`) fails, while every
+ * other statement — including BEGIN/COMMIT/ROLLBACK and the ticket INSERT — passes
+ * through untouched. Used to prove the dedupe marker now commits atomically with the
+ * ticket: fail it, and the ticket insert (already run, uncommitted, earlier in the same
+ * transaction) must roll back with it.
+ */
+function withFaultyDedupeWrite(sql: Sql): Sql {
+  const faulty = {
+    query: (text: unknown, params?: unknown[]) => {
+      if (typeof text === 'string' && text.includes('INSERT INTO integration_state')) {
+        return Promise.reject(new Error('simulated dedupe-marker write failure'));
+      }
+      return params === undefined ? sql.query(text as string) : sql.query(text as string, params);
+    },
+  };
+  return faulty as unknown as Sql;
+}
+
 async function principalByEmail(email: string): Promise<Principal> {
   const u = await withSystemContext(async (sql) =>
     (await sql.query('SELECT id, plane, email, organization_id FROM users WHERE email=$1', [email])).rows[0],
@@ -84,5 +108,31 @@ describeDb('ticket number allocation under concurrency (integration)', () => {
     );
     expect(rows).toHaveLength(CONCURRENCY);
     expect(new Set(rows.map((r: { ticket_number: string }) => r.ticket_number)).size).toBe(CONCURRENCY);
+  });
+
+  it('rolls back the ticket insert if the dedupe-marker write fails (atomicity)', async () => {
+    // Before this fix, setState(seenKey) ran AFTER COMMIT: a failure writing the dedupe
+    // marker would leave an already-committed ticket behind with no marker, so the next
+    // poll would re-ingest the same email as a second, duplicate ticket. Injecting a
+    // failure into just that one statement, mid-transaction, proves the ticket insert now
+    // shares its fate with the dedupe write instead of surviving it.
+    const internetMessageId = `atomic-${randomUUID()}`;
+    const msg: InboundMessage = {
+      id: internetMessageId,
+      internetMessageId,
+      fromAddress: 'race-tester@demo.example.com',
+      fromName: 'Atomic Tester',
+      subject: `Atomicity probe ${internetMessageId}`,
+      bodyPreview: 'atomicity probe',
+    };
+
+    await expect(
+      withSystemContext((sql) => ingestMessage(withFaultyDedupeWrite(sql), msg)),
+    ).rejects.toThrow('simulated dedupe-marker write failure');
+
+    const { rows } = await withSystemContext((sql) =>
+      sql.query('SELECT id FROM tickets WHERE organization_id=$1 AND subject=$2', [orgId, msg.subject]),
+    );
+    expect(rows).toHaveLength(0); // ticket insert was rolled back along with the failed dedupe write
   });
 });
