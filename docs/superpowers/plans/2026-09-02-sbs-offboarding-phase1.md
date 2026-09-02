@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Feature stays dark unless provisioning config is enabled — reuse `config.provisioning` and `provisioning.isEnabled()`; do NOT add a second feature flag.
+- Feature stays dark behind TWO gates: the shared `config.provisioning` tenant configuration, AND `M365_OFFBOARD_ENABLED`. (This constraint originally said "do NOT add a second feature flag". That was wrong: one shared flag meant enabling ONBOARDING would arm account teardown in the same deploy. The second flag is ANDed with the tenant config, never independent of it, so "no credentials means no teardown" still holds. Corrected in 790c93b.)
 - Step order is fixed and enforced: `block_signin` → `revoke_sessions` → `rename_account` → `convert_shared_mailbox` → `remove_licenses` → `remove_groups_dls_roles`. The planner emits this order or emits nothing.
 - `convert_shared_mailbox` is a **prompted manual step** — Graph has no mailbox-conversion endpoint. It is NOT a Graph call. `remove_licenses` must not be emitted as executable until it is recorded complete.
 - Rename format, exact: `ZZ_Inactive_<Last>_<First>_<YYYY-MM-DD>` using the **last day**, e.g. `ZZ_Inactive_Doe_Jane_2026-09-02`. `displayName` only — never the UPN.

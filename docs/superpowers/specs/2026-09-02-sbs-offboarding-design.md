@@ -74,6 +74,16 @@ Step 3 renames `displayName` only. The UPN is left alone: renaming it breaks mai
 and makes the audit trail hard to follow, and the runbook says "change name on account", not
 "change sign-in address".
 
+## Feature gating
+
+Two gates, both required: the shared provisioning tenant configuration (`M365_PROV_ENABLED` plus
+credentials, UPN domain and baseline SKUs), AND `M365_OFFBOARD_ENABLED`.
+
+The second exists because a single shared flag would mean switching on onboarding also arms
+account teardown — sweeper included — on the same deploy. Requiring both keeps the original
+safety property (no tenant credentials, no teardown, whatever a flag says) while letting the
+constructive half be enabled on its own.
+
 ## Blockers
 
 The planner refuses to produce an executable plan when:
