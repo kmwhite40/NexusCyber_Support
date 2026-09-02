@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/data';
 import { PriorityBadge, StatusBadge, SlaBadge } from '@/components/ui/badges';
 import { TicketAttachments } from '@/components/ticket-attachments';
 import { ProvisioningPanel } from '@/components/provisioning-panel';
+import { OffboardingPanel } from '@/components/offboarding-panel';
 
 export default function TicketDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -197,6 +198,13 @@ export default function TicketDetailPage() {
       )}
 
       {approvalsPassed && <ProvisioningPanel ticketId={id} canProvision={can('provisioning.execute')} />}
+
+      {/* Offboarding is driven from the user.offboarding catalog request, and only after its
+          approvals pass — the server enforces both, this just avoids showing a panel that could
+          only refuse. */}
+      {approvalsPassed && ticket.category === 'user.offboarding' && (
+        <OffboardingPanel ticketId={id} canOffboard={can('provisioning.execute')} />
+      )}
 
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Conversation */}

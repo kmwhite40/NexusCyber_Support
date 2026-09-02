@@ -129,3 +129,30 @@ describe('isFieldVisible / conditional required', () => {
     expect(validateAgainstForm([addr], { work_location: 'WFH-Permanent' }).ok).toBe(true);
   });
 });
+
+// Offboarding needs an instant, not a date: "block them at 5pm Friday" cannot be expressed as
+// YYYY-MM-DD, and the scheduler fires on a timestamp. Without a datetime case these answers fell
+// through to the permissive default and were accepted unvalidated.
+describe('validateAgainstForm — datetime', () => {
+  const dtFields: FormField[] = [
+    { key: 'disable_effective', label: 'Disable effective', data_type: 'datetime', required: true, options: [], maps_to: null, visible_when: null, sensitive: false, options_source: null },
+  ];
+
+  it('accepts an ISO instant', () => {
+    expect(validateAgainstForm(dtFields, { disable_effective: '2026-09-05T21:00:00Z' }).ok).toBe(true);
+  });
+
+  it('accepts an ISO instant with a numeric offset', () => {
+    expect(validateAgainstForm(dtFields, { disable_effective: '2026-09-05T17:00:00-04:00' }).ok).toBe(true);
+  });
+
+  it('rejects a bare date, which cannot express a time of day', () => {
+    const r = validateAgainstForm(dtFields, { disable_effective: '2026-09-05' });
+    expect(r.ok).toBe(false);
+    expect(r.errors[0].message).toMatch(/date and time/i);
+  });
+
+  it('rejects free text rather than accepting it unvalidated', () => {
+    expect(validateAgainstForm(dtFields, { disable_effective: 'next friday at five' }).ok).toBe(false);
+  });
+});

@@ -53,3 +53,30 @@ describe('createGraphClient', () => {
     await expect(c.get('/x')).rejects.toBeInstanceOf(GraphError);
   });
 });
+
+// Offboarding needs DELETE: removing a group membership is DELETE /groups/{g}/members/{u}/$ref,
+// which has no PATCH or POST equivalent. The client carried only GET/POST/PATCH.
+describe('createGraphClient — DELETE', () => {
+  it('issues a DELETE with the bearer token and no body', async () => {
+    const fetchImpl = vi.fn(async () => res(204, null));
+    const c = createGraphClient(deps(fetchImpl));
+    await c.del('/groups/g-1/members/u-1/$ref');
+    const [url, init] = fetchImpl.mock.calls[0] as [string, any];
+    expect(url).toBe('https://graph.microsoft.com/v1.0/groups/g-1/members/u-1/$ref');
+    expect(init.method).toBe('DELETE');
+    expect(init.body).toBeUndefined();
+    expect(init.headers.Authorization).toBe('Bearer tok');
+  });
+
+  it('returns null on 204 rather than trying to parse an empty body', async () => {
+    const fetchImpl = vi.fn(async () => res(204, null));
+    const c = createGraphClient(deps(fetchImpl));
+    await expect(c.del('/groups/g-1/members/u-1/$ref')).resolves.toBeNull();
+  });
+
+  it('throws GraphError on a failed delete instead of resolving silently', async () => {
+    const fetchImpl = vi.fn(async () => res(404, { error: { code: 'Request_ResourceNotFound' } }));
+    const c = createGraphClient(deps(fetchImpl));
+    await expect(c.del('/groups/g-1/members/u-1/$ref')).rejects.toBeInstanceOf(GraphError);
+  });
+});

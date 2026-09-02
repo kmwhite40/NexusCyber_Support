@@ -46,3 +46,44 @@ describe('parseProvisioningConfig', () => {
     expect(parseProvisioningConfig({ M365_PROV_CLOUDPC_API_VERSION: 'v2.0-nonsense' }).cloudPcApiVersion).toBe('beta');
   });
 });
+
+// Offboarding is gated SEPARATELY from onboarding, and the separation is the point.
+//
+// Both flows share tenant credentials, so offboarding must never be switchable on without them
+// — that was the original reason for one flag. But one flag also meant that enabling onboarding
+// silently armed account teardown, sweeper and all, on the same deploy. Nobody should have to
+// take the destructive half to get the constructive one.
+//
+// So M365_OFFBOARD_ENABLED is an ADDITIONAL gate, ANDed with the full provisioning config —
+// never an independent one.
+describe('parseProvisioningConfig — offboarding gate', () => {
+  const full = {
+    M365_PROV_ENABLED: 'true',
+    M365_PROV_TENANT_ID: 't', M365_PROV_CLIENT_ID: 'c', M365_PROV_CLIENT_SECRET: 's',
+    M365_PROV_UPN_DOMAIN: 'sbsfederal.com',
+    M365_PROV_BASELINE_SKUS: 'SPE_E3_USGOV_GCCHIGH',
+  };
+
+  it('stays off when provisioning is fully configured but offboarding was not asked for', () => {
+    const c = parseProvisioningConfig(full);
+    expect(c.enabled).toBe(true);
+    expect(c.offboardingEnabled).toBe(false);
+  });
+
+  it('stays off when offboarding is asked for but the tenant is not configured', () => {
+    // The original safety property: no tenant credentials, no teardown, whatever the flag says.
+    const c = parseProvisioningConfig({ M365_OFFBOARD_ENABLED: 'true' });
+    expect(c.offboardingEnabled).toBe(false);
+  });
+
+  it('stays off when offboarding is asked for but provisioning itself is switched off', () => {
+    const c = parseProvisioningConfig({ ...full, M365_PROV_ENABLED: 'false', M365_OFFBOARD_ENABLED: 'true' });
+    expect(c.offboardingEnabled).toBe(false);
+  });
+
+  it('is on only when both the tenant is configured and offboarding is explicitly asked for', () => {
+    const c = parseProvisioningConfig({ ...full, M365_OFFBOARD_ENABLED: 'true' });
+    expect(c.enabled).toBe(true);
+    expect(c.offboardingEnabled).toBe(true);
+  });
+});

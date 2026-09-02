@@ -36,6 +36,8 @@ export interface GraphClient {
   get: (path: string) => Promise<any>;
   post: (path: string, body: unknown) => Promise<any>;
   patch: (path: string, body: unknown) => Promise<any>;
+  /** Membership removal is DELETE /groups/{g}/members/{u}/$ref — no POST/PATCH equivalent. */
+  del: (path: string) => Promise<any>;
 }
 
 const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -45,7 +47,7 @@ export function createGraphClient(opts: GraphClientOptions): GraphClient {
   const maxRetries = opts.maxRetries ?? 4;
   const fetchImpl = opts.fetchImpl as FetchWithHeaders;
 
-  async function request(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown): Promise<any> {
+  async function request(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<any> {
     const version = opts.apiVersion ?? 'v1.0';
     const url = path.startsWith('http') ? path : `${opts.graphEndpoint}/${version}${path}`;
     for (let attempt = 0; ; attempt++) {
@@ -79,5 +81,6 @@ export function createGraphClient(opts: GraphClientOptions): GraphClient {
     get: (path) => request('GET', path),
     post: (path, body) => request('POST', path, body),
     patch: (path, body) => request('PATCH', path, body),
+    del: (path) => request('DELETE', path),
   };
 }

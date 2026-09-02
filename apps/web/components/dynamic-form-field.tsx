@@ -29,6 +29,36 @@ export function isFieldVisible(field: FormFieldDef, answers: Record<string, unkn
   return 'equals' in cond ? actual === cond.equals : cond.in.includes(actual);
 }
 
+/**
+ * `<input type="datetime-local">` yields a bare local wall-clock string — "2026-09-05T17:00",
+ * with no zone. The API's `datetime` validator requires a zone designator, because "17:00"
+ * without one names five different instants across an org, and this field schedules a
+ * termination. So the browser's own offset is attached here, at the point where it is actually
+ * known, rather than guessed server-side.
+ */
+export function localInputToIsoInstant(local: string): string {
+  if (!local) return '';
+  const d = new Date(local); // the browser parses a zone-less string as LOCAL time
+  if (Number.isNaN(d.getTime())) return local;
+  const pad = (n: number) => String(Math.floor(Math.abs(n))).padStart(2, '0');
+  const offsetMinutes = -d.getTimezoneOffset();
+  const zone = offsetMinutes === 0
+    ? 'Z'
+    : `${offsetMinutes > 0 ? '+' : '-'}${pad(offsetMinutes / 60)}:${pad(offsetMinutes % 60)}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    + `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}${zone}`;
+}
+
+/** The inverse, for redisplaying a stored instant in the picker. */
+export function isoInstantToLocalInput(iso: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    + `T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export function DynamicFormField({
   field, value, answers, options, file, onChange, onFileChange, renderUserPicker,
 }: {
@@ -83,12 +113,19 @@ export function DynamicFormField({
             field.data_type === 'email' ? 'email'
               : field.data_type === 'phone' ? 'tel'
               : field.data_type === 'date' ? 'date'
+              : field.data_type === 'datetime' ? 'datetime-local'
               : field.data_type === 'number' ? 'number'
               : 'text'
           }
-          value={(value as string) ?? ''}
+          value={
+            field.data_type === 'datetime'
+              ? isoInstantToLocalInput((value as string) ?? '')
+              : (value as string) ?? ''
+          }
           placeholder={field.key === 'summary' ? 'e.g. Create an account on Jira' : undefined}
-          onChange={(e) => set(e.target.value)}
+          onChange={(e) => set(
+            field.data_type === 'datetime' ? localInputToIsoInstant(e.target.value) : e.target.value,
+          )}
         />
       )}
     </Field>

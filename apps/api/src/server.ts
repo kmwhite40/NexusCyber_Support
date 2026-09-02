@@ -22,6 +22,7 @@ import { incCounter, renderMetrics, statusClass } from './metrics.js';
 import { startMailIngest } from './jobs/mail-ingest.js';
 import { startRetentionPurge } from './jobs/retention-purge.js';
 import { startCloudPcPoller } from './jobs/cloudpc-poller.js';
+import { startOffboardingSweeper } from './jobs/offboarding-sweeper.js';
 
 async function main() {
   // Optional in-boundary migrations on boot (set RUN_MIGRATIONS_ON_BOOT=true). Runs
@@ -140,6 +141,14 @@ async function main() {
   if (config.provisioning.enabled) {
     startCloudPcPoller();
     logger.info('Cloud PC poller enabled');
+
+    // Offboarding sweep: fires approved plans at the instant HR instructed. Gated SEPARATELY
+    // from provisioning on purpose — enabling onboarding must not arm account teardown — while
+    // still requiring the same tenant configuration underneath (see config.ts).
+    if (config.provisioning.offboardingEnabled) {
+      startOffboardingSweeper();
+      logger.info('Offboarding sweeper enabled');
+    }
   }
 
   await app.listen({ port: config.port, host: '0.0.0.0' });

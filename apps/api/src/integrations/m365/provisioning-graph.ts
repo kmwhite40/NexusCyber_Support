@@ -231,3 +231,44 @@ export async function listGroupsByDisplayName(
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Offboarding operations
+// ---------------------------------------------------------------------------
+// The destructive counterparts to createUser / assignLicenses / addToGroup above. They live in
+// this file because they speak to the same Graph surface through the same client, but nothing
+// here is reachable from the onboarding planner or executor — see modules/offboarding/.
+//
+// Note what is NOT here: converting a mailbox to shared. Graph exposes no mailbox-type
+// conversion endpoint; `Set-Mailbox -Type Shared` is Exchange Online PowerShell. That step is
+// deliberately a prompted manual step, and the planner still refuses to emit license removal
+// until it is recorded complete.
+
+export async function setAccountEnabled(g: GraphClient, userId: string, enabled: boolean): Promise<void> {
+  await g.patch(`/users/${userId}`, { accountEnabled: enabled });
+}
+
+/**
+ * The supported way to kill live sessions. A password reset does NOT invalidate existing refresh
+ * tokens, so an account can be "disabled" and still serving a live session until this runs —
+ * which is why the planner orders this immediately after block_signin.
+ */
+export async function revokeSignInSessions(g: GraphClient, userId: string): Promise<void> {
+  await g.post(`/users/${userId}/revokeSignInSessions`, {});
+}
+
+/** displayName ONLY. Renaming the UPN breaks mailbox resolution and muddies the audit trail. */
+export async function setDisplayName(g: GraphClient, userId: string, displayName: string): Promise<void> {
+  await g.patch(`/users/${userId}`, { displayName });
+}
+
+export async function removeLicenses(g: GraphClient, userId: string, skuIds: string[]): Promise<void> {
+  // An assignLicense call with an empty removeLicenses array is a pointless round trip that can
+  // still fail and still counts against throttling limits. Nothing to reclaim, nothing to call.
+  if (skuIds.length === 0) return;
+  await g.post(`/users/${userId}/assignLicense`, { addLicenses: [], removeLicenses: skuIds });
+}
+
+export async function removeFromGroup(g: GraphClient, groupId: string, userId: string): Promise<void> {
+  await g.del(`/groups/${groupId}/members/${userId}/$ref`);
+}
