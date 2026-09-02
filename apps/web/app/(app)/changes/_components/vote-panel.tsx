@@ -78,6 +78,9 @@ export function VotePanel({
       onVoted();
     } catch (e) {
       setErr(e instanceof ApiError ? e.detail : 'Failed to record your vote');
+    } finally {
+      // Cleared here rather than waiting for the refetched change to land: if that
+      // refetch fails the panel would otherwise stay disabled with no way back.
       setBusy(null);
     }
   }
