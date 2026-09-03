@@ -186,7 +186,18 @@ export function planRun(input: PlanInput): Plan {
   }
 
   const steps: PlanStep[] = [
-    { key: 'create_user', label: `Create ${upn}`, detail: { upn, displayName, adopting: Boolean(existingUser), usageLocation } },
+    {
+      key: 'create_user',
+      label: `Create ${upn}`,
+      // givenName/surname go to Graph as their own fields. Sending only displayName forces every
+      // downstream reader to guess at the split — offboarding's nameParts() does exactly that,
+      // and returns a blocker when it cannot. The exact names are right here; pass them.
+      // givenName tracks the same `first` displayName uses, so the two never disagree.
+      detail: {
+        upn, displayName, adopting: Boolean(existingUser), usageLocation,
+        givenName: first, surname: str(answers.legal_last_name),
+      },
+    },
     // skuPartNumbers is copied (not aliased to input.baselineSkus): the returned Plan must stay
     // isolated from the caller's array — a preview taken now must not change if the caller later
     // mutates the array it passed in.

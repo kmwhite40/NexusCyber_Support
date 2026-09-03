@@ -119,8 +119,8 @@ export async function createUser(g: GraphClient, body: Record<string, unknown>) 
  * It is set at creation, but an account created before that fix (or by hand) needs back-filling,
  * or every licence assignment against it fails forever.
  */
-export async function setUsageLocation(g: GraphClient, userId: string, usageLocation: string) {
-  return g.patch(`/users/${userId}`, { usageLocation });
+export async function patchUser(g: GraphClient, userId: string, patch: Record<string, unknown>) {
+  return g.patch(`/users/${userId}`, patch);
 }
 
 export async function assignLicenses(g: GraphClient, userId: string, skuIds: string[]) {

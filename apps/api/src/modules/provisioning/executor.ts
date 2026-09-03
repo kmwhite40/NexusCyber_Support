@@ -61,7 +61,7 @@ export interface ProvisioningOps {
   assignLicenses: (userId: string, skuIds: string[]) => Promise<unknown>;
   addToGroup: (groupId: string, userId: string) => Promise<unknown>;
   issueTap: (userId: string) => Promise<{ temporaryAccessPass: string }>;
-  setUsageLocation?: (userId: string, usageLocation: string) => Promise<unknown>;
+  patchUser?: (userId: string, patch: Record<string, unknown>) => Promise<unknown>;
   deliverTap: (supervisorId: string, upn: string, pass: string) => Promise<void>;
 }
 
@@ -95,10 +95,16 @@ export async function executePlan(
             // usageLocation, and adoption skips createUser entirely — so without this a retry of
             // a run that already created the account fails at assign_licenses exactly as the
             // first attempt did, permanently.
-            const current = (existing as { usageLocation?: string | null }).usageLocation ?? null;
-            if (usageLocation && current !== usageLocation && ops.setUsageLocation) {
-              await ops.setUsageLocation(userId, usageLocation);
-            }
+            // Fill gaps ONLY. findUser matches any account with this UPN, not just one this
+            // engine created, so adoption must never overwrite a real person's directory record.
+            const cur = existing as { usageLocation?: string | null; givenName?: string | null; surname?: string | null };
+            const patch: Record<string, unknown> = {};
+            if (usageLocation && !cur.usageLocation) patch.usageLocation = usageLocation;
+            const given = String(step.detail.givenName ?? '');
+            const sur = String(step.detail.surname ?? '');
+            if (given && !cur.givenName) patch.givenName = given;
+            if (sur && !cur.surname) patch.surname = sur;
+            if (Object.keys(patch).length && ops.patchUser) await ops.patchUser(userId, patch);
           } else {
             const password = generateInitialPassword();
             let created: { id: string };
@@ -110,6 +116,8 @@ export async function executePlan(
                 mailNickname: plan.upn.split('@')[0],
                 // Without this, assign_licenses fails 400 for every user this engine creates.
                 ...(usageLocation ? { usageLocation } : {}),
+                ...(step.detail.givenName ? { givenName: String(step.detail.givenName) } : {}),
+                ...(step.detail.surname ? { surname: String(step.detail.surname) } : {}),
                 passwordProfile: {
                   forceChangePasswordNextSignIn: true,
                   // Never read back: assigned to Graph and immediately discarded. See

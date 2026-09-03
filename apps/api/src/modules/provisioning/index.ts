@@ -37,7 +37,7 @@ import {
   directoryRoleCount,
   createUser,
   assignLicenses,
-  setUsageLocation,
+  patchUser,
   userLicenseSkuIds,
   addToGroup,
   issueTap,
@@ -490,7 +490,7 @@ function buildOps(g: ProvisioningGraph, organizationId: string): ProvisioningOps
   return {
     findUser: (upn) => findUserByUpn(g.graph, upn),
     createUser: (body) => createUser(g.graph, body) as Promise<{ id: string }>,
-    setUsageLocation: (userId, loc) => setUsageLocation(g.graph, userId, loc),
+    patchUser: (userId, patch) => patchUser(g.graph, userId, patch),
     currentLicenses: (userId) => userLicenseSkuIds(g.graph, userId),
     assignLicenses: (userId, skuIds) => assignLicenses(g.graph, userId, skuIds),
     // The graph endpoint comes from the same cloud_environments row the client was built from,

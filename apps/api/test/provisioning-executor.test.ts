@@ -374,20 +374,58 @@ describe('usageLocation is set before licences are assigned', () => {
   // null usageLocation, so a retry ADOPTS it — and adoption skips createUser entirely. Without
   // this, the retry would fail at assign_licenses exactly as the first run did, forever.
   it('back-fills usageLocation when adopting an existing user that has none', async () => {
-    const patched: Array<{ id: string; loc: string }> = [];
+    const patched: Array<{ id: string; patch: any }> = [];
     await executePlan(planWithLoc, ops({
       findUser: async () => ({ id: 'existing', userPrincipalName: plan.upn, usageLocation: null }),
-      setUsageLocation: async (id: string, loc: string) => { patched.push({ id, loc }); },
+      patchUser: async (id: string, patch: any) => { patched.push({ id, patch }); },
     } as any));
-    expect(patched).toEqual([{ id: 'existing', loc: 'US' }]);
+    expect(patched).toEqual([{ id: 'existing', patch: { usageLocation: 'US' } }]);
   });
 
   it('does not re-patch a user that already has the right usageLocation', async () => {
     let calls = 0;
     await executePlan(planWithLoc, ops({
       findUser: async () => ({ id: 'existing', userPrincipalName: plan.upn, usageLocation: 'US' }),
-      setUsageLocation: async () => { calls += 1; },
+      patchUser: async () => { calls += 1; },
     } as any));
     expect(calls).toBe(0);
+  });
+});
+
+describe('given name and surname reach Graph', () => {
+  const named: Plan = {
+    ...plan,
+    steps: plan.steps.map((s) => s.key === 'create_user'
+      ? { ...s, detail: { ...s.detail, givenName: 'Ada', surname: 'Lovelace', usageLocation: 'US' } } : s),
+  };
+
+  it('sets them on a newly created user', async () => {
+    let body: any = null;
+    await executePlan(named, ops({ createUser: async (b: any) => { body = b; return { id: 'u1' }; } }));
+    expect(body.givenName).toBe('Ada');
+    expect(body.surname).toBe('Lovelace');
+  });
+
+  it('back-fills them on an adopted account that has none', async () => {
+    const patches: any[] = [];
+    await executePlan(named, ops({
+      findUser: async () => ({ id: 'existing', userPrincipalName: plan.upn, usageLocation: 'US' }),
+      patchUser: async (_id: string, patch: any) => { patches.push(patch); },
+    } as any));
+    expect(patches).toEqual([{ givenName: 'Ada', surname: 'Lovelace' }]);
+  });
+
+  // NEVER overwrite a real person's directory record. findUser matches any account with that UPN,
+  // not only one this engine made, so adoption must fill gaps and nothing more.
+  it('does not overwrite names that already exist on an adopted account', async () => {
+    const patches: any[] = [];
+    await executePlan(named, ops({
+      findUser: async () => ({
+        id: 'existing', userPrincipalName: plan.upn, usageLocation: 'US',
+        givenName: 'Augusta', surname: 'King',
+      }),
+      patchUser: async (_id: string, patch: any) => { patches.push(patch); },
+    } as any));
+    expect(patches).toEqual([]);
   });
 });

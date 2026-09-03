@@ -399,3 +399,27 @@ describe('Cloud PC licence is conditional, like the Cloud PC itself', () => {
     expect(p.blockers).toEqual([]);
   });
 });
+
+// Noticed in the Entra portal after the first successful run: the created account had a display
+// name but EMPTY First name and Last name. Not cosmetic — offboarding's nameParts() prefers
+// givenName/surname and otherwise GUESSES by splitting displayName, returning null (a blocker)
+// when it cannot. So every account this engine created forced that guess downstream, while the
+// planner held the exact names the whole time.
+describe('create_user carries the real given name and surname', () => {
+  it('passes givenName and surname, not just a display name', () => {
+    const p = planRun({ ...base });
+    const step = p.steps.find((s) => s.key === 'create_user')!;
+    expect(step.detail.givenName).toBe('Ada');
+    expect(step.detail.surname).toBe('Lovelace');
+    expect(step.detail.displayName).toBe('Ada Lovelace');
+  });
+
+  // givenName tracks whatever the display name uses, so the GAL and the directory field agree.
+  it('uses the preferred first name when there is one, matching displayName', () => {
+    const p = planRun({ ...base, answers: { ...answers, preferred_first_name: 'Addy' } });
+    const step = p.steps.find((s) => s.key === 'create_user')!;
+    expect(step.detail.givenName).toBe('Addy');
+    expect(step.detail.displayName).toBe('Addy Lovelace');
+    expect(step.detail.surname).toBe('Lovelace');
+  });
+});
