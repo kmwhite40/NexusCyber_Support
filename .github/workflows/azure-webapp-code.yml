@@ -19,11 +19,20 @@ name: Deploy Web (Code) to Azure Gov App Service
 
 on:
   workflow_dispatch:
-  # The OIDC federated credential on the 'anchor-gha' app is scoped to this branch
-  # (repo:...:ref:refs/heads/feat/nexus-platform), so the deploy must run from here — not
-  # main. Web changes auto-deploy; editing this workflow does not (kept out of paths).
+  # BOTH branches deploy during the move to main, on purpose.
+  #
+  # The 'anchor-gha' app now carries two federated credentials — 'github-feat'
+  # (refs/heads/feat/nexus-platform) and 'github-main' (refs/heads/main) — so either branch can
+  # authenticate. Adding the main credential rather than replacing the feat one means a mistake
+  # in this transition cannot leave the web app undeployable: the old path still works.
+  #
+  # Once a deploy from main has actually succeeded, drop 'feat/nexus-platform' from this list and
+  # delete the 'github-feat' credential. Two deploying branches is the ambiguity this change
+  # exists to remove — it is temporary, not the destination.
+  #
+  # Web changes auto-deploy; editing this workflow does not (kept out of paths).
   push:
-    branches: [feat/nexus-platform]
+    branches: [main, feat/nexus-platform]
     paths: ['apps/web/**']
 
 permissions:
