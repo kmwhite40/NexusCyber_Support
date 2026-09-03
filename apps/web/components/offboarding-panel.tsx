@@ -44,6 +44,7 @@ function runTone(status: string): { tone: 'brand' | 'warning' | 'success' | 'dan
     case 'running': return { tone: 'brand', label: 'Running' };
     case 'needs_review': return { tone: 'warning', label: 'Needs review' };
     case 'succeeded': return { tone: 'success', label: 'Succeeded' };
+    case 'cancelled': return { tone: 'neutral', label: 'Cancelled' };
     case 'failed': return { tone: 'danger', label: 'Failed' };
     default: return { tone: 'neutral', label: status };
   }
@@ -139,8 +140,21 @@ export function OffboardingPanel({ ticketId, canOffboard }: { ticketId: string; 
     setCancelling(true);
     setCancelError(null);
     try {
-      await api.post(`/tickets/${ticketId}/offboarding/cancel`, { reason: cancelReason });
-      setCancelReason('');
+      const res = await api.post<{ data: { cancelled: number } }>(
+        `/tickets/${ticketId}/offboarding/cancel`, { reason: cancelReason },
+      );
+      // cancelled: 0 means the run had already fired — the endpoint only touches runs still
+      // 'scheduled'. Saying nothing here let a tech believe the termination was called back
+      // while the account was already disabled and renamed. That is the worst thing this panel
+      // could get wrong, so it is said plainly.
+      if (res.data.cancelled === 0) {
+        setCancelError('Nothing to cancel — this run had already started. The account may already be disabled; check the run status below.');
+      } else {
+        setCancelReason('');
+        // The armed banner describes a run that no longer exists; clearing it also brings the
+        // Preview control back, which is otherwise hidden while `armed` is set.
+        setArmed(null);
+      }
       loadRuns();
     } catch (e) {
       setCancelError(e instanceof ApiError ? e.detail : 'Could not cancel the scheduled run.');

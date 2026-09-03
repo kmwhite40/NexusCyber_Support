@@ -164,3 +164,36 @@ describe('OffboardingPanel — cancelling an armed run', () => {
     expect(screen.queryByRole('button', { name: /cancel run/i })).not.toBeInTheDocument();
   });
 });
+
+describe('OffboardingPanel — cancel must not lie', () => {
+  const scheduledRun = {
+    data: [{
+      id: 'run-1', status: 'scheduled', error: null,
+      scheduled_for: '2099-01-01T09:00:00.000Z', started_at: null, finished_at: null, steps: [],
+    }],
+    offboardingEnabled: true,
+  };
+
+  it('says so when there was nothing left to cancel', async () => {
+    // The run had already fired. The request returns 200 with cancelled:0 — and the panel used
+    // to clear the box and show nothing, so the tech believed the termination was called back
+    // while the account was already disabled and renamed.
+    mockedApi.get.mockResolvedValue(scheduledRun);
+    mockedApi.post.mockResolvedValue({ data: { cancelled: 0 } });
+    render(<OffboardingPanel ticketId="T-1" canOffboard />);
+    const reason = await screen.findByPlaceholderText(/why/i);
+    await userEvent.type(reason, 'changed my mind');
+    await userEvent.click(screen.getByRole('button', { name: /cancel run/i }));
+    expect(await screen.findByText(/nothing to cancel|already/i)).toBeInTheDocument();
+  });
+
+  it('renders the cancelled status as a real label, not a raw token', async () => {
+    mockedApi.get.mockResolvedValue({
+      data: [{ id: 'run-1', status: 'cancelled', error: 'cancelled: start date moved',
+               scheduled_for: null, started_at: null, finished_at: null, steps: [] }],
+      offboardingEnabled: true,
+    });
+    render(<OffboardingPanel ticketId="T-1" canOffboard />);
+    expect(await screen.findByText('Cancelled')).toBeInTheDocument();
+  });
+});

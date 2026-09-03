@@ -257,3 +257,19 @@ describe('the retention hold follows the disable, not the full run', () => {
     expect(h.recordHold).not.toHaveBeenCalled();
   });
 });
+
+describe('the drift failure message says what actually happened', () => {
+  it('does not claim the account is unsecured when only session revocation failed', async () => {
+    // "the account could not be secured" while block_signin SUCCEEDED tells the desk the account
+    // is still enabled when it is disabled — and a retention hold has already been recorded
+    // against it. The opposite of the mistake, and just as misleading.
+    h.setDbRows(dueRun('stale-fingerprint'));
+    h.ops.revokeSessions.mockRejectedValueOnce(new Error('graph 503'));
+    await sweepDueOffboardings(new Date('2026-09-05T21:00:00Z'));
+    const final = h.queries.filter((q) => /SET status = \$2/.test(q.text)).pop()!;
+    const msg = String(final.params[2]);
+    expect(msg).toMatch(/sign-in was blocked/i);
+    expect(msg).toMatch(/revoke_sessions/);
+    expect(msg).not.toMatch(/could not be secured/i);
+  });
+});
