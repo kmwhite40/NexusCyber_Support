@@ -65,7 +65,7 @@ export async function getStatus(actor: Principal, organizationId: string) {
       [organizationId],
     );
     const runs = (await sql.query(
-      `SELECT started_at, finished_at, created_count, updated_count, retired_count, status, error
+      `SELECT id, started_at, finished_at, created_count, updated_count, retired_count, status, error
          FROM integration_sync_runs
         WHERE organization_id=$1 AND provider='entra_graph'
         ORDER BY started_at DESC LIMIT 10`,
@@ -136,6 +136,14 @@ export async function testConnection(actor: Principal, organizationId: string) {
 /** Manual on-demand sync for one org. */
 export async function triggerSync(actor: Principal, organizationId: string) {
   authorize(actor, PERM, { organizationId });
+  // runOneOrg only loads ENABLED integrations, so a disabled org would surface as a bare Error
+  // and a 500. The state is a normal one an admin can fix, so say so as a 400.
+  const enabled = await withSystemContext(async (sql) => (await sql.query(
+    `SELECT enabled FROM org_integrations WHERE organization_id=$1 AND provider='entra_graph'`,
+    [organizationId],
+  )).rows[0]?.enabled as boolean | undefined);
+  if (enabled === undefined) throw Errors.notFound('integration not configured');
+  if (!enabled) throw Errors.badRequest('sync is disabled for this organization; enable it first');
   const stats = await runOneOrg(organizationId);
   await audit(actor, {
     action: 'integration.entra.sync', organizationId,

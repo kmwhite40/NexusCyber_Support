@@ -33,6 +33,7 @@ const NEXUS_NAV: NavItem[] = [
   { href: '/billing', label: 'Billing', icon: <IconReceipt />, anyPerm: ['org.manage'], section: 'Operations' },
   { href: '/team', label: 'Platform users', icon: <IconUsers />, anyPerm: ['admin.users.manage'], section: 'Operations' },
   { href: '/channels', label: 'Channels', icon: <IconPlug />, anyPerm: ['channel.read', 'channel.manage'], section: 'Operations' },
+  { href: '/integrations', label: 'Integrations', icon: <IconPlug />, anyPerm: ['integration.credentials.manage'], section: 'Operations' },
   { href: '/automations', label: 'Automations', icon: <IconRobot />, anyPerm: ['automation.author'], section: 'Operations' },
   // Insights
   { href: '/dashboards', label: 'Dashboards', icon: <IconGauge />, anyPerm: ['dashboard.read'], section: 'Insights' },
