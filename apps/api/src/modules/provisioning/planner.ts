@@ -18,6 +18,14 @@ export interface PlanInput {
   tenant: TenantState;
   upnDomain: string;
   baselineSkus: string[];
+  /**
+   * The Windows 365 SKU, assigned ONLY when the request asks for a Cloud PC.
+   *
+   * Deliberately not part of baselineSkus: a Cloud PC is not part of everyone's onboarding, and
+   * an unconditional W365 licence charges a scarce, expensive seat to every hire — then blocks
+   * the next one with no_seats for a licence they were never meant to receive.
+   */
+  cloudPcSku?: string;
   existingUser: { id: string; userPrincipalName: string } | null;
   existingRoleCount: number;
 }
@@ -78,7 +86,7 @@ export function deriveUpn(answers: Record<string, unknown>, upnDomain: string): 
 }
 
 export function planRun(input: PlanInput): Plan {
-  const { answers, tenant, upnDomain, baselineSkus, existingUser, existingRoleCount } = input;
+  const { answers, tenant, upnDomain, baselineSkus, cloudPcSku, existingUser, existingRoleCount } = input;
   const blockers: Blocker[] = [];
   const upn = deriveUpn(answers, upnDomain);
   const first = str(answers.preferred_first_name) || str(answers.legal_first_name);
@@ -154,6 +162,25 @@ export function planRun(input: PlanInput): Plan {
     if (!policy) blockers.push({ code: 'policy_missing', message: `Cloud PC policy "${policyName}" was not found.` });
     else if (policy.groupIds.length === 0) blockers.push({ code: 'policy_unassigned', message: `Cloud PC policy "${policyName}" has no assignment group.` });
     else policyGroupId = policy.groupIds[0];
+  }
+
+  // The Cloud PC licence is resolved HERE, after policyGroupId, because it is conditional on the
+  // very same answer. The licence must be in skuIds before assign_cloudpc adds the account to the
+  // policy group — a Cloud PC materializes only for a licensed member, and the reverse order
+  // produces an account that sits in the group forever with nothing ever building.
+  if (policyGroupId) {
+    if (!cloudPcSku) {
+      blockers.push({
+        code: 'cloudpc_sku_unconfigured',
+        message: 'A Cloud PC was requested but M365_PROV_CLOUDPC_SKU is not configured. '
+          + 'An unlicensed account added to the Cloud PC policy group never builds a Cloud PC.',
+      });
+    } else {
+      const sku = tenant.skus.find((s) => normalizeForMatch(s.skuPartNumber) === normalizeForMatch(cloudPcSku));
+      if (!sku) blockers.push({ code: 'sku_missing', message: `License ${cloudPcSku} is not present in the tenant.` });
+      else if (sku.enabled - sku.consumed <= 0) blockers.push({ code: 'no_seats', message: `No seats remaining for ${cloudPcSku}.` });
+      else skuIds.push(sku.skuId);
+    }
   }
 
   const steps: PlanStep[] = [

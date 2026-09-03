@@ -99,6 +99,12 @@ export interface ProvisioningConfig {
   baselineSkus: string[];
   cloudPcPolicy: string;
   /**
+   * Windows 365 SKU, assigned ONLY to hires whose request asks for a Cloud PC. Separate from
+   * baselineSkus because a Cloud PC is not part of everyone's onboarding: an unconditional W365
+   * licence spends a scarce seat on every hire and then blocks the next one with no_seats.
+   */
+  cloudPcSku: string;
+  /**
    * Graph API version for the `/deviceManagement/virtualEndpoint/*` family (Cloud PC status
    * lookups). Whether GCC High specifically requires `beta` there vs `v1.0` is an open item in
    * the onboarding-provisioning spec — unverified against the real SBS tenant — so this is a
@@ -176,6 +182,7 @@ export function parseProvisioningConfig(env: NodeJS.ProcessEnv): ProvisioningCon
     cloud: (env.M365_PROV_CLOUD as M365Cloud) ?? 'gcchigh',
     upnDomain, baselineSkus,
     cloudPcPolicy: env.M365_PROV_CLOUDPC_POLICY ?? 'SBSFederal Cloud PC',
+    cloudPcSku: env.M365_PROV_CLOUDPC_SKU ?? '',
     cloudPcApiVersion,
     offboardingEnabled,
   };

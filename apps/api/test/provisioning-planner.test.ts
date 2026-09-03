@@ -5,6 +5,7 @@ const tenant = {
   skus: [
     { skuId: 'e3', skuPartNumber: 'SPE_E3_USGOV_GCCHIGH', enabled: 10, consumed: 2 },
     { skuId: 'mde', skuPartNumber: 'MDATP_XPLAT', enabled: 10, consumed: 2 },
+    { skuId: 'w365', skuPartNumber: 'CPC_FIXTURE_SKU', enabled: 10, consumed: 8 },
   ],
   policies: [{ id: 'p1', displayName: 'SBSFederal Cloud PC', groupIds: ['g-cloudpc'] }],
 };
@@ -18,6 +19,7 @@ const answers = {
 const base = {
   answers, tenant, upnDomain: 'sbsfederal.com',
   baselineSkus: ['SPE_E3_USGOV_GCCHIGH', 'MDATP_XPLAT'],
+  cloudPcSku: 'CPC_FIXTURE_SKU',
   existingUser: null, existingRoleCount: 0,
 };
 
@@ -226,7 +228,10 @@ describe('an empty licence baseline', () => {
   });
 
   it('still plans zero licences — the blocker is the only thing standing between it and a run', () => {
-    const plan = planRun({ ...base, baselineSkus: [] });
+    // cloudPcSku is cleared too, so this isolates the BASELINE being empty. With it set, the
+    // conditional Cloud PC licence would legitimately resolve and the list would not be empty —
+    // a different concern, covered by its own suite.
+    const plan = planRun({ ...base, baselineSkus: [], cloudPcSku: '' });
     expect(plan.steps.find((s) => s.key === 'assign_licenses')?.detail.skuIds).toEqual([]);
     // ...and the Cloud PC step is still there, which is exactly why the blocker has to be.
     expect(plan.steps.map((s) => s.key)).toContain('assign_cloudpc');
@@ -345,4 +350,52 @@ describe('planFingerprint', () => {
     expect(step!.detail.willSkip).toBeFalsy();
   });
 
+});
+
+// A Cloud PC is NOT part of everyone's onboarding — confirmed with the operator. That makes the
+// Windows 365 licence conditional in exactly the way the Cloud PC group membership already was.
+// Keeping it in the unconditional baseline charged a scarce, expensive seat to every hire (the
+// tenant has 2 free), and would block hire number three with no_seats for a licence they were
+// never meant to get.
+describe('Cloud PC licence is conditional, like the Cloud PC itself', () => {
+  const exhausted = {
+    ...tenant,
+    skus: tenant.skus.map((s) => (s.skuId === 'w365' ? { ...s, consumed: 10 } : s)),
+  };
+  const noCloudPc = { ...answers, cloud_pc_policy: '' };
+
+  it('does not consume a Windows 365 seat when no Cloud PC was requested', () => {
+    const p = planRun({
+      ...base, answers: noCloudPc,
+    });
+    const lic = p.steps.find((s) => s.key === 'assign_licenses')!;
+    expect(lic.detail.skuIds).toEqual(['e3', 'mde']);
+    expect(p.steps.some((s) => s.key === 'assign_cloudpc')).toBe(false);
+  });
+
+  it('adds the Windows 365 licence when a Cloud PC IS requested', () => {
+    const p = planRun({ ...base });
+    const lic = p.steps.find((s) => s.key === 'assign_licenses')!;
+    expect(lic.detail.skuIds).toEqual(['e3', 'mde', 'w365']);
+    expect(p.steps.some((s) => s.key === 'assign_cloudpc')).toBe(true);
+  });
+
+  // The ordering hazard, from the other side: a Cloud PC requested with no licence to give it
+  // must FAIL THE DRY RUN, never proceed to put an unlicensed account in the policy group.
+  it('blocks when a Cloud PC is requested but no Windows 365 SKU is configured', () => {
+    const p = planRun({ ...base, cloudPcSku: '' });
+    expect(p.blockers.map((b) => b.code)).toContain('cloudpc_sku_unconfigured');
+  });
+
+  it('blocks when the Windows 365 pool is exhausted', () => {
+    const p = planRun({ ...base, tenant: exhausted });
+    expect(p.blockers.map((b) => b.code)).toContain('no_seats');
+  });
+
+  // Seats are only checked for what will actually be assigned. An exhausted W365 pool must not
+  // block a hire who is not getting a Cloud PC at all.
+  it('ignores an exhausted Windows 365 pool when no Cloud PC was requested', () => {
+    const p = planRun({ ...base, answers: noCloudPc, tenant: exhausted });
+    expect(p.blockers).toEqual([]);
+  });
 });

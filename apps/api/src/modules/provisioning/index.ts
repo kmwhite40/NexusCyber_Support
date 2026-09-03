@@ -305,6 +305,7 @@ async function buildPlan(actor: Principal, ticketId: string): Promise<{ plan: Pl
     tenant,
     upnDomain: config.provisioning.upnDomain,
     baselineSkus: config.provisioning.baselineSkus,
+    cloudPcSku: config.provisioning.cloudPcSku,
     existingUser,
     existingRoleCount,
   });
