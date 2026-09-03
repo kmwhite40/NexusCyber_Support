@@ -600,6 +600,18 @@ async function run() {
           step('deliver', 'Deliver / ship and confirm receipt', 'Tier1'),
         ],
       },
+      {
+        key: 'security.retention_review', name: 'Account retention review', category: 'Security',
+        description: 'Review a departed account whose retention obligation has expired, or which disappeared before it should have.',
+        ticket_type: 'service_request', owning_tier: 'Tier2', escalates_to: null,
+        requires_approval: true, approver_hint: 'Security', default_priority: 'P3',
+        security_class: 'standard', sla_response_min: 480, sla_resolution_min: 2880,
+        steps: [
+          step('verify', 'Verify the account state against the hold record', 'Tier2'),
+          step('decide', 'Decide disposition and record the reason', 'Tier2'),
+          step('close', 'Close the hold', 'Tier2'),
+        ],
+      },
     ];
 
     for (const item of catalog) {
