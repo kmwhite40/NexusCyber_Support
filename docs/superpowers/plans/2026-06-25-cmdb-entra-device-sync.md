@@ -12,6 +12,24 @@
 
 ---
 
+## Drift check — 2026-09-02
+
+Re-validated before execution, two months after it was written. **Still cleanly applicable:**
+nothing this plan builds has been built since — no `org_integrations`, no
+`integration_sync_runs`, none of the `configuration_items` provenance columns. `0051_anchor_integration`
+turned out to be API keys and outbound webhooks, with no overlap on per-customer Entra credentials.
+The conventions below (ESM `.js` imports, `withSystemContext`/`withOrgContext`, `authorize`/`audit`/
+`Errors`, port 5544) all still hold.
+
+**One correction applied:** the migration numbers. See the Conventions note.
+
+**One thing to settle BEFORE executing**, learned the hard way on the offboarding phases: run
+`scripts/probe-tenant-followups.sh` first. Its probe 3 answers whether
+`/deviceManagement/managedDevices` is reachable in this tenant and whether any devices are
+actually enrolled. If nothing is enrolled, this entire plan populates an empty CMDB and the
+phase-3 asset-return checklist it exists to feed would be empty for every departure. That is a
+cheap question to answer and an expensive one to discover afterwards.
+
 ## Conventions (read before starting)
 
 - All API code lives in `apps/api/src`. **ESM imports MUST use the `.js` extension** (e.g. `import { config } from '../config.js'`), even for `.ts` source — this repo compiles ESM.
@@ -20,7 +38,7 @@
 - Audit: `audit(actor, { action, organizationId, resourceType, resourceId, detail })`.
 - Errors: `Errors.badRequest(msg)`, `Errors.notFound(msg)`.
 - Tests live in `apps/api/test/*.test.ts` and import source via `../src/...js`. Run with `npm test` (Vitest) from `apps/api`.
-- Migrations: sequential SQL files in `apps/api/src/db/migrations/`. The next free numbers are `0049`, `0050`… Run with `npm run migrate` from `apps/api` (needs `--env-file ../../.env` in dev — the dev DB is on host port 5544).
+- Migrations: sequential SQL files in `apps/api/src/db/migrations/`. **The next free number is `0070`** — this plan was written in June when it was `0049`, and the tree has since reached `0069`. Creating `0049` now would sort BEFORE two dozen migrations it depends on nothing of, and would never run on any existing database (they are all past it). Run with `npm run migrate` from `apps/api` (needs `--env-file ../../.env` in dev — the dev DB is on host port 5544).
 - Routes: register inside the route-builder in `apps/api/src/http/routes.ts`. Each handler does `const p = await requirePrincipal(req);` then validates `req.body`/`req.params` with `zod`.
 
 ---
@@ -28,7 +46,7 @@
 ## File Structure
 
 **Create:**
-- `apps/api/src/db/migrations/0049_org_integrations.sql` — `org_integrations`, `integration_sync_runs`, `configuration_items` columns, RLS, grants.
+- `apps/api/src/db/migrations/0070_org_integrations.sql` — `org_integrations`, `integration_sync_runs`, `configuration_items` columns, RLS, grants.
 - `apps/api/src/integrations/entra/crypto.ts` — AES-256-GCM envelope seal/open (pure).
 - `apps/api/src/integrations/entra/device-map.ts` — `mapManagedDevice`, `planRetirements` (pure).
 - `apps/api/src/integrations/entra/graph.ts` — per-org Graph client factory + `enumerateManagedDevices`.
@@ -49,7 +67,7 @@
 ## Task 1: Migration — schema for credentials, sync runs, and CI provenance
 
 **Files:**
-- Create: `apps/api/src/db/migrations/0049_org_integrations.sql`
+- Create: `apps/api/src/db/migrations/0070_org_integrations.sql`
 
 - [ ] **Step 1: Write the migration**
 
@@ -121,12 +139,12 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON integration_sync_runs TO nexus_app;
 - [ ] **Step 2: Run the migration**
 
 Run: `cd apps/api && npm run migrate -- --env-file ../../.env`
-Expected: applies `0049_org_integrations` with no error; re-running is a no-op (idempotent `IF NOT EXISTS`).
+Expected: applies `0070_org_integrations` with no error; re-running is a no-op (idempotent `IF NOT EXISTS`).
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add apps/api/src/db/migrations/0049_org_integrations.sql
+git add apps/api/src/db/migrations/0070_org_integrations.sql
 git commit -m "feat(db): org_integrations, sync-run history, CI provenance columns"
 ```
 
