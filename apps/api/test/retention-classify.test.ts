@@ -89,3 +89,37 @@ describe('retainUntil', () => {
     expect(input.toISOString()).toBe('2026-09-02T12:00:00.000Z');
   });
 });
+
+// "Any evidence of privilege ever" means privilege they HELD. A request that was refused is
+// evidence of the opposite, and counting it produced a seven-year federal record for someone who
+// was told no — contradicting the rationale written directly above the function.
+describe('classifyRetention — a refused request is not privilege', () => {
+  const grant = (status: string) => ({
+    ...none, elevationGrants: [{ status, break_glass: false, granted_permissions: ['admin.superuser'] }],
+  });
+
+  it('does NOT count a rejected elevation request', () => {
+    expect(classifyRetention(grant('rejected')).retentionClass).toBe('standard');
+  });
+
+  it('does NOT count an elevation request still awaiting a decision', () => {
+    expect(classifyRetention(grant('requested')).retentionClass).toBe('standard');
+  });
+
+  it('DOES count active, expired and revoked — privilege that was actually held', () => {
+    for (const status of ['active', 'expired', 'revoked']) {
+      expect(classifyRetention(grant(status)).retentionClass).toBe('privileged');
+    }
+  });
+
+  it('records only the grants that counted, so the basis explains the decision', () => {
+    const c = classifyRetention({
+      ...none,
+      elevationGrants: [
+        { status: 'rejected', break_glass: false, granted_permissions: ['a'] },
+        { status: 'expired', break_glass: false, granted_permissions: ['b'] },
+      ],
+    });
+    expect((c.basis.elevationGrants as unknown[]).length).toBe(1);
+  });
+});

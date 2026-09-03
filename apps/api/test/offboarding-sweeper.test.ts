@@ -35,6 +35,7 @@ const h = vi.hoisted(() => {
     withSystemContext: vi.fn(async (fn: any) => fn(sql)),
     readOffboardTenantState: vi.fn(),
     buildOffboardOps: vi.fn(async () => ops),
+    recordHold: vi.fn(async () => ({ holdId: 'hold-1', retentionClass: 'standard' })),
   };
 });
 
@@ -43,6 +44,7 @@ vi.mock('../src/modules/offboarding/index.js', () => ({
   readOffboardTenantState: h.readOffboardTenantState,
   buildOffboardOps: h.buildOffboardOps,
 }));
+vi.mock('../src/modules/retention/index.js', () => ({ recordHold: h.recordHold }));
 
 const { sweepDueOffboardings } = await import('../src/jobs/offboarding-sweeper.js');
 const { planOffboard, offboardFingerprint } = await import('../src/modules/offboarding/planner.js');
@@ -81,6 +83,7 @@ beforeEach(() => {
   h.withSystemContext.mockImplementation(async (fn: any) => fn(h.sql));
   h.readOffboardTenantState.mockImplementation(async () => STATE);
   h.buildOffboardOps.mockImplementation(async () => h.ops);
+  h.recordHold.mockImplementation(async () => ({ holdId: 'hold-1', retentionClass: 'standard' }));
   h.setDbRows(dueRun(approvedFingerprint()));
 });
 
@@ -221,5 +224,36 @@ describe('runs stranded in running', () => {
     await sweepDueOffboardings(new Date('2026-09-05T21:00:00Z'));
     expect(h.ops.blockSignin).not.toHaveBeenCalled();
     expect(h.ops.removeLicenses).not.toHaveBeenCalled();
+  });
+});
+
+// The retention obligation attaches to a DISABLED ACCOUNT, not to a fully completed run.
+// recordHold sat only on the 'succeeded' branch — but any licensed user's run halts at the manual
+// mailbox conversion and finishes 'needs_review', and nothing transitions needs_review ->
+// succeeded. So for the COMMON departure no hold was ever recorded and the compliance feature
+// silently did nothing.
+describe('the retention hold follows the disable, not the full run', () => {
+  const withMailbox = { ...STATE, mailboxType: 'user' as const, licenseSkuIds: ['sku-e3'] };
+
+  it('records a hold when the run halts at the manual mailbox step', async () => {
+    h.readOffboardTenantState.mockImplementation(async () => withMailbox);
+    h.setDbRows(dueRun(offboardFingerprint(planOffboard(withMailbox))));
+    const out = await sweepDueOffboardings(new Date('2026-09-05T21:00:00Z'));
+    expect(out.needsReview).toBe(1);
+    expect(h.recordHold).toHaveBeenCalled();
+  });
+
+  it('still records a hold on a fully completed run', async () => {
+    await sweepDueOffboardings(new Date('2026-09-05T21:00:00Z'));
+    expect(h.recordHold).toHaveBeenCalled();
+  });
+
+  it('does NOT record a hold when the account was never disabled', async () => {
+    // Drift halts everything, but if even block_signin failed there is no disabled account and
+    // therefore no obligation to record.
+    h.setDbRows(dueRun('stale'));
+    h.ops.blockSignin.mockRejectedValueOnce(new Error('graph 403'));
+    await sweepDueOffboardings(new Date('2026-09-05T21:00:00Z'));
+    expect(h.recordHold).not.toHaveBeenCalled();
   });
 });

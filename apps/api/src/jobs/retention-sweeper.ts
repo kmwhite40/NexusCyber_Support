@@ -15,6 +15,7 @@ import { getProvisioningGraph } from '../integrations/m365/provisioning-runtime.
 import { accountExists } from '../integrations/m365/provisioning-graph.js';
 import { nextTicketNumber } from '../modules/tickets.js';
 import { decideHold } from '../modules/retention/sweep-decision.js';
+import { publish } from '../events/bus.js';
 
 /** Bounded so one sweep cannot exhaust the Graph throttling budget on a large backlog. */
 const SWEEP_BATCH = 500;
@@ -43,7 +44,11 @@ export async function sweepRetentionHolds(now: Date = new Date()): Promise<{
               retention_class, retain_until, offboarded_at
          FROM retention_holds
         WHERE state = 'active'
-        ORDER BY retain_until
+        -- Rotate on last_checked_at, NOT on retain_until alone. Ordering by retain_until meant
+        -- that past SWEEP_BATCH the furthest-dated holds — the newest PRIVILEGED seven-year ones,
+        -- exactly the records that matter most — were never reached, while the sweep reported
+        -- zero unchecked. NULLS FIRST puts never-checked holds at the front.
+        ORDER BY last_checked_at ASC NULLS FIRST, retain_until ASC
         LIMIT ${SWEEP_BATCH}`,
     );
     return rows as HoldRow[];
@@ -55,9 +60,27 @@ export async function sweepRetentionHolds(now: Date = new Date()): Promise<{
   const g = await getProvisioningGraph();
 
   for (const hold of holds) {
-    const present = await accountExists(g.graph, hold.entra_object_id);
-    const outcome = decideHold(hold, present, now);
+    // Each hold is isolated: one that fails to write must not abort the sweep and leave every
+    // later hold unchecked while the run still reports success for the ones it reached.
+    try {
+      await sweepOne(hold, g.graph, now);
+    } catch (err) {
+      unchecked += 1;
+      logger.error({ err, holdId: hold.id, upn: hold.upn }, 'retention hold could not be swept');
+    }
+  }
+
+  if (unchecked > 0) {
+    // A retention system nobody notices has stopped is worse than none, because it is trusted.
+    logger.warn({ unchecked, checked }, 'retention sweep could not check some holds');
+  }
+  return { checked, breached, eligible, disposed, unchecked };
+
+  async function sweepOne(hold: HoldRow, graph: Parameters<typeof accountExists>[0], at: Date) {
+    const present = await accountExists(graph, hold.entra_object_id);
+    const outcome = decideHold(hold, present, at);
     checked += 1;
+    const now = at;
 
     switch (outcome.action) {
       case 'none':
@@ -72,8 +95,12 @@ export async function sweepRetentionHolds(now: Date = new Date()): Promise<{
 
       case 'breach':
         breached += 1;
-        await raiseTicket(hold, 'breach');
+        // State BEFORE ticket, deliberately. These are separate connections: if the ticket
+        // insert fails after the state write, we lose a ticket (loud — the state says breached
+        // with no ticket). If the state write failed after the ticket, we would raise the same
+        // breach ticket every day forever.
         await setState(hold, 'breached', now);
+        await raiseTicket(hold, 'breach');
         logger.error(
           { holdId: hold.id, upn: hold.upn, retainUntil: hold.retain_until, class: hold.retention_class },
           'RETENTION BREACH: a retained account no longer exists in the tenant',
@@ -82,8 +109,8 @@ export async function sweepRetentionHolds(now: Date = new Date()): Promise<{
 
       case 'eligible':
         eligible += 1;
-        await raiseTicket(hold, 'eligible');
         await setState(hold, 'eligible', now);
+        await raiseTicket(hold, 'eligible');
         break;
 
       case 'disposed':
@@ -93,12 +120,6 @@ export async function sweepRetentionHolds(now: Date = new Date()): Promise<{
         break;
     }
   }
-
-  if (unchecked > 0) {
-    // A retention system nobody notices has stopped is worse than none, because it is trusted.
-    logger.warn({ unchecked, checked }, 'retention sweep could not check some holds');
-  }
-  return { checked, breached, eligible, disposed, unchecked };
 }
 
 /** `state === null` means "only stamp last_checked_at" — the healthy, uneventful case. */
@@ -121,15 +142,26 @@ async function setState(hold: HoldRow, state: string | null, now: Date): Promise
 }
 
 /**
- * A ticket, not a notification: a notification is a thing to miss, a ticket is a thing to work,
- * and it inherits the SLA and audit machinery that already exists.
+ * A ticket, not a notification: a notification is a thing to miss, a ticket is a thing to work.
  *
  * Inserted directly rather than through createTicket() because a background job has no acting
- * principal — the same pattern as modules/posture.ts and integrations/m365/ingest.ts.
+ * principal — the same pattern as modules/posture.ts and integrations/m365/ingest.ts. That means
+ * the things createTicket would normally do have to be done HERE, explicitly:
+ *
+ *   - a resolution due date, so the ticket can breach an SLA rather than sit forever;
+ *   - a `ticket.created` publish, which is what actually drives desk notification and outbound
+ *     webhooks.
+ *
+ * Both were missing. A retention BREACH ticket that notifies nobody is close to useless: the
+ * whole feature exists to make someone aware, and it was quietly filing the news.
  */
 async function raiseTicket(hold: HoldRow, kind: 'breach' | 'eligible'): Promise<void> {
-  const until = String(hold.retain_until).slice(0, 10);
-  const offboarded = String(hold.offboarded_at).slice(0, 10);
+  let ticketId: string | null = null;
+  // pg returns timestamptz as a Date, and String(date).slice(0,10) yields "Wed Sep 02" — a
+  // date nobody can reconcile against a record. Normalise through toISOString().
+  const isoDay = (v: string | Date) => new Date(v).toISOString().slice(0, 10);
+  const until = isoDay(hold.retain_until);
+  const offboarded = isoDay(hold.offboarded_at);
 
   const subject = kind === 'breach'
     ? `Retention breach: ${hold.upn} was deleted before ${until}`
@@ -145,15 +177,46 @@ async function raiseTicket(hold: HoldRow, kind: 'breach' | 'eligible'): Promise<
       + `disposition. Nothing has been deleted automatically.`;
 
   await withSystemContext(async (sql: Sql) => {
-    const number = await nextTicketNumber(sql, hold.organization_id);
-    await sql.query(
-      `INSERT INTO tickets
-         (organization_id, ticket_number, type, category, source_channel, subject, description,
-          priority, status)
-       VALUES ($1,$2,'service_request','security.retention_review','system',$3,$4,$5,'triage')`,
-      [hold.organization_id, number, subject, description, kind === 'breach' ? 'P2' : 'P3'],
-    );
+    // EXPLICIT TRANSACTION, and it is load-bearing. nextTicketNumber takes
+    // pg_advisory_xact_lock, which is released the moment its transaction ends — and
+    // withSystemContext opens no transaction of its own. Without this BEGIN the lock is dropped
+    // before the INSERT, reintroducing the duplicate ticket-number race that 708b7ff fixed in
+    // ingest.ts by adding exactly this.
+    await sql.query('BEGIN');
+    try {
+      const number = await nextTicketNumber(sql, hold.organization_id);
+      // A breach needs attention today; an expiry is routine. The catalog item's own SLA is
+      // 8h/48h — these mirror it rather than inventing a second policy.
+      const resolutionHours = kind === 'breach' ? 8 : 48;
+      const { rows } = await sql.query(
+        `INSERT INTO tickets
+           (organization_id, ticket_number, type, category, source_channel, subject, description,
+            priority, status, resolution_due_at)
+         VALUES ($1,$2,'service_request','security.retention_review','system',$3,$4,$5,'triage',
+                 now() + ($6 || ' hours')::interval)
+         RETURNING id`,
+        [hold.organization_id, number, subject, description,
+          kind === 'breach' ? 'P2' : 'P3', String(resolutionHours)],
+      );
+      ticketId = rows[0]?.id as string | undefined ?? null;
+      await sql.query('COMMIT');
+    } catch (err) {
+      await sql.query('ROLLBACK');
+      throw err;
+    }
   });
+
+  // AFTER the commit, never inside it: publishing from within the transaction would announce a
+  // ticket that a later rollback erased.
+  if (ticketId) {
+    publish('ticket.created', hold.organization_id, {
+      ticket_id: ticketId,
+      org_id: hold.organization_id,
+      type: 'service_request',
+      priority: kind === 'breach' ? 'P2' : 'P3',
+      channel: 'retention',
+    });
+  }
 }
 
 /**
@@ -171,5 +234,10 @@ export function startRetentionSweeper(intervalMs = 24 * 60 * 60 * 1000): NodeJS.
       logger.error({ err }, 'retention sweep tick failed');
     }
   };
+  // PRIME an early first run. setInterval alone means the first sweep is a full day after boot
+  // AND the timer restarts on every deploy — on a frequently redeployed API the daily sweep may
+  // never fire at all, while looking scheduled. retention-purge.ts and sla-sweeper.ts both prime
+  // for the same reason. A minute's delay keeps it clear of the boot storm.
+  setTimeout(tick, 60_000).unref?.();
   return setInterval(tick, intervalMs);
 }

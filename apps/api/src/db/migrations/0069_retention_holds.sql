@@ -70,7 +70,7 @@ VALUES
   ('security.retention_review', 'Account retention review', 'Security',
    'Review a departed account whose retention obligation has expired, or which disappeared before it should have.',
    'service_request', 'Tier2', true, 'Security', 'P3', 'standard', 480, 2880,
-   '[{"key":"verify","label":"Verify the account state against the hold record","tier":"Tier2"},
-     {"key":"decide","label":"Decide disposition and record the reason","tier":"Tier2"},
-     {"key":"close","label":"Close the hold","tier":"Tier2"}]'::jsonb)
+   '[{"key":"verify","label":"Verify the account state against the hold record","role":"Tier2","automatable":false},
+     {"key":"decide","label":"Decide disposition and record the reason","role":"Tier2","automatable":false},
+     {"key":"close","label":"Close the hold","role":"Tier2","automatable":false}]'::jsonb)
 ON CONFLICT (key) DO NOTHING;
