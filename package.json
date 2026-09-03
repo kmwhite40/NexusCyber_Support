@@ -13,6 +13,7 @@
     "dev:web": "npm --workspace apps/web run dev",
     "build": "npm --workspace apps/api run build && npm --workspace apps/web run build",
     "typecheck": "npm --workspace apps/api run typecheck && npm --workspace apps/web run typecheck",
+    "test": "npm --workspace apps/api run test && npm --workspace apps/web run test",
     "db:up": "docker compose up -d db",
     "db:migrate": "npm --workspace apps/api run migrate",
     "db:seed": "npm --workspace apps/api run seed",

@@ -9,7 +9,8 @@ import { logger } from '../logger.js';
 const here = dirname(fileURLToPath(import.meta.url));
 const migrationsDir = join(here, 'migrations');
 
-async function run() {
+/** Apply all pending migrations. Safe to call on API boot (in-boundary) or via CLI. */
+export async function migrate(): Promise<void> {
   await withSystemContext(async (sql) => {
     await sql.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -39,10 +40,15 @@ async function run() {
     }
   });
   logger.info('migrations complete');
-  process.exit(0);
 }
 
-run().catch((err) => {
-  logger.error({ err }, 'migration runner error');
-  process.exit(1);
-});
+// CLI entry: `node dist/db/migrate.js` runs migrations then exits. When imported
+// (e.g. migrate-on-boot in server.ts) this guard is false, so there's no side effect.
+if (process.argv[1]?.endsWith('migrate.js') || process.argv[1]?.endsWith('migrate.ts')) {
+  migrate()
+    .then(() => process.exit(0))
+    .catch((err) => {
+      logger.error({ err }, 'migration runner error');
+      process.exit(1);
+    });
+}

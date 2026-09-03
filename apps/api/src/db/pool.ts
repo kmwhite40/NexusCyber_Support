@@ -29,7 +29,9 @@ export interface OrgContext {
   plane: 'nexus' | 'customer';
   orgId: string | null;        // customer plane: the user's org
   assignedOrgs: string[];      // nexus plane: orgs the agent is scoped to
+  allOrgs?: boolean;           // nexus plane: granted ALL orgs (org-NULL role assignment)
   elevated: boolean;
+  superuser?: boolean;         // platform admin (admin.superuser): cross-org at the DB layer
 }
 
 export async function withOrgContext<T>(
@@ -46,6 +48,16 @@ export async function withOrgContext<T>(
     ]);
     await client.query(`SELECT set_config('app.elevated', $1, true)`, [
       ctx.elevated ? 'true' : 'false',
+    ]);
+    // All-orgs grant (nexus role assigned org-NULL): RLS grants cross-org access without
+    // requiring full platform-superuser. The principal's role still bounds their permissions.
+    await client.query(`SELECT set_config('app.all_orgs', $1, true)`, [
+      ctx.allOrgs ? 'true' : 'false',
+    ]);
+    // Platform superuser flag: RLS (app_is_nexus_in_scope) grants cross-org access when set,
+    // keeping the DB layer consistent with the PDP's admin.superuser cross-org rule.
+    await client.query(`SELECT set_config('app.superuser', $1, true)`, [
+      ctx.superuser ? 'true' : 'false',
     ]);
     const result = await fn(client);
     await client.query('COMMIT');

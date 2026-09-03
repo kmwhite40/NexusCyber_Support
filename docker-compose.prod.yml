@@ -1,0 +1,75 @@
+# Full-stack production-style deployment: Postgres + one-shot migrate/seed + API + Web.
+#
+#   docker compose -f docker-compose.prod.yml up --build
+#
+# Then: web -> http://localhost:3000, api -> http://localhost:4000
+# (NEXT_PUBLIC_API_BASE is baked into the web image at build time as the browser URL.)
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: nexus
+      POSTGRES_PASSWORD: nexus
+      POSTGRES_DB: nexus
+    volumes:
+      - nexus-pgdata-prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U nexus']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # One-shot: applies migrations then seeds, then exits 0. API waits for it.
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      DATABASE_URL: postgres://nexus:nexus@db:5432/nexus
+      APP_DATABASE_URL: postgres://nexus_app:nexus_app@db:5432/nexus
+    command: ['sh', '-c', 'node dist/db/migrate.js && node dist/db/seed.js']
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: 'no'
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      NODE_ENV: production
+      API_PORT: 4000
+      DATABASE_URL: postgres://nexus:nexus@db:5432/nexus
+      APP_DATABASE_URL: postgres://nexus_app:nexus_app@db:5432/nexus
+      SESSION_SIGNING_KEY: ${SESSION_SIGNING_KEY:-change-me-in-real-deployments}
+      WEB_ORIGIN: http://localhost:3000
+      ENCLAVE: ${ENCLAVE:-commercial}
+    ports:
+      - '4000:4000'
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:4000/readyz || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE: http://localhost:4000/api/v1
+    ports:
+      - '3000:3000'
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  nexus-pgdata-prod:

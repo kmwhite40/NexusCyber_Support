@@ -8,6 +8,7 @@ import { Card, CardHeader, CardTitle, CardBody, Button, Badge } from '@/componen
 import { StatCard, DataTable, EmptyState, Skeleton } from '@/components/ui/data';
 import { ScoreGauge, Sparkline, MiniBars } from '@/components/ui/charts';
 import { PriorityBadge, StatusBadge, SeverityBadge } from '@/components/ui/badges';
+import { Plus, ArrowRight } from 'lucide-react';
 
 export default function DashboardPage() {
   const { me, can } = useAuth();
@@ -49,13 +50,13 @@ export default function DashboardPage() {
           </p>
         </div>
         <Button onClick={() => router.push('/tickets/new')}>
-          <span className="text-base leading-none">+</span> New ticket
+          <Plus className="h-4 w-4" strokeWidth={1.75} /> New ticket
         </Button>
       </div>
 
       {/* Stat row */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Open tickets" value={tickets ? open.length : '—'} tone="brand" delta={{ value: '8%', positive: false }} icon={<Dot />} />
+        <StatCard label="Open tickets" value={tickets ? open.length : '—'} tone="brand" icon={<Dot />} />
         <StatCard label="SLA breaching" value={tickets ? breaching.length : '—'} tone="danger" icon={<Dot />} />
         <StatCard label="Posture score" value={score ? Math.round(score.overall_score) : can('posture.read') ? '—' : 'n/a'} tone="success" icon={<Dot />} />
         <StatCard label="Open findings" value={findings ? findings.filter((f) => !['remediated', 'closed', 'accepted'].includes(f.status)).length : '—'} tone="warning" icon={<Dot />} />
@@ -66,7 +67,7 @@ export default function DashboardPage() {
         <Card className="lg:col-span-2">
           <CardHeader className="flex items-center justify-between">
             <CardTitle>Recent tickets</CardTitle>
-            <Link href="/tickets" className="text-xs text-brand hover:underline">View all →</Link>
+            <Link href="/tickets" className="inline-flex items-center gap-1 text-xs text-brand hover:underline">View all <ArrowRight className="h-4 w-4" strokeWidth={1.75} /></Link>
           </CardHeader>
           <CardBody className="px-0">
             {!tickets ? (
@@ -106,9 +107,9 @@ export default function DashboardPage() {
                   <MiniBars
                     items={[
                       { label: 'Critical', value: sevCounts.critical ?? 0, color: 'hsl(var(--danger))' },
-                      { label: 'High', value: sevCounts.high ?? 0, color: 'hsl(var(--danger))' },
-                      { label: 'Moderate', value: sevCounts.moderate ?? 0, color: 'hsl(var(--warning))' },
-                      { label: 'Low', value: sevCounts.low ?? 0, color: 'hsl(var(--brand))' },
+                      { label: 'High', value: sevCounts.high ?? 0, color: 'hsl(var(--warning))' },
+                      { label: 'Moderate', value: sevCounts.moderate ?? 0, color: 'hsl(var(--accent))' },
+                      { label: 'Low', value: sevCounts.low ?? 0, color: 'hsl(var(--muted))' },
                     ]}
                   />
                 </div>
@@ -130,7 +131,7 @@ export default function DashboardPage() {
         <Card className="lg:col-span-2">
           <CardHeader className="flex items-center justify-between">
             <CardTitle>Top posture findings</CardTitle>
-            {can('posture.read') && <Link href="/posture" className="text-xs text-brand hover:underline">Open posture →</Link>}
+            {can('posture.read') && <Link href="/posture" className="inline-flex items-center gap-1 text-xs text-brand hover:underline">Open posture <ArrowRight className="h-4 w-4" strokeWidth={1.75} /></Link>}
           </CardHeader>
           <CardBody className="px-0">
             {!findings ? (

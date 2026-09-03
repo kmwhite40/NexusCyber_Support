@@ -8,6 +8,10 @@ import { audit } from './audit.js';
 import { publish } from '../events/bus.js';
 import { addBusinessMinutes } from './sla.js';
 import { Errors } from '../errors.js';
+import { getFormByCatalogKey, validateAgainstForm, mapFormAnswers, type MappedAnswers } from './forms.js';
+import { storeSensitiveWith } from './sensitive-fields.js';
+import { nextTicketNumber } from './tickets.js';
+import type { FormField } from './form-fields.js';
 import type { Principal } from '../types.js';
 
 export async function listCatalog() {
@@ -22,10 +26,39 @@ export async function listCatalog() {
   });
 }
 
+/** What `createRequest` persists for a form-backed request. */
+export interface RequestWrite {
+  mapped: MappedAnswers;
+  /** Exactly the object stringified into `tickets.custom_fields`. Contains no answer for a
+   *  `sensitive` field and none for a field the submitter cannot currently see. */
+  customFields: Record<string, unknown>;
+  /** Exactly the bag handed to `storeSensitiveWith` -> ticket_sensitive_fields. */
+  sensitive: Record<string, unknown>;
+}
+
+/** Pure: the whole persistence decision for a form-backed catalog request — the ticket
+ *  columns, the `custom_fields` blob, and the PII routed to `ticket_sensitive_fields`
+ *  instead. Extracted so the PII guarantee on the primary intake path is testable without
+ *  a database (mirrors `customFieldsFor`, which does the same job for `submitAnswers`). */
+export function planRequestWrite(
+  fields: FormField[],
+  answers: Record<string, unknown>,
+  formKey: string | null,
+  opts: { defaultRequesterId?: string | null } = {},
+): RequestWrite {
+  const mapped = mapFormAnswers(fields, answers, opts);
+  return {
+    mapped,
+    customFields: { ...mapped.customFields, _form: formKey },
+    sensitive: mapped.sensitive,
+  };
+}
+
 export interface CreateRequestInput {
   subject?: string;
   description?: string;
   organizationId?: string; // required for agent-created
+  answers?: Record<string, unknown>;
 }
 
 export async function createRequest(actor: Principal, key: string, input: CreateRequestInput) {
@@ -43,39 +76,68 @@ export async function createRequest(actor: Principal, key: string, input: Create
     return { item: it, grpId: (g?.id as string | undefined) ?? null };
   });
 
+  // If the catalog item has a custom form, validate + route its answers. planRequestWrite
+  // splits PII out of custom_fields and drops hidden-field answers; it is the same decision
+  // the tests assert on directly.
+  let write: RequestWrite | null = null;
+  if (item.form_key && input.answers) {
+    const form = await getFormByCatalogKey(actor, key);
+    if (form) {
+      const v = validateAgainstForm(form.fields, input.answers);
+      if (!v.ok) throw Errors.validation(v.errors.map((e) => e.message).join('; '));
+      write = planRequestWrite(form.fields, input.answers, item.form_key, {
+        defaultRequesterId: actor.plane === 'customer' ? actor.id : null,
+      });
+      // Require on-behalf-of for agents only when the form actually routes a field to
+      // the requester (forms like offboarding have no requester field — agent is requester).
+      const hasRequesterField = form.fields.some((ff: { maps_to: string | null }) => ff.maps_to === 'requester');
+      if (actor.plane === 'nexus' && hasRequesterField && !write.mapped.requesterId) {
+        throw Errors.badRequest('on-behalf-of is required for agent-created requests');
+      }
+    }
+  }
+
   return withOrgContext(orgContextFor(actor), async (sql) => {
-    const prefix = (await sql.query('SELECT left(upper(name),4) AS p FROM organizations WHERE id=$1', [orgId])).rows[0].p;
-    const n = (
-      await sql.query(
-        `SELECT COALESCE(MAX((regexp_replace(ticket_number,'\\D','','g'))::int),0)+1 AS n FROM tickets WHERE organization_id=$1`,
-        [orgId],
-      )
-    ).rows[0].n;
+    // Advisory-lock-serialized per-org allocation (see nextTicketNumber in tickets.ts) —
+    // shared with the direct-create and mail-ingest paths so the lock key matches everywhere.
+    const ticketNumber = await nextTicketNumber(sql, orgId);
     // Requires approval -> starts 'new' (pending approval). Else routed & owned by the tier.
     const status = item.requires_approval ? 'new' : 'assigned';
 
+    const requesterId = write?.mapped.requesterId ?? (actor.plane === 'customer' ? actor.id : null);
+    const affectedUserId = write?.mapped.affectedUserId ?? null;
+    const customFields = write?.customFields ?? {};
     const ticket = (
       await sql.query(
         `INSERT INTO tickets
-           (organization_id, ticket_number, type, requester_id, source_channel, subject, description,
-            category, priority, status, assignment_group_id, tags)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+           (organization_id, ticket_number, type, requester_id, affected_user_id, source_channel,
+            subject, description, category, priority, status, assignment_group_id, custom_fields, tags)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
         [
           orgId,
-          `${prefix}-${String(n).padStart(6, '0')}`,
+          ticketNumber,
           item.ticket_type,
-          actor.plane === 'customer' ? actor.id : null,
+          requesterId,
+          affectedUserId,
           actor.plane === 'customer' ? 'portal' : 'agent',
-          input.subject ?? item.name,
-          input.description ?? null,
+          write?.mapped.subject ?? input.subject ?? item.name,
+          write?.mapped.description ?? input.description ?? null,
           item.key,
           item.default_priority,
           status,
           grpId,
+          JSON.stringify(customFields),
           ['service_request', item.security_class],
         ],
       )
     ).rows[0];
+
+    // PII captured on the form goes to the permission-gated, audited, auto-purged store —
+    // never to tickets.custom_fields, which is serialized wholesale onto ticket reads,
+    // notification payloads, and outbound webhooks. Written on THIS transaction's connection
+    // so it commits atomically with the ticket it belongs to (and so its FK does not block
+    // on the still-uncommitted ticket row).
+    if (write) await storeSensitiveWith(sql, ticket.id, orgId, write.sensitive);
 
     // SLA: response (wall-clock) + resolution (business-hours)
     const now = new Date();
@@ -100,10 +162,21 @@ export async function createRequest(actor: Principal, key: string, input: Create
     }
 
     if (item.requires_approval) {
-      await sql.query(
-        `INSERT INTO approvals (organization_id, subject_type, subject_id, status) VALUES ($1,'ticket',$2,'requested')`,
-        [orgId, ticket.id],
-      );
+      const approval = (
+        await sql.query(
+          `INSERT INTO approvals (organization_id, subject_type, subject_id, status)
+           VALUES ($1,'ticket',$2,'requested') RETURNING id`,
+          [orgId, ticket.id],
+        )
+      ).rows[0];
+      const approverIds = write?.mapped.approverIds ?? [];
+      for (let i = 0; i < approverIds.length; i++) {
+        await sql.query(
+          `INSERT INTO approval_steps (organization_id, approval_id, step_order, approver_id)
+           VALUES ($1,$2,$3,$4)`,
+          [orgId, approval.id, i, approverIds[i]],
+        );
+      }
       publish('approval.requested', orgId, { subject_type: 'ticket', subject_id: ticket.id });
     }
 
@@ -114,6 +187,10 @@ export async function createRequest(actor: Principal, key: string, input: Create
     );
     await audit(actor, { action: 'service_request.create', organizationId: orgId, resourceType: 'ticket', resourceId: ticket.id, detail: { catalog: item.key } });
     publish('ticket.created', orgId, { ticket_id: ticket.id, org_id: orgId, type: item.ticket_type, priority: item.default_priority, channel: 'catalog' });
+    // Acknowledge the requester that their request was received (dispatcher fills details).
+    if (ticket.requester_id) {
+      publish('ticket.acknowledged', orgId, { ticket_id: ticket.id, org_id: orgId }, { idempotencyKey: `ticket.acknowledged:${ticket.id}` });
+    }
 
     return ticket;
   });

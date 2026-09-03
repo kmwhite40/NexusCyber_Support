@@ -1,0 +1,90 @@
+name: Deploy Web (Code) to Azure Gov App Service
+
+# Builds apps/web in CI and deploys it to an Azure GOVERNMENT App Service using
+# Entra ID OIDC (no basic auth / no publish profile — works when basic publishing
+# credentials are disabled by policy). The M365GCC pattern: Node 22-LTS, Linux.
+#
+# Configure the WEB app first (Settings -> Configuration -> General settings):
+#   - Startup Command: npm run start
+#   - App setting  SCM_DO_BUILD_DURING_DEPLOYMENT = false   (we build here)
+#
+# One-time Azure setup (see docs/nexus/artifacts/deploy/azure-gov-code-deploy.md §C):
+#   - An Entra app (service principal) with a GitHub **federated credential**, granted
+#     "Website Contributor" on the Anchor app (or Contributor on the resource group).
+#
+# Repo Settings -> Secrets and variables -> Actions:
+#   secrets: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
+#   vars:    AZURE_WEBAPP_NAME = Anchor
+#            NEXT_PUBLIC_API_BASE = https://anchor-api.azurewebsites.us/api/v1
+
+on:
+  workflow_dispatch:
+  # BOTH branches deploy during the move to main, on purpose.
+  #
+  # The 'anchor-gha' app now carries two federated credentials — 'github-feat'
+  # (refs/heads/feat/nexus-platform) and 'github-main' (refs/heads/main) — so either branch can
+  # authenticate. Adding the main credential rather than replacing the feat one means a mistake
+  # in this transition cannot leave the web app undeployable: the old path still works.
+  #
+  # Once a deploy from main has actually succeeded, drop 'feat/nexus-platform' from this list and
+  # delete the 'github-feat' credential. Two deploying branches is the ambiguity this change
+  # exists to remove — it is temporary, not the destination.
+  #
+  # Web changes auto-deploy; editing this workflow does not (kept out of paths).
+  push:
+    branches: [main, feat/nexus-platform]
+    paths: ['apps/web/**']
+
+permissions:
+  id-token: write   # required for OIDC federated login
+  contents: read
+
+jobs:
+  deploy-web:
+    name: Build & deploy apps/web (OIDC)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Install (workspaces)
+        run: npm ci || npm install
+
+      - name: Build apps/web (standalone)
+        working-directory: apps/web
+        env:
+          NEXT_PUBLIC_API_BASE: ${{ vars.NEXT_PUBLIC_API_BASE }}
+        run: npx next build
+
+      # The app runs `node server.js` (standalone) with no build-on-deploy, so we ship a
+      # FLATTENED standalone bundle (server.js at the package root). Monorepo standalone
+      # nests server.js under apps/web and hoists node_modules to the standalone root.
+      - name: Package flattened standalone bundle
+        working-directory: apps/web
+        run: |
+          rm -rf .deploy && mkdir .deploy
+          cp -a .next/standalone/apps/web/. .deploy/
+          cp -a .next/standalone/node_modules .deploy/node_modules
+          mkdir -p .deploy/.next/static && cp -a .next/static/. .deploy/.next/static/
+          [ -d public ] && cp -a public .deploy/public
+          cp -a .next/standalone/package.json .deploy/package.json 2>/dev/null || cp -a package.json .deploy/package.json
+          test -f .deploy/server.js
+
+      # Federated (OIDC) login to AZURE GOVERNMENT — no secrets/passwords stored.
+      - name: Azure login (US Government)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          environment: AzureUSGovernment
+
+      # Uses the AAD session (not basic auth) to zip-deploy to Kudu.
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
+          package: apps/web/.deploy

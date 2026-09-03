@@ -2,8 +2,8 @@
 // Native helpdesk analytics — reproduces the IT Helpdesk Power BI dashboard
 // (Overview + Agent Analysis) over our own ticket data.
 import * as React from 'react';
-import { analytics, type AnalyticsOverview } from '@/lib/api';
-import { Card, CardHeader, CardTitle, CardBody, Badge, Button } from '@/components/ui/primitives';
+import { analytics, type AnalyticsOverview, type ReportResult } from '@/lib/api';
+import { Card, CardHeader, CardTitle, CardBody, Badge, Button, Select, SegmentedControl, Label } from '@/components/ui/primitives';
 import { StatCard, DataTable, Skeleton, EmptyState } from '@/components/ui/data';
 import { Donut, Scatter, MiniBars } from '@/components/ui/charts';
 
@@ -16,7 +16,7 @@ const CAT_COLORS: Record<string, string> = {
 const PRIORITY_COLORS = ['hsl(var(--danger))', 'hsl(var(--warning))', 'hsl(var(--brand))', 'hsl(var(--muted))'];
 
 export default function AnalyticsPage() {
-  const [tab, setTab] = React.useState<'overview' | 'agents'>('overview');
+  const [tab, setTab] = React.useState<'overview' | 'agents' | 'builder'>('overview');
   const [data, setData] = React.useState<AnalyticsOverview | null>(null);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -33,29 +33,136 @@ export default function AnalyticsPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Helpdesk analytics</h1>
           <p className="mt-1 text-sm text-muted">Operational analysis across your in-scope ticket history.</p>
         </div>
-        <div className="inline-flex rounded-md border border-border bg-surface-2/60 p-1">
-          {(['overview', 'agents'] as const).map((t) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setTab(t)}
-              className={`rounded px-4 py-1.5 text-xs font-medium capitalize transition ${
-                tab === t ? 'bg-brand text-brand-fg' : 'text-muted hover:text-fg'
-              }`}
-            >
-              {t === 'overview' ? 'Overview' : 'Agent analysis'}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl<'overview' | 'agents' | 'builder'>
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: 'overview', label: 'Overview' },
+            { value: 'agents', label: 'Agent analysis' },
+            { value: 'builder', label: 'Report builder' },
+          ]}
+        />
       </div>
 
-      {!data ? (
+      {tab === 'builder' ? (
+        <ReportBuilder />
+      ) : !data ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-28" />)}</div>
       ) : tab === 'overview' ? (
         <Overview data={data} />
       ) : (
         <Agents data={data} />
       )}
+    </div>
+  );
+}
+
+const DIM_LABEL: Record<string, string> = {
+  status: 'Status', priority: 'Priority', type: 'Type', channel: 'Channel', category: 'Category',
+  organization: 'Organization', month: 'Month', week: 'Week', day: 'Day',
+};
+const MEASURE_LABEL: Record<string, string> = {
+  count: 'Ticket count', open: 'Open tickets', avg_resolution_days: 'Avg resolution (days)', avg_csat: 'Avg CSAT',
+};
+
+/** Self-service report builder: pick a dimension + measure + filters, render a bar table. */
+function ReportBuilder() {
+  const [fields, setFields] = React.useState<{ dimensions: string[]; measures: string[] } | null>(null);
+  const [dimension, setDimension] = React.useState('priority');
+  const [measure, setMeasure] = React.useState('count');
+  const [days, setDays] = React.useState(90);
+  const [status, setStatus] = React.useState('');
+  const [priority, setPriority] = React.useState('');
+  const [result, setResult] = React.useState<ReportResult | null>(null);
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => { analytics.reportFields().then(setFields).catch(() => {}); }, []);
+
+  const run = React.useCallback(() => {
+    setBusy(true); setError(null);
+    analytics.report({ dimension, measure, days, status: status || undefined, priority: priority || undefined })
+      .then(setResult)
+      .catch((e) => setError(e?.detail ?? 'Report failed'))
+      .finally(() => setBusy(false));
+  }, [dimension, measure, days, status, priority]);
+  React.useEffect(() => { run(); }, [run]);
+
+  const max = Math.max(...(result?.rows.map((r) => r.value) ?? [1]), 1);
+  const csv = () => {
+    if (!result) return;
+    const lines = [`${DIM_LABEL[result.dimension] ?? result.dimension},${MEASURE_LABEL[result.measure] ?? result.measure}`,
+      ...result.rows.map((r) => `${JSON.stringify(r.label)},${r.value}`)];
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `report-${result.dimension}-${result.measure}.csv`;
+    a.click();
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardBody className="flex flex-wrap items-end gap-3">
+          <div>
+            <Label className="text-[11px] uppercase tracking-wider text-muted">Group by</Label>
+            <Select aria-label="Group by" className="h-9 w-auto" value={dimension} onChange={(e) => setDimension(e.target.value)}>
+              {(fields?.dimensions ?? []).map((d) => <option key={d} value={d}>{DIM_LABEL[d] ?? d}</option>)}
+            </Select>
+          </div>
+          <div>
+            <Label className="text-[11px] uppercase tracking-wider text-muted">Measure</Label>
+            <Select aria-label="Measure" className="h-9 w-auto" value={measure} onChange={(e) => setMeasure(e.target.value)}>
+              {(fields?.measures ?? []).map((m) => <option key={m} value={m}>{MEASURE_LABEL[m] ?? m}</option>)}
+            </Select>
+          </div>
+          <div>
+            <Label className="text-[11px] uppercase tracking-wider text-muted">Window (days)</Label>
+            <Select aria-label="Window in days" className="h-9 w-auto" value={days} onChange={(e) => setDays(Number(e.target.value))}>
+              {[30, 90, 180, 365, 730].map((d) => <option key={d} value={d}>{d}</option>)}
+            </Select>
+          </div>
+          <div>
+            <Label className="text-[11px] uppercase tracking-wider text-muted">Status filter</Label>
+            <Select aria-label="Status filter" className="h-9 w-auto" value={status} onChange={(e) => setStatus(e.target.value)}>
+              <option value="">any</option>
+              {['new', 'triage', 'in_progress', 'pending', 'resolved', 'closed'].map((s) => <option key={s} value={s}>{s}</option>)}
+            </Select>
+          </div>
+          <div>
+            <Label className="text-[11px] uppercase tracking-wider text-muted">Priority filter</Label>
+            <Select aria-label="Priority filter" className="h-9 w-auto" value={priority} onChange={(e) => setPriority(e.target.value)}>
+              <option value="">any</option>
+              {['P1', 'P2', 'P3', 'P4'].map((s) => <option key={s} value={s}>{s}</option>)}
+            </Select>
+          </div>
+          <Button onClick={run} disabled={busy}>{busy ? 'Running…' : 'Run'}</Button>
+          <Button variant="outline" onClick={csv} disabled={!result || result.rows.length === 0}>Export CSV</Button>
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>{MEASURE_LABEL[measure] ?? measure} by {DIM_LABEL[dimension] ?? dimension}</CardTitle></CardHeader>
+        <CardBody>
+          {error ? <p className="text-sm text-danger">{error}</p>
+            : !result ? <Skeleton className="h-40" />
+            : result.rows.length === 0 ? <EmptyState title="No data" description="No tickets match these filters in the selected window." />
+            : (
+              <div className="space-y-1.5">
+                {result.rows.map((r) => (
+                  <div key={r.label} className="flex items-center gap-3">
+                    <span className="w-40 shrink-0 truncate text-xs text-fg" title={r.label}>{r.label}</span>
+                    <div className="h-5 flex-1 overflow-hidden rounded bg-surface-2">
+                      <div className="flex h-full items-center rounded bg-brand px-2 text-[10px] font-medium text-brand-fg" style={{ width: `${Math.max((r.value / max) * 100, 2)}%` }}>
+                      </div>
+                    </div>
+                    <span className="w-16 shrink-0 text-right text-xs tabular-nums text-fg">{r.value.toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+        </CardBody>
+      </Card>
     </div>
   );
 }

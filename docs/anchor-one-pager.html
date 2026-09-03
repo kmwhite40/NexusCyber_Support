@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anchor — Feature Highlights (One-Pager)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700;9..144,900&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --navy:#0a1f44;
+    --navy-2:#13284f;
+    --ink:#1b2840;
+    --body:#475569;
+    --muted:#64748b;
+    --faint:#94a3b8;
+    --line:#e4e9f2;
+    --paper:#ffffff;
+    --wash:#f5f8fc;
+    --emerald:#0f9d6b;
+    --emerald-dk:#065f46;
+    --teal:#0e7490;
+    --blue:#2563eb;
+    --violet:#7c3aed;
+    --rose:#dc2626;
+    --amber:#b45309;
+    --serif:'Fraunces',Georgia,serif;
+    --sans:'IBM Plex Sans','Segoe UI',sans-serif;
+    --mono:'IBM Plex Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{
+    font-family:var(--sans);background:#e9eef5;color:var(--ink);
+    padding:28px 16px;-webkit-font-smoothing:antialiased;line-height:1.5;
+  }
+
+  .sheet{
+    width:8.5in;max-width:100%;margin:0 auto;background:var(--paper);
+    box-shadow:0 18px 60px rgba(10,31,68,.16);position:relative;overflow:hidden;
+    border-radius:4px;
+  }
+  .spectrum{height:5px;background:linear-gradient(90deg,var(--amber),var(--rose),var(--violet),var(--blue),var(--teal),var(--emerald));}
+
+  /* ===== Header ===== */
+  .head{
+    position:relative;padding:30px 40px 26px;color:#fff;overflow:hidden;
+    background:
+      radial-gradient(620px 240px at 88% -40%,rgba(15,157,107,.55),transparent 60%),
+      linear-gradient(125deg,#08183a 0%,#0a1f44 48%,#064e3b 130%);
+  }
+  .head::after{ /* fine grid texture */
+    content:"";position:absolute;inset:0;opacity:.5;
+    background-image:linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);
+    background-size:34px 34px;
+    -webkit-mask-image:radial-gradient(120% 120% at 90% 0%,#000,transparent 70%);
+    mask-image:radial-gradient(120% 120% at 90% 0%,#000,transparent 70%);
+  }
+  .head>*{position:relative;z-index:1;}
+  .brandrow{display:flex;align-items:center;gap:11px;margin-bottom:18px;}
+  .sq{width:18px;height:18px;border:2.5px solid var(--emerald);border-radius:4px;position:relative;flex:none;}
+  .sq::after{content:"";position:absolute;inset:3px;background:var(--emerald);border-radius:2px;}
+  .brandrow .nm{font-family:var(--mono);font-size:12px;letter-spacing:.34em;text-transform:uppercase;color:#cdeede;}
+  .eyebrow{font-family:var(--mono);font-size:10.5px;letter-spacing:.26em;text-transform:uppercase;color:#6ee7b7;}
+  .head h1{font-family:var(--serif);font-size:42px;font-weight:600;letter-spacing:-.02em;line-height:1.02;margin:8px 0 12px;}
+  .head h1 .it{font-style:italic;color:#6ee7b7;font-weight:500;}
+  .head .lede{font-size:13.5px;color:#c3d2ea;font-weight:300;max-width:62ch;line-height:1.55;}
+  .head .lede strong{color:#fff;font-weight:600;}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px;}
+  .chip{font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#bfe6d4;border:1px solid rgba(110,231,183,.4);background:rgba(15,157,107,.14);padding:5px 11px;border-radius:999px;}
+
+  /* ===== Stat band ===== */
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid var(--line);}
+  .stats .s{padding:16px 18px;border-right:1px solid var(--line);}
+  .stats .s:last-child{border-right:0;}
+  .stats .n{font-family:var(--serif);font-size:19px;font-weight:600;color:var(--emerald-dk);line-height:1;}
+  .stats .l{font-family:var(--mono);font-size:9.5px;letter-spacing:.04em;color:var(--muted);margin-top:8px;line-height:1.45;text-transform:uppercase;}
+
+  /* ===== Body ===== */
+  .body{padding:24px 40px 14px;}
+  .sec-label{font-family:var(--mono);font-size:10.5px;letter-spacing:.24em;text-transform:uppercase;color:var(--emerald-dk);display:flex;align-items:center;gap:11px;margin-bottom:16px;}
+  .sec-label::before{content:"";width:26px;height:1px;background:var(--emerald);}
+  .sec-label::after{content:"";flex:1;height:1px;background:var(--line);}
+
+  .features{display:grid;grid-template-columns:1fr 1fr;gap:13px 22px;}
+  .feat{display:grid;grid-template-columns:34px 1fr;gap:13px;align-items:start;}
+  .feat .ico{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;background:var(--bg,#ecfdf5);border:1px solid var(--line);}
+  .feat .ico svg{width:18px;height:18px;stroke:var(--c,var(--emerald));fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+  .feat h3{font-family:var(--sans);font-size:13.5px;font-weight:600;color:var(--navy);margin-bottom:3px;display:flex;align-items:center;gap:8px;}
+  .feat h3 .bar{width:14px;height:2.5px;border-radius:2px;background:var(--c,var(--emerald));flex:none;}
+  .feat p{font-size:11.5px;color:var(--body);line-height:1.5;font-weight:300;}
+  .feat p strong{color:var(--navy);font-weight:600;}
+
+  /* ===== Why band ===== */
+  .why-wrap{margin:22px 40px 8px;background:var(--wash);border:1px solid var(--line);border-left:4px solid var(--emerald);border-radius:8px;padding:18px 22px;}
+  .why{display:grid;grid-template-columns:1fr 1fr;gap:9px 26px;}
+  .why .w{font-size:11.5px;color:var(--body);padding-left:18px;position:relative;line-height:1.45;font-weight:300;}
+  .why .w::before{content:"✓";position:absolute;left:0;top:0;color:var(--emerald);font-weight:700;font-size:11px;}
+  .why .w strong{color:var(--navy);font-weight:600;}
+
+  /* ===== Delivery row ===== */
+  .deliver{display:grid;grid-template-columns:repeat(5,1fr);gap:0;margin:18px 40px 0;border:1px solid var(--line);border-radius:8px;overflow:hidden;}
+  .deliver .d{padding:13px 14px;border-right:1px solid var(--line);}
+  .deliver .d:last-child{border-right:0;}
+  .deliver .k{font-family:var(--mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin-bottom:6px;}
+  .deliver .v{font-size:12px;font-weight:600;color:var(--navy);line-height:1.25;}
+
+  /* ===== Footer ===== */
+  .foot{margin-top:22px;padding:16px 40px 22px;border-top:1px solid var(--line);background:var(--wash);display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;}
+  .foot .brand{font-family:var(--serif);font-size:14px;font-weight:600;color:var(--navy);}
+  .foot .meta{font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;color:var(--muted);line-height:1.7;text-transform:uppercase;}
+  .foot .live{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--emerald-dk);display:inline-flex;align-items:center;gap:8px;font-weight:600;}
+  .foot .live .b{width:8px;height:8px;border-radius:50%;background:var(--emerald);box-shadow:0 0 0 3px rgba(15,157,107,.18);}
+
+  @media (max-width:680px){
+    .stats{grid-template-columns:1fr 1fr;}
+    .stats .s:nth-child(2){border-right:0;}
+    .features,.why{grid-template-columns:1fr;}
+    .deliver{grid-template-columns:1fr 1fr;}
+    .head h1{font-size:34px;}
+  }
+
+  @media print{
+    @page{size:letter;margin:0;}
+    body{background:#fff;padding:0;}
+    .sheet{box-shadow:none;width:100%;border-radius:0;}
+    .head,.stats .n,.chip,.spectrum,.feat .ico,.why-wrap,.foot,.deliver{
+      -webkit-print-color-adjust:exact;print-color-adjust:exact;
+    }
+    .feat,.why .w,.sheet{break-inside:avoid;}
+    /* compress vertical rhythm to fit a single Letter page */
+    .head{padding:20px 40px 16px;}
+    .head h1{font-size:34px;margin:6px 0 9px;}
+    .head .lede{font-size:12.5px;}
+    .head .chips{margin-top:11px;}
+    .stats .s{padding:11px 18px;}
+    .body{padding:15px 40px 8px;}
+    .features{gap:9px 22px;}
+    .feat p{font-size:11px;}
+    .sec-label{margin-bottom:11px;}
+    .why-wrap{margin:13px 40px 4px;padding:13px 20px;}
+    .why{gap:6px 26px;}
+    .why .w{font-size:11px;}
+    .deliver{margin-top:11px;}
+    .deliver .d{padding:9px 14px;}
+    .foot{margin-top:13px;padding:12px 40px 15px;}
+  }
+</style>
+</head>
+<body>
+  <div class="sheet">
+    <div class="spectrum"></div>
+
+    <header class="head">
+      <div class="brandrow"><span class="sq"></span><span class="nm">Anchor by SBS Federal</span></div>
+      <div class="eyebrow">Feature Highlights · Executive One-Pager</div>
+      <h1>The government-cloud <span class="it">service desk</span> &amp; security platform.</h1>
+      <p class="lede">A purpose-built, <strong>ServiceNow-class</strong> platform for IT service management and security operations — born in the FedRAMP / CUI boundary, serving many government customers from <strong>one system of record</strong>.</p>
+      <div class="chips">
+        <span class="chip">Azure Government</span>
+        <span class="chip">Multi-Tenant MSP</span>
+        <span class="chip">NIST 800-53 / FedRAMP</span>
+        <span class="chip">Entra ID SSO</span>
+        <span class="chip">Live in Production</span>
+      </div>
+    </header>
+
+    <div class="stats">
+      <div class="s"><div class="n">1 platform</div><div class="l">Desk, security &amp; compliance, unified</div></div>
+      <div class="s"><div class="n">Azure Gov</div><div class="l">In-boundary for CUI workloads</div></div>
+      <div class="s"><div class="n">Multi-tenant</div><div class="l">Many customers, strict isolation</div></div>
+      <div class="s"><div class="n">Audit-ready</div><div class="l">Evidence mapped to NIST / FedRAMP</div></div>
+    </div>
+
+    <div class="body">
+      <div class="sec-label">Capabilities at a glance</div>
+      <div class="features">
+        <div class="feat"><div class="ico" style="--bg:#eff6ff;--c:var(--blue)"><svg viewBox="0 0 24 24"><path d="M4 17V8a8 8 0 0 1 16 0v9"/><path d="M20 18a2 2 0 0 1-2 2h-3"/><rect x="2" y="13" width="4" height="6" rx="1.5"/><rect x="18" y="13" width="4" height="6" rx="1.5"/></svg></div><div><h3><span class="bar" style="--c:var(--blue)"></span>IT Service Management</h3><p>Ticketing with priorities &amp; SLAs, agent queues, on-call paging, and full <strong>incident, change &amp; problem management</strong>.</p></div></div>
+        <div class="feat"><div class="ico" style="--bg:#f5f3ff;--c:var(--violet)"><svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/></svg></div><div><h3><span class="bar" style="--c:var(--violet)"></span>Self-Service &amp; Automation</h3><p>Service catalog, guided request forms, approval workflows, a knowledge base, and <strong>“Ask Anchor”</strong> to deflect routine work.</p></div></div>
+        <div class="feat"><div class="ico" style="--bg:#fef2f2;--c:var(--rose)"><svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.4 3 8.3 7 9.5 4-1.2 7-5.1 7-9.5V6l-7-3Z"/><path d="m9 12 2 2 4-4"/></svg></div><div><h3><span class="bar" style="--c:var(--rose)"></span>Security Posture &amp; Compliance</h3><p>Continuous monitoring, posture scoring, asset inventory, and an <strong>immutable audit trail</strong> mapped to NIST 800-53.</p></div></div>
+        <div class="feat"><div class="ico" style="--bg:#ecfeff;--c:var(--teal)"><svg viewBox="0 0 24 24"><path d="M7 18a4 4 0 0 1 0-8 5.5 5.5 0 0 1 10.6-1.4A4 4 0 0 1 17.5 18H7Z"/></svg></div><div><h3><span class="bar" style="--c:var(--teal)"></span>Microsoft 365 &amp; Cloud</h3><p>Native M365 (GCC) email-to-ticket, Entra ID SSO, and Teams — plus <strong>Azure Gov &amp; AWS GovCloud</strong> catalog requests.</p></div></div>
+        <div class="feat"><div class="ico" style="--bg:#ecfdf5;--c:var(--emerald)"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><circle cx="12" cy="15.5" r="1.4"/></svg></div><div><h3><span class="bar" style="--c:var(--emerald)"></span>Multi-Tenant Trust</h3><p>Isolation <strong>enforced at the database</strong>, least-privilege roles, just-in-time elevation, and delegated org-scoped admin.</p></div></div>
+        <div class="feat"><div class="ico" style="--bg:#fffbeb;--c:var(--amber)"><svg viewBox="0 0 24 24"><path d="M4 20V4"/><path d="M4 20h16"/><rect x="7.5" y="12" width="3" height="5"/><rect x="13.5" y="8" width="3" height="9"/></svg></div><div><h3><span class="bar" style="--c:var(--amber)"></span>Insight &amp; Reporting</h3><p>Executive &amp; operational dashboards, SLA and workload analytics, and self-service reporting on <strong>service health</strong>.</p></div></div>
+      </div>
+    </div>
+
+    <div class="why-wrap">
+      <div class="sec-label" style="margin-bottom:13px;">Why it matters for SBS</div>
+      <div class="why">
+        <div class="w"><strong>Lower cost, full control</strong> — ServiceNow-class capability without licensing or lock-in.</div>
+        <div class="w"><strong>Compliance by design</strong> — audit evidence is a by-product of operations, not a fire drill.</div>
+        <div class="w"><strong>One system of record</strong> — desk + security together; fewer tools, cleaner data.</div>
+        <div class="w"><strong>Scales as an MSP</strong> — onboard each customer as an isolated tenant.</div>
+        <div class="w"><strong>Meets users where they are</strong> — M365, email &amp; SSO; minimal change management.</div>
+        <div class="w"><strong>Faster resolution</strong> — automation &amp; self-service speed fulfillment.</div>
+      </div>
+    </div>
+
+    <div class="deliver">
+      <div class="d"><div class="k">Hosting</div><div class="v">Azure Government</div></div>
+      <div class="d"><div class="k">Identity</div><div class="v">Entra ID SSO</div></div>
+      <div class="d"><div class="k">Isolation</div><div class="v">Per-tenant, DB-enforced</div></div>
+      <div class="d"><div class="k">Compliance</div><div class="v">NIST 800-53 / FedRAMP</div></div>
+      <div class="d"><div class="k">Model</div><div class="v">Multi-tenant MSP</div></div>
+    </div>
+
+    <div class="foot">
+      <div>
+        <div class="brand">Anchor by SBS Federal</div>
+        <div class="meta">Government-Cloud Service Desk &amp; Security Operations · anchor.azurewebsites.us</div>
+      </div>
+      <div class="live"><span class="b"></span>Live &amp; serving customers today</div>
+    </div>
+  </div>
+</body>
+</html>

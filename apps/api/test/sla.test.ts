@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { addBusinessMinutes, evaluateState, targetMinutes } from '../src/modules/sla.js';
+import { addBusinessMinutes, evaluateState, targetMinutes, applyPause, applyResume, isoDate } from '../src/modules/sla.js';
 
 describe('SLA engine', () => {
   it('targetMinutes returns priority-specific targets with P3 fallback', () => {
-    expect(targetMinutes('P1', 'response')).toBe(15);
-    expect(targetMinutes('P2', 'resolution')).toBe(8 * 60);
+    expect(targetMinutes('P1', 'response')).toBe(60); // acknowledge: 1 hour
+    expect(targetMinutes('P2', 'resolution')).toBe(8 * 60); // resolve: 1 business day (8 business hours)
+    expect(targetMinutes('P4', 'resolution')).toBe(10 * 8 * 60); // resolve: 10 business days
     expect(targetMinutes('NOPE', 'response')).toBe(targetMinutes('P3', 'response'));
   });
 
@@ -42,5 +43,49 @@ describe('SLA engine', () => {
     const due = new Date(started.getTime() + 100 * 60_000);
     expect(evaluateState({ started_at: started, due_at: due, state: 'met' }, new Date(due.getTime() + 1e9))).toBe('met');
     expect(evaluateState({ started_at: started, due_at: due, state: 'breached' }, started)).toBe('breached');
+  });
+
+  it('8x5 calendar skips holidays like weekends', () => {
+    // Monday 2026-01-05 is a holiday -> 60 min from Mon 10:00 lands Tue 10:00.
+    const mon = new Date('2026-01-05T10:00:00Z');
+    const out = addBusinessMinutes(mon, 60, { coverage: '8x5', tz: 'UTC', holidays: ['2026-01-05'] });
+    expect(out.toISOString()).toBe('2026-01-06T10:00:00.000Z');
+  });
+
+  it('a paused instance never warns or breaches', () => {
+    const started = new Date('2026-01-05T00:00:00Z');
+    const due = new Date(started.getTime() + 100 * 60_000);
+    expect(evaluateState({ started_at: started, due_at: due, state: 'paused' }, new Date(due.getTime() + 1e9))).toBe('paused');
+  });
+});
+
+describe('SLA pause/resume', () => {
+  const base = { state: 'running', due_at: new Date('2026-01-05T12:00:00Z'), paused_at: null as Date | null, paused_minutes: 0 };
+
+  it('applyPause marks a running instance paused', () => {
+    const at = new Date('2026-01-05T10:00:00Z');
+    expect(applyPause(base, at)).toEqual({ state: 'paused', paused_at: at });
+  });
+  it('applyPause is a no-op for non-running states', () => {
+    expect(applyPause({ ...base, state: 'met' })).toBeNull();
+    expect(applyPause({ ...base, state: 'paused' })).toBeNull();
+  });
+  it('applyResume shifts due_at forward by the paused duration and accumulates minutes', () => {
+    const pausedAt = new Date('2026-01-05T10:00:00Z');
+    const resumeAt = new Date('2026-01-05T10:30:00Z'); // 30 minutes paused
+    const next = applyResume({ state: 'paused', due_at: new Date('2026-01-05T12:00:00Z'), paused_at: pausedAt, paused_minutes: 0 }, resumeAt);
+    expect(next).not.toBeNull();
+    expect(next!.state).toBe('running');
+    expect((next!.due_at as Date).toISOString()).toBe('2026-01-05T12:30:00.000Z');
+    expect(next!.paused_minutes).toBe(30);
+  });
+  it('applyResume is a no-op when not paused', () => {
+    expect(applyResume(base)).toBeNull();
+  });
+});
+
+describe('isoDate', () => {
+  it('formats the UTC calendar date', () => {
+    expect(isoDate(new Date('2026-03-09T23:59:00Z'))).toBe('2026-03-09');
   });
 });

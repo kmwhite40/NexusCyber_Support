@@ -5,6 +5,7 @@ import { api, type Ticket } from '@/lib/api';
 import { Card, CardBody, Button, Input, Select } from '@/components/ui/primitives';
 import { DataTable, EmptyState, Skeleton } from '@/components/ui/data';
 import { PriorityBadge, StatusBadge } from '@/components/ui/badges';
+import { Plus } from 'lucide-react';
 
 const STATUSES = ['', 'new', 'triage', 'assigned', 'in_progress', 'waiting_customer', 'resolved', 'closed'];
 
@@ -32,7 +33,7 @@ export default function TicketsPage() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold tracking-tight">Tickets</h1>
-        <Button onClick={() => router.push('/tickets/new')}>+ New ticket</Button>
+        <Button onClick={() => router.push('/tickets/new')}><Plus className="h-4 w-4" strokeWidth={1.75} /> New ticket</Button>
       </div>
 
       <Card>

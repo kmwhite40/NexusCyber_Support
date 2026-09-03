@@ -7,6 +7,7 @@ import { orgContextFor } from '../auth/principal.js';
 import { can } from '../authz/pdp.js';
 import { Errors } from '../errors.js';
 import type { Principal } from '../types.js';
+import { controlCoverage } from './compliance.js';
 
 const SLA_DAYS = 3;
 
@@ -197,4 +198,262 @@ export async function overview(actor: Principal, orgId?: string) {
     bottomByTickets: [...byTickets].reverse().slice(0, 5),
     scatter,
   };
+}
+
+/**
+ * Operational KPI snapshot for the enterprise dashboards: live backlog, opened-vs-
+ * closed time series, SLA attainment (from sla_instances), and backlog breakdowns.
+ * RLS-scoped via withOrgContext; `orgId` narrows to one customer (agents only).
+ * `days` is clamped server-side and inlined into generate_series (safe integer).
+ */
+// ---------- Self-service report builder ----------
+// Safelisted dimensions/measures so an arbitrary client request can never inject SQL.
+const REPORT_DIMENSIONS: Record<string, string> = {
+  status: 't.status',
+  priority: 't.priority',
+  type: 't.type',
+  channel: 't.source_channel',
+  category: "coalesce(nullif(t.category, ''), '(none)')",
+  organization: 'o.name',
+  month: "to_char(date_trunc('month', t.created_at), 'YYYY-MM')",
+  week: "to_char(date_trunc('week', t.created_at), 'YYYY-MM-DD')",
+  day: "to_char(date_trunc('day', t.created_at), 'YYYY-MM-DD')",
+};
+const REPORT_MEASURES: Record<string, string> = {
+  count: 'count(*)::int',
+  open: "count(*) FILTER (WHERE t.status NOT IN ('resolved','closed'))::int",
+  avg_resolution_days:
+    "coalesce(round(avg(EXTRACT(EPOCH FROM (t.resolved_at - t.created_at))/86400.0) FILTER (WHERE t.resolved_at IS NOT NULL), 2), 0)::float",
+  avg_csat: "coalesce(round(avg(t.satisfaction_score) FILTER (WHERE t.satisfaction_score IS NOT NULL), 2), 0)::float",
+};
+export const REPORT_FIELDS = {
+  dimensions: Object.keys(REPORT_DIMENSIONS),
+  measures: Object.keys(REPORT_MEASURES),
+};
+
+export interface ReportInput {
+  dimension: string;
+  measure: string;
+  days?: number;
+  status?: string;
+  priority?: string;
+  type?: string;
+  organizationId?: string;
+}
+
+export async function runReport(actor: Principal, input: ReportInput) {
+  if (!can(actor, 'report.read.operational') && !can(actor, 'report.read.customer')) {
+    throw Errors.forbidden('missing reporting permission');
+  }
+  const dimExpr = REPORT_DIMENSIONS[input.dimension];
+  const measExpr = REPORT_MEASURES[input.measure];
+  if (!dimExpr) throw Errors.badRequest(`unknown dimension ${input.dimension}`);
+  if (!measExpr) throw Errors.badRequest(`unknown measure ${input.measure}`);
+  const days = Math.min(Math.max(Math.floor(Number(input.days) || 90), 1), 730);
+
+  return withOrgContext(orgContextFor(actor), async (sql) => {
+    const params: unknown[] = [];
+    const where: string[] = [`t.created_at >= now() - ($${params.push(days)} || ' days')::interval`];
+    if (input.status) where.push(`t.status = $${params.push(input.status)}`);
+    if (input.priority) where.push(`t.priority = $${params.push(input.priority)}`);
+    if (input.type) where.push(`t.type = $${params.push(input.type)}`);
+    if (input.organizationId) where.push(`t.organization_id = $${params.push(input.organizationId)}`);
+    const join = input.dimension === 'organization' ? 'JOIN organizations o ON o.id = t.organization_id' : '';
+    const { rows } = await sql.query(
+      `SELECT ${dimExpr} AS label, ${measExpr} AS value
+         FROM tickets t ${join}
+        WHERE ${where.join(' AND ')}
+        GROUP BY 1
+        ORDER BY value DESC NULLS LAST
+        LIMIT 100`,
+      params,
+    );
+    return {
+      dimension: input.dimension,
+      measure: input.measure,
+      days,
+      rows: rows.map((r) => ({ label: r.label == null ? '(none)' : String(r.label), value: Number(r.value) })),
+    };
+  });
+}
+
+export async function operationalKpis(actor: Principal, orgId?: string, days = 30) {
+  if (!can(actor, 'report.read.operational') && !can(actor, 'report.read.customer')) {
+    throw Errors.forbidden('missing reporting permission');
+  }
+  const d = Math.min(Math.max(Math.floor(Number(days) || 30), 7), 180);
+  return withOrgContext(orgContextFor(actor), async (sql) => {
+    const p: unknown[] = [];
+    let f = '';
+    if (orgId) { p.push(orgId); f = 'AND t.organization_id = $1'; }
+
+    const summary = (await sql.query(
+      `SELECT
+         count(*) FILTER (WHERE status NOT IN ('resolved','closed'))::int AS open,
+         count(*) FILTER (WHERE status NOT IN ('resolved','closed') AND priority='P1')::int AS open_p1,
+         count(*) FILTER (WHERE created_at >= date_trunc('day', now()))::int AS opened_today,
+         count(*) FILTER (WHERE resolved_at >= date_trunc('day', now()))::int AS closed_today,
+         count(*) FILTER (WHERE created_at >= date_trunc('week', now()))::int AS opened_week,
+         count(*) FILTER (WHERE resolved_at >= date_trunc('week', now()))::int AS closed_week,
+         coalesce(round(avg(EXTRACT(EPOCH FROM (resolved_at - created_at))/86400.0)
+           FILTER (WHERE resolved_at IS NOT NULL), 2), 0)::float AS mttr_days,
+         coalesce(round(avg(satisfaction_score) FILTER (WHERE satisfaction_score IS NOT NULL), 2), 0)::float AS csat
+       FROM tickets t WHERE 1=1 ${f}`,
+      p,
+    )).rows[0];
+
+    const trend = (await sql.query(
+      `WITH days AS (
+         SELECT generate_series(date_trunc('day', now()) - interval '${d - 1} days',
+                                date_trunc('day', now()), interval '1 day') AS d)
+       SELECT to_char(days.d, 'YYYY-MM-DD') AS date,
+         (SELECT count(*) FROM tickets t WHERE date_trunc('day', t.created_at) = days.d ${f})::int AS opened,
+         (SELECT count(*) FROM tickets t WHERE date_trunc('day', t.resolved_at) = days.d ${f})::int AS closed
+       FROM days ORDER BY days.d`,
+      p,
+    )).rows;
+
+    const slaRow = (await sql.query(
+      `SELECT
+         count(*) FILTER (WHERE i.metric='response' AND i.state='met')::int AS resp_met,
+         count(*) FILTER (WHERE i.metric='response' AND i.state='breached')::int AS resp_breached,
+         count(*) FILTER (WHERE i.metric='resolution' AND i.state='met')::int AS resn_met,
+         count(*) FILTER (WHERE i.metric='resolution' AND i.state='breached')::int AS resn_breached
+       FROM sla_instances i JOIN tickets t ON t.id = i.ticket_id WHERE 1=1 ${f}`,
+      p,
+    )).rows[0];
+    const aPct = (met: number, br: number) => (met + br > 0 ? Math.round((met / (met + br)) * 100) : 100);
+    const sla = {
+      responseMet: slaRow.resp_met, responseBreached: slaRow.resp_breached,
+      resolutionMet: slaRow.resn_met, resolutionBreached: slaRow.resn_breached,
+      responseAttainmentPct: aPct(slaRow.resp_met, slaRow.resp_breached),
+      resolutionAttainmentPct: aPct(slaRow.resn_met, slaRow.resn_breached),
+      overallAttainmentPct: aPct(slaRow.resp_met + slaRow.resn_met, slaRow.resp_breached + slaRow.resn_breached),
+    };
+
+    const byStatus = (await sql.query(
+      `SELECT status AS label, count(*)::int AS count FROM tickets t
+        WHERE status NOT IN ('resolved','closed') ${f} GROUP BY status ORDER BY 2 DESC`, p)).rows;
+    const byPriority = (await sql.query(
+      `SELECT priority AS label, count(*)::int AS count FROM tickets t
+        WHERE status NOT IN ('resolved','closed') ${f} GROUP BY priority ORDER BY 1`, p)).rows;
+    const byAge = (await sql.query(
+      `SELECT label, count(*)::int AS count FROM (
+         SELECT CASE
+           WHEN now()-created_at < interval '1 day'  THEN '< 1 day'
+           WHEN now()-created_at < interval '3 days' THEN '1-3 days'
+           WHEN now()-created_at < interval '7 days' THEN '3-7 days'
+           ELSE '> 7 days' END AS label,
+           CASE WHEN now()-created_at < interval '1 day' THEN 1
+                WHEN now()-created_at < interval '3 days' THEN 2
+                WHEN now()-created_at < interval '7 days' THEN 3 ELSE 4 END AS ord
+         FROM tickets t WHERE status NOT IN ('resolved','closed') ${f}) s
+       GROUP BY label, ord ORDER BY ord`, p)).rows;
+
+    return { days: d, summary, trend, sla, byStatus, byPriority, byAge };
+  });
+}
+
+// ---- MSP customer portfolio: per-org snapshot (agents/operational only) ----
+export async function customerPortfolio(actor: Principal) {
+  if (!can(actor, 'report.read.operational')) throw Errors.forbidden('missing operational reporting permission');
+  return withOrgContext(orgContextFor(actor), async (sql) => {
+    const rows = (await sql.query(
+      `SELECT o.id, o.name,
+         count(t.id) FILTER (WHERE t.status NOT IN ('resolved','closed'))::int AS open,
+         count(t.id) FILTER (WHERE t.status NOT IN ('resolved','closed') AND t.priority='P1')::int AS open_p1,
+         count(t.id) FILTER (WHERE t.created_at >= now()-interval '7 days')::int AS opened_7d,
+         count(t.id) FILTER (WHERE t.resolved_at >= now()-interval '7 days')::int AS closed_7d,
+         coalesce(round(avg(t.satisfaction_score) FILTER (WHERE t.satisfaction_score IS NOT NULL),2),0)::float AS csat
+       FROM organizations o
+       LEFT JOIN tickets t ON t.organization_id = o.id
+       WHERE o.id <> '00000000-0000-0000-0000-000000000000'
+       GROUP BY o.id, o.name ORDER BY open DESC, o.name`,
+    )).rows;
+    const sla = (await sql.query(
+      `SELECT t.organization_id AS org,
+         count(*) FILTER (WHERE i.state='met')::int AS met,
+         count(*) FILTER (WHERE i.state='breached')::int AS breached
+       FROM sla_instances i JOIN tickets t ON t.id=i.ticket_id GROUP BY t.organization_id`,
+    )).rows;
+    const slaMap = new Map(sla.map((r: any) => [r.org, r]));
+    return rows.map((r: any) => {
+      const s: any = slaMap.get(r.id);
+      const met = s?.met ?? 0, br = s?.breached ?? 0;
+      return { ...r, slaAttainmentPct: met + br > 0 ? Math.round((met / (met + br)) * 100) : 100 };
+    });
+  });
+}
+
+// ---- Posture + compliance summary for one org ----
+export async function postureCompliance(actor: Principal, orgId: string) {
+  if (!can(actor, 'posture.read')) throw Errors.forbidden('missing posture permission');
+  const data = await withOrgContext(orgContextFor(actor), async (sql) => {
+    const f = orgId ? 'AND organization_id = $1' : '';
+    const p = orgId ? [orgId] : [];
+    const sev = (await sql.query(
+      `SELECT severity AS label, count(*)::int AS count FROM posture_findings
+        WHERE status NOT IN ('remediated','accepted') ${f} GROUP BY severity`, p)).rows;
+    const totals = (await sql.query(
+      `SELECT
+         count(*) FILTER (WHERE status NOT IN ('remediated','accepted'))::int AS open,
+         count(*) FILTER (WHERE status='remediated')::int AS remediated,
+         count(*) FILTER (WHERE status NOT IN ('remediated','accepted') AND remediation_due_at < now())::int AS overdue,
+         count(*) FILTER (WHERE status NOT IN ('remediated','accepted') AND severity IN ('critical','high'))::int AS open_high
+       FROM posture_findings WHERE 1=1 ${f}`, p)).rows[0];
+    const conmon = (await sql.query(
+      `SELECT result AS label, count(*)::int AS count FROM (
+         SELECT DISTINCT ON (check_key) check_key, result FROM conmon_runs
+          WHERE 1=1 ${f} ORDER BY check_key, ran_at DESC) latest GROUP BY result`, p)).rows;
+    return { sev, totals, conmon };
+  });
+  // Compliance control coverage (reuses the compliance engine), aggregated by family.
+  let compliance: { families: Array<{ family: string; satisfied: number; partial: number; gap: number }>; satisfiedPct: number } = { families: [], satisfiedPct: 0 };
+  if (orgId && can(actor, 'compliance.read')) {
+    const controls = await controlCoverage(actor, orgId);
+    const fam = new Map<string, { family: string; satisfied: number; partial: number; gap: number }>();
+    for (const c of controls) {
+      const e = fam.get(c.family) ?? { family: c.family, satisfied: 0, partial: 0, gap: 0 };
+      e[c.status as 'satisfied' | 'partial' | 'gap'] += 1;
+      fam.set(c.family, e);
+    }
+    const sat = controls.filter((c) => c.status === 'satisfied').length;
+    compliance = {
+      families: [...fam.values()].sort((a, b) => a.family.localeCompare(b.family)),
+      satisfiedPct: controls.length ? Math.round((sat / controls.length) * 100) : 0,
+    };
+  }
+  return { ...data, compliance };
+}
+
+// ---- On-call + change operations summary (agents/operational only) ----
+export async function opsSummary(actor: Principal, orgId?: string) {
+  if (!can(actor, 'report.read.operational')) throw Errors.forbidden('missing operational reporting permission');
+  return withOrgContext(orgContextFor(actor), async (sql) => {
+    const of = orgId ? 'AND p.organization_id = $1' : '';
+    const cp = orgId ? [orgId] : [];
+    const pages = (await sql.query(
+      `SELECT
+         count(*)::int AS total,
+         count(*) FILTER (WHERE p.state='acknowledged')::int AS acknowledged,
+         count(*) FILTER (WHERE p.state='escalated')::int AS escalated,
+         count(*) FILTER (WHERE p.state IN ('created','notified'))::int AS open,
+         count(*) FILTER (WHERE p.created_at >= now()-interval '7 days')::int AS last_7d
+       FROM oncall_pages p WHERE 1=1 ${of}`, cp)).rows[0];
+    const mtta = (await sql.query(
+      `SELECT coalesce(round(avg(EXTRACT(EPOCH FROM (a.acked_at - p.created_at))/60.0)::numeric,1),0)::float AS mtta_min
+         FROM oncall_acknowledgements a JOIN oncall_pages p ON p.id=a.page_id WHERE 1=1 ${of}`, cp)).rows[0];
+    const cf = orgId ? 'AND organization_id = $1' : '';
+    const byType = (await sql.query(
+      `SELECT change_type AS label, count(*)::int AS count FROM changes WHERE 1=1 ${cf} GROUP BY change_type`, cp)).rows;
+    const changeTotals = (await sql.query(
+      `SELECT
+         count(*) FILTER (WHERE status IN ('cab_review'))::int AS in_cab,
+         count(*) FILTER (WHERE status IN ('approved','scheduled'))::int AS approved,
+         count(*) FILTER (WHERE status='scheduled' AND window_start >= now())::int AS upcoming,
+         count(*) FILTER (WHERE status='rejected')::int AS rejected,
+         count(*) FILTER (WHERE status='closed')::int AS closed
+       FROM changes WHERE 1=1 ${cf}`, cp)).rows[0];
+    return { pages: { ...pages, mttaMin: mtta.mtta_min }, change: { byType, ...changeTotals } };
+  });
 }

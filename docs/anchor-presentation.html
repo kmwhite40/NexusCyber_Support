@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anchor — Executive Briefing</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700;9..144,900&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#060c1c;
+    --ink-2:#0a1430;
+    --surface:#0e1a3a;
+    --surface-2:#13234d;
+    --line:rgba(120,150,200,.16);
+    --line-strong:rgba(120,150,200,.32);
+    --text:#e7eefb;
+    --muted:#93a6c9;
+    --faint:#5f7197;
+    --emerald:#34d399;
+    --emerald-soft:#6ee7b7;
+    --teal:#22d3ee;
+    --amber:#fbbf24;
+    --violet:#a78bfa;
+    --rose:#fb7185;
+    --blue:#60a5fa;
+    --serif:'Fraunces',Georgia,serif;
+    --sans:'IBM Plex Sans','Segoe UI',sans-serif;
+    --mono:'IBM Plex Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{height:100%;}
+  body{
+    font-family:var(--sans);
+    background:var(--ink);
+    color:var(--text);
+    overflow:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  /* ===== Atmosphere ===== */
+  .stage{position:fixed;inset:0;}
+  .bg{position:absolute;inset:0;z-index:0;overflow:hidden;}
+  .bg::before{ /* grid */
+    content:"";position:absolute;inset:-2px;
+    background-image:
+      linear-gradient(var(--line) 1px,transparent 1px),
+      linear-gradient(90deg,var(--line) 1px,transparent 1px);
+    background-size:64px 64px;
+    mask-image:radial-gradient(120% 90% at 70% 0%,#000 35%,transparent 80%);
+    -webkit-mask-image:radial-gradient(120% 90% at 70% 0%,#000 35%,transparent 80%);
+  }
+  .glow{position:absolute;border-radius:50%;filter:blur(90px);opacity:.6;}
+  .glow.a{width:680px;height:680px;top:-280px;right:-180px;background:radial-gradient(circle,rgba(52,211,153,.42),transparent 65%);}
+  .glow.b{width:560px;height:560px;bottom:-260px;left:-160px;background:radial-gradient(circle,rgba(34,211,238,.28),transparent 65%);}
+  .grain{position:absolute;inset:0;opacity:.05;mix-blend-mode:overlay;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+  /* ===== Slides ===== */
+  .deck{position:relative;z-index:1;height:100%;width:100%;}
+  .slide{
+    position:absolute;inset:0;
+    display:flex;flex-direction:column;justify-content:center;
+    padding:clamp(36px,6vw,108px);
+    opacity:0;visibility:hidden;
+    transform:translateY(22px) scale(.992);
+    transition:opacity .6s ease,transform .6s cubic-bezier(.22,1,.36,1),visibility .6s;
+    pointer-events:none;
+  }
+  .slide.active{opacity:1;visibility:visible;transform:none;pointer-events:auto;}
+
+  /* staggered reveal of direct marked children */
+  .slide.active [data-reveal]{animation:rise .7s cubic-bezier(.22,1,.36,1) both;}
+  @keyframes rise{from{opacity:0;transform:translateY(20px);}to{opacity:1;transform:none;}}
+  .slide.active [data-reveal="1"]{animation-delay:.05s;}
+  .slide.active [data-reveal="2"]{animation-delay:.14s;}
+  .slide.active [data-reveal="3"]{animation-delay:.23s;}
+  .slide.active [data-reveal="4"]{animation-delay:.32s;}
+  .slide.active [data-reveal="5"]{animation-delay:.41s;}
+  .slide.active [data-reveal="6"]{animation-delay:.5s;}
+  .slide.active [data-reveal="7"]{animation-delay:.59s;}
+
+  /* ===== Shared type ===== */
+  .kicker{
+    font-family:var(--mono);font-size:12px;letter-spacing:.32em;text-transform:uppercase;
+    color:var(--emerald-soft);display:inline-flex;align-items:center;gap:12px;margin-bottom:26px;
+  }
+  .kicker::before{content:"";width:34px;height:1px;background:linear-gradient(90deg,var(--emerald),transparent);}
+  h1,h2{font-family:var(--serif);font-weight:600;letter-spacing:-.02em;line-height:1.02;}
+  .lede{color:var(--muted);font-weight:300;line-height:1.5;max-width:64ch;}
+  .accent{color:var(--emerald-soft);font-style:italic;}
+  strong{color:#fff;font-weight:600;}
+
+  /* spectrum strip top */
+  .spectrum{position:fixed;top:0;left:0;right:0;height:3px;z-index:5;
+    background:linear-gradient(90deg,var(--amber),var(--rose),var(--violet),var(--blue),var(--teal),var(--emerald));}
+
+  /* ===== Slide 1 — Title ===== */
+  .s-title h1{font-size:clamp(54px,9.5vw,140px);font-weight:500;}
+  .s-title h1 .word{display:inline-block;}
+  .s-title .sub{font-size:clamp(17px,2vw,24px);margin-top:30px;max-width:54ch;}
+  .brandline{display:flex;flex-wrap:wrap;gap:10px 24px;margin-top:46px;font-family:var(--mono);font-size:12.5px;letter-spacing:.12em;color:var(--faint);text-transform:uppercase;}
+  .brandline span{display:inline-flex;align-items:center;gap:9px;}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--emerald);box-shadow:0 0 10px var(--emerald);}
+  .memo{position:absolute;top:clamp(36px,6vw,80px);right:clamp(36px,6vw,108px);text-align:right;font-family:var(--mono);font-size:11.5px;letter-spacing:.1em;color:var(--faint);line-height:1.9;text-transform:uppercase;}
+  .memo b{color:var(--muted);font-weight:600;}
+
+  /* ===== Slide 2 — What is Anchor ===== */
+  .s-what h2{font-size:clamp(30px,4.4vw,58px);max-width:18ch;margin-bottom:24px;}
+  .s-what .lede{font-size:clamp(15px,1.5vw,20px);}
+  .statband{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:46px;}
+  .stat{border:1px solid var(--line);background:linear-gradient(160deg,rgba(255,255,255,.035),rgba(255,255,255,.005));border-radius:14px;padding:24px 20px;position:relative;overflow:hidden;}
+  .stat::after{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--c,var(--emerald));}
+  .stat .n{font-family:var(--serif);font-size:clamp(22px,2.4vw,32px);font-weight:600;color:#fff;line-height:1;}
+  .stat .l{font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--muted);margin-top:14px;line-height:1.5;}
+
+  /* ===== Slide 3 — Capabilities ===== */
+  .grid6{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:14px;}
+  .cap{border:1px solid var(--line);border-radius:16px;padding:26px 24px;background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.008));position:relative;transition:transform .35s,border-color .35s,background .35s;}
+  .cap:hover{transform:translateY(-5px);border-color:var(--line-strong);background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.02));}
+  .cap .num{font-family:var(--mono);font-size:11px;color:var(--faint);letter-spacing:.18em;}
+  .cap .ico{width:40px;height:40px;margin:14px 0 16px;border-radius:11px;display:grid;place-items:center;background:rgba(255,255,255,.04);border:1px solid var(--line);}
+  .cap .ico svg{width:21px;height:21px;stroke:var(--c,var(--emerald));fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+  .cap h3{font-family:var(--serif);font-size:19px;font-weight:600;margin-bottom:9px;color:#fff;letter-spacing:-.01em;}
+  .cap p{font-size:13.5px;color:var(--muted);line-height:1.55;font-weight:300;}
+  .cap::before{content:"";position:absolute;left:24px;top:0;width:30px;height:2px;background:var(--c,var(--emerald));border-radius:0 0 2px 2px;}
+
+  /* ===== Slide 4 — Why it matters ===== */
+  .why{display:grid;grid-template-columns:1fr 1fr;gap:18px 40px;margin-top:18px;max-width:1100px;}
+  .why .item{display:flex;gap:16px;padding:8px 0;border-top:1px solid var(--line);}
+  .why .mark{font-family:var(--mono);color:var(--emerald);font-size:13px;padding-top:3px;flex:none;}
+  .why h4{font-family:var(--sans);font-size:16px;font-weight:600;color:#fff;margin-bottom:4px;}
+  .why p{font-size:13.5px;color:var(--muted);line-height:1.5;font-weight:300;}
+
+  /* ===== Slide 5 — Delivery ===== */
+  .delivery{display:grid;grid-template-columns:1.25fr .85fr;gap:48px;align-items:center;margin-top:8px;}
+  .delivery .body{font-size:clamp(15px,1.45vw,18.5px);color:var(--muted);font-weight:300;line-height:1.65;}
+  .delivery .body strong{font-weight:600;}
+  .specs{border:1px solid var(--line-strong);border-radius:18px;overflow:hidden;background:rgba(8,14,32,.5);backdrop-filter:blur(4px);}
+  .specs .head{font-family:var(--mono);font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--emerald-soft);padding:16px 22px;border-bottom:1px solid var(--line);background:rgba(52,211,153,.06);}
+  .spec{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:15px 22px;border-bottom:1px solid var(--line);}
+  .spec:last-child{border-bottom:0;}
+  .spec .k{font-family:var(--mono);font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);}
+  .spec .v{font-size:14px;color:#fff;font-weight:500;text-align:right;}
+
+  /* ===== Slide 6 — Roadmap ===== */
+  .road{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:24px;}
+  .phase{border:1px solid var(--line);border-radius:16px;padding:28px 24px;background:linear-gradient(180deg,rgba(255,255,255,.035),transparent);position:relative;}
+  .phase .tag{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--emerald);margin-bottom:16px;display:flex;align-items:center;gap:10px;}
+  .phase .tag b{width:8px;height:8px;border-radius:50%;background:var(--emerald);box-shadow:0 0 10px var(--emerald);}
+  .phase h3{font-family:var(--serif);font-size:21px;font-weight:600;margin-bottom:12px;color:#fff;}
+  .phase p{font-size:13.5px;color:var(--muted);line-height:1.55;font-weight:300;}
+  .phase.future .tag{color:var(--teal);} .phase.future .tag b{background:var(--teal);box-shadow:0 0 10px var(--teal);}
+  .phase.vision .tag{color:var(--violet);} .phase.vision .tag b{background:var(--violet);box-shadow:0 0 10px var(--violet);}
+
+  /* ===== Slide 7 — Close ===== */
+  .s-close{align-items:flex-start;}
+  .s-close h2{font-size:clamp(34px,5.5vw,76px);max-width:16ch;margin-bottom:26px;font-weight:500;}
+  .s-close .lede{font-size:clamp(16px,1.7vw,21px);margin-bottom:40px;}
+  .pill{display:inline-flex;align-items:center;gap:12px;font-family:var(--mono);font-size:13px;letter-spacing:.06em;color:var(--ink);background:linear-gradient(135deg,var(--emerald),var(--teal));padding:15px 26px;border-radius:999px;font-weight:600;}
+  .live{display:inline-flex;align-items:center;gap:9px;font-family:var(--mono);font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--emerald-soft);margin-bottom:26px;}
+  .live .beat{width:9px;height:9px;border-radius:50%;background:var(--emerald);box-shadow:0 0 0 0 rgba(52,211,153,.6);animation:beat 2s infinite;}
+  @keyframes beat{0%{box-shadow:0 0 0 0 rgba(52,211,153,.55);}70%{box-shadow:0 0 0 14px rgba(52,211,153,0);}100%{box-shadow:0 0 0 0 rgba(52,211,153,0);}}
+
+  /* ===== Chrome: nav, progress, counter ===== */
+  .chrome{position:fixed;left:0;right:0;bottom:0;z-index:6;display:flex;align-items:center;justify-content:space-between;
+    padding:20px clamp(36px,6vw,64px);pointer-events:none;}
+  .dots{display:flex;gap:10px;pointer-events:auto;}
+  .dots button{width:9px;height:9px;border-radius:50%;border:1px solid var(--line-strong);background:transparent;cursor:pointer;padding:0;transition:all .3s;}
+  .dots button.on{background:var(--emerald);border-color:var(--emerald);box-shadow:0 0 10px var(--emerald);transform:scale(1.15);}
+  .counter{font-family:var(--mono);font-size:12px;letter-spacing:.18em;color:var(--faint);}
+  .counter b{color:#fff;font-weight:600;}
+  .arrows{display:flex;gap:10px;pointer-events:auto;}
+  .arrows button{width:42px;height:42px;border-radius:11px;border:1px solid var(--line-strong);background:rgba(255,255,255,.03);color:var(--muted);cursor:pointer;font-size:16px;display:grid;place-items:center;transition:all .25s;}
+  .arrows button:hover{border-color:var(--emerald);color:var(--emerald);background:rgba(52,211,153,.08);}
+  .progress{position:fixed;top:3px;left:0;height:2px;background:linear-gradient(90deg,var(--emerald),var(--teal));z-index:6;transition:width .5s cubic-bezier(.22,1,.36,1);box-shadow:0 0 12px var(--emerald);}
+  .brandtag{position:fixed;top:22px;left:clamp(36px,6vw,64px);z-index:6;font-family:var(--mono);font-size:12px;letter-spacing:.28em;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:10px;}
+  .brandtag .sq{width:13px;height:13px;border:2px solid var(--emerald);border-radius:3px;position:relative;}
+  .brandtag .sq::after{content:"";position:absolute;inset:2px;background:var(--emerald);border-radius:1px;}
+  .hint{position:fixed;bottom:74px;left:50%;transform:translateX(-50%);z-index:6;font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;color:var(--faint);text-transform:uppercase;opacity:.8;transition:opacity .5s;}
+  .hint.hide{opacity:0;}
+
+  @media (max-width:820px){
+    .statband,.grid6,.road{grid-template-columns:1fr 1fr;}
+    .why,.delivery{grid-template-columns:1fr;gap:18px;}
+    .memo{display:none;}
+    .slide{padding:64px 28px 96px;}
+  }
+  @media (max-width:540px){.statband,.grid6,.road{grid-template-columns:1fr;}}
+</style>
+</head>
+<body>
+<div class="spectrum"></div>
+<div class="progress" id="progress"></div>
+<div class="brandtag"><span class="sq"></span>Anchor</div>
+
+<div class="stage">
+  <div class="bg"><div class="glow a"></div><div class="glow b"></div><div class="grain"></div></div>
+
+  <div class="deck" id="deck">
+
+    <!-- 1 — TITLE -->
+    <section class="slide s-title active">
+      <div class="memo" data-reveal="1">
+        <b>To</b> Executive Leadership<br>
+        <b>From</b> Product Management<br>
+        <b>Re</b> Introducing Anchor<br>
+        <b>Read</b> 3-minute briefing
+      </div>
+      <div class="kicker" data-reveal="1">Executive Briefing</div>
+      <h1 data-reveal="2"><span class="word">Meet</span> <span class="word accent">Anchor.</span></h1>
+      <p class="lede sub" data-reveal="3">The government-cloud service desk and security operations platform that lets SBS run modern, <strong>ServiceNow-class</strong> IT support for every customer — inside the boundary, on one system of record.</p>
+      <div class="brandline" data-reveal="4">
+        <span><span class="dot"></span>Anchor by SBS Federal</span>
+        <span><span class="dot"></span>Azure Government</span>
+        <span><span class="dot"></span>anchor.azurewebsites.us</span>
+      </div>
+    </section>
+
+    <!-- 2 — WHAT -->
+    <section class="slide s-what">
+      <div class="kicker" data-reveal="1">The one-liner</div>
+      <h2 data-reveal="2">One platform to take in requests, resolve incidents, fulfill access, and prove compliance.</h2>
+      <p class="lede" data-reveal="3">Anchor is our purpose-built platform for IT service management and security operations in the government cloud — serving <strong>many customers at once</strong> with strict separation between them. Think of it as a service desk that was <em>born</em> in the FedRAMP / CUI boundary rather than retrofitted into it.</p>
+      <div class="statband">
+        <div class="stat" data-reveal="4" style="--c:var(--emerald)"><div class="n">1 platform</div><div class="l">Service desk, security &amp; compliance, unified</div></div>
+        <div class="stat" data-reveal="5" style="--c:var(--teal)"><div class="n">Azure Gov</div><div class="l">Runs in-boundary for CUI workloads</div></div>
+        <div class="stat" data-reveal="6" style="--c:var(--violet)"><div class="n">Multi-tenant</div><div class="l">Many customers, strict isolation</div></div>
+        <div class="stat" data-reveal="7" style="--c:var(--amber)"><div class="n">NIST / FedRAMP</div><div class="l">Aligned controls &amp; audit-ready evidence</div></div>
+      </div>
+    </section>
+
+    <!-- 3 — CAPABILITIES -->
+    <section class="slide s-cap">
+      <div class="kicker" data-reveal="1">What it does</div>
+      <h2 data-reveal="2" style="font-size:clamp(26px,3.4vw,42px);margin-bottom:6px;">Capabilities at a glance</h2>
+      <div class="grid6">
+        <div class="cap" data-reveal="2" style="--c:var(--blue)"><div class="num">01</div><span class="ico"><svg viewBox="0 0 24 24"><path d="M4 17V8a8 8 0 0 1 16 0v9"/><path d="M20 18a2 2 0 0 1-2 2h-3"/><rect x="2" y="13" width="4" height="6" rx="1.5"/><rect x="18" y="13" width="4" height="6" rx="1.5"/></svg></span><h3>IT Service Management</h3><p>Ticketing with priorities &amp; SLAs, agent queues, on-call paging, and full incident, change &amp; problem management — the day-to-day engine of the desk.</p></div>
+        <div class="cap" data-reveal="3" style="--c:var(--violet)"><div class="num">02</div><span class="ico"><svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/></svg></span><h3>Self-Service &amp; Automation</h3><p>A service catalog with guided request forms, approval workflows, a knowledge base, and <strong>“Ask Anchor”</strong> — an assistant that deflects routine questions.</p></div>
+        <div class="cap" data-reveal="4" style="--c:var(--rose)"><div class="num">03</div><span class="ico"><svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.4 3 8.3 7 9.5 4-1.2 7-5.1 7-9.5V6l-7-3Z"/><path d="m9 12 2 2 4-4"/></svg></span><h3>Security &amp; Compliance</h3><p>Continuous monitoring, posture scoring, asset inventory, and an immutable audit trail — turning operations into <strong>audit-ready evidence</strong> mapped to NIST 800-53.</p></div>
+        <div class="cap" data-reveal="5" style="--c:var(--teal)"><div class="num">04</div><span class="ico"><svg viewBox="0 0 24 24"><path d="M7 18a4 4 0 0 1 0-8 5.5 5.5 0 0 1 10.6-1.4A4 4 0 0 1 17.5 18H7Z"/></svg></span><h3>Microsoft 365 &amp; Cloud</h3><p>Native M365 (GCC) email-to-ticket, Entra ID single sign-on, and Teams — plus catalog support for Azure Gov and AWS GovCloud requests.</p></div>
+        <div class="cap" data-reveal="6" style="--c:var(--emerald)"><div class="num">05</div><span class="ico"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><circle cx="12" cy="15.5" r="1.4"/></svg></span><h3>Multi-Tenant Trust</h3><p>One platform, many customers, with <strong>isolation enforced at the database</strong>, least-privilege roles, just-in-time elevation, and delegated administration.</p></div>
+        <div class="cap" data-reveal="7" style="--c:var(--amber)"><div class="num">06</div><span class="ico"><svg viewBox="0 0 24 24"><path d="M4 20V4"/><path d="M4 20h16"/><rect x="7.5" y="12" width="3" height="5"/><rect x="13.5" y="8" width="3" height="9"/></svg></span><h3>Insight &amp; Reporting</h3><p>Executive and operational dashboards, SLA and workload analytics, and self-service reporting — so leadership sees service health at a glance.</p></div>
+      </div>
+    </section>
+
+    <!-- 4 — WHY -->
+    <section class="slide s-why">
+      <div class="kicker" data-reveal="1">The business case</div>
+      <h2 data-reveal="2" style="font-size:clamp(28px,3.8vw,48px);margin-bottom:8px;">Why Anchor matters</h2>
+      <div class="why">
+        <div class="item" data-reveal="2"><div class="mark">→</div><div><h4>Lower cost, full control</h4><p>ServiceNow-class capability without the licensing and lock-in — we own the roadmap.</p></div></div>
+        <div class="item" data-reveal="3"><div class="mark">→</div><div><h4>Compliance by design</h4><p>Built in the gov boundary, so audit evidence is a by-product of operations, not a fire drill.</p></div></div>
+        <div class="item" data-reveal="4"><div class="mark">→</div><div><h4>One system of record</h4><p>Service desk and security in one place — fewer tools, less swivel-chair, cleaner data.</p></div></div>
+        <div class="item" data-reveal="5"><div class="mark">→</div><div><h4>Scales as an MSP</h4><p>Onboard a new customer as an isolated tenant; run them all from one platform.</p></div></div>
+        <div class="item" data-reveal="6"><div class="mark">→</div><div><h4>Meets users where they are</h4><p>Microsoft 365, email, and SSO — little change management for end users.</p></div></div>
+        <div class="item" data-reveal="7"><div class="mark">→</div><div><h4>Faster resolution</h4><p>Automation, catalog, and self-service deflect routine work and speed fulfillment.</p></div></div>
+      </div>
+    </section>
+
+    <!-- 5 — DELIVERY -->
+    <section class="slide s-deliver">
+      <div class="kicker" data-reveal="1">How it's delivered</div>
+      <h2 data-reveal="2" style="font-size:clamp(28px,3.8vw,48px);margin-bottom:30px;">Built for the boundary</h2>
+      <div class="delivery">
+        <p class="body" data-reveal="3">Anchor runs natively in <strong>Azure Government</strong>, keeping CUI workloads inside the authorization boundary. Access is governed end-to-end — Entra ID single sign-on, role-based permissions, and isolation enforced all the way down to the database — so a customer only ever sees their own data, and platform administration is delegated safely. Updates ship continuously and apply in-boundary, so customers get new capability <strong>without disruptive upgrades</strong>.</p>
+        <div class="specs" data-reveal="4">
+          <div class="head">System of Record · At a glance</div>
+          <div class="spec"><span class="k">Hosting</span><span class="v">Azure Government</span></div>
+          <div class="spec"><span class="k">Identity</span><span class="v">Microsoft Entra ID SSO</span></div>
+          <div class="spec"><span class="k">Isolation</span><span class="v">Per-tenant, DB-enforced</span></div>
+          <div class="spec"><span class="k">Compliance</span><span class="v">NIST 800-53 / FedRAMP</span></div>
+          <div class="spec"><span class="k">Model</span><span class="v">Multi-tenant MSP</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6 — ROADMAP -->
+    <section class="slide s-road">
+      <div class="kicker" data-reveal="1">Looking ahead</div>
+      <h2 data-reveal="2" style="font-size:clamp(28px,3.8vw,48px);">Where we're taking it</h2>
+      <div class="road">
+        <div class="phase" data-reveal="3"><div class="tag"><b></b>Live today</div><h3>Foundation in place</h3><p>The platform is live and serving customers — service desk, security posture, multi-tenant isolation, and M365 integration all in production.</p></div>
+        <div class="phase future" data-reveal="4"><div class="tag"><b></b>Near-term</div><h3>Deeper cloud &amp; automation</h3><p>Microsoft 365, Azure Gov, and AWS GovCloud provisioning straight from the catalog, plus broader automation of common fulfillment.</p></div>
+        <div class="phase vision" data-reveal="5"><div class="tag"><b></b>The horizon</div><h3>Richer executive insight</h3><p>Closing the gap with premium commercial tools — while staying purpose-built for our government mission.</p></div>
+      </div>
+    </section>
+
+    <!-- 7 — CLOSE -->
+    <section class="slide s-close">
+      <div class="live" data-reveal="1"><span class="beat"></span>Live &amp; serving customers today</div>
+      <h2 data-reveal="2">Anchor is here. <span class="accent">Come see it.</span></h2>
+      <p class="lede" data-reveal="3">We'd welcome a 20-minute walkthrough for leadership — a quick tour of the platform and a look at the roadmap.</p>
+      <div data-reveal="4"><span class="pill">Book the walkthrough → Product Management</span></div>
+      <div class="brandline" data-reveal="5" style="margin-top:48px;">
+        <span><span class="dot"></span>Anchor by SBS Federal</span>
+        <span><span class="dot"></span>Government-Cloud Service Desk &amp; Security Operations</span>
+        <span><span class="dot"></span>anchor.azurewebsites.us</span>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<div class="hint" id="hint">← / → · Space · Click to advance</div>
+
+<div class="chrome">
+  <div class="counter"><b id="cur">01</b> / <span id="tot">07</span></div>
+  <div class="dots" id="dots"></div>
+  <div class="arrows">
+    <button id="prev" aria-label="Previous slide">←</button>
+    <button id="next" aria-label="Next slide">→</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  var slides=Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var total=slides.length, i=0;
+  var dotsWrap=document.getElementById('dots');
+  var progress=document.getElementById('progress');
+  var cur=document.getElementById('cur');
+  var hint=document.getElementById('hint');
+  document.getElementById('tot').textContent=String(total).padStart(2,'0');
+
+  slides.forEach(function(_,n){
+    var b=document.createElement('button');
+    if(n===0)b.className='on';
+    b.setAttribute('aria-label','Go to slide '+(n+1));
+    b.addEventListener('click',function(){go(n);});
+    dotsWrap.appendChild(b);
+  });
+  var dots=Array.prototype.slice.call(dotsWrap.children);
+
+  function go(n){
+    n=Math.max(0,Math.min(total-1,n));
+    if(n===i && slides[i].classList.contains('active'))return;
+    slides[i].classList.remove('active');
+    dots[i].classList.remove('on');
+    i=n;
+    // retrigger reveal animations
+    var s=slides[i];
+    s.classList.remove('active'); void s.offsetWidth; s.classList.add('active');
+    dots[i].classList.add('on');
+    cur.textContent=String(i+1).padStart(2,'0');
+    progress.style.width=((i)/(total-1)*100)+'%';
+    if(i>0)hint.classList.add('hide');
+  }
+  function next(){go(i+1);} function prev(){go(i-1);}
+
+  document.getElementById('next').addEventListener('click',next);
+  document.getElementById('prev').addEventListener('click',prev);
+  document.addEventListener('keydown',function(e){
+    if(e.key==='ArrowRight'||e.key===' '||e.key==='PageDown'){e.preventDefault();next();}
+    else if(e.key==='ArrowLeft'||e.key==='PageUp'){e.preventDefault();prev();}
+    else if(e.key==='Home'){go(0);} else if(e.key==='End'){go(total-1);}
+  });
+  // click-to-advance on the stage (ignore controls)
+  document.querySelector('.stage').addEventListener('click',function(e){
+    if(e.target.closest('.chrome')||e.target.closest('a'))return;
+    next();
+  });
+  // touch swipe
+  var x0=null;
+  document.addEventListener('touchstart',function(e){x0=e.touches[0].clientX;},{passive:true});
+  document.addEventListener('touchend',function(e){
+    if(x0===null)return; var dx=e.changedTouches[0].clientX-x0;
+    if(Math.abs(dx)>50){dx<0?next():prev();} x0=null;
+  },{passive:true});
+
+  progress.style.width='0%';
+})();
+</script>
+</body>
+</html>

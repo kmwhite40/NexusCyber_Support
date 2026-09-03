@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Platform Release — Management Brief — June 16, 2026</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+  @media print {
+    body { background: #ffffff !important; padding: 0 !important; }
+    .container { border: none !important; box-shadow: none !important; }
+    .hero, .meta, .metrics th, .metrics tr:nth-child(even) td, .callout, .callout-amber { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .section-card { break-inside: avoid; }
+    h2 { break-after: avoid; }
+  }
+  body { margin: 0; padding: 24px; background: #eef2f7; font-family: 'Inter', "Segoe UI", Arial, sans-serif; color: #1f2937; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+  .container { max-width: 860px; margin: 0 auto; background: #ffffff; border: 1px solid #dbe3ee; box-shadow: 0 4px 24px rgba(15, 23, 42, 0.08); }
+  .rainbow-bar { height: 4px; background: linear-gradient(90deg, #b45309, #be185d, #2563eb, #06b6d4, #10b981); }
+  .hero { background: linear-gradient(135deg, #0a1f44 0%, #1d3557 55%, #047857 100%); color: #ffffff; padding: 36px 40px 30px; }
+  .hero h1 { margin: 0 0 6px; font-size: 32px; font-weight: 700; line-height: 1.15; letter-spacing: -0.3px; }
+  .hero .subtitle { margin: 0 0 4px; color: #94a3b8; font-size: 15px; font-weight: 500; }
+  .hero .date-range { margin: 0; color: #cbd5e1; font-size: 17px; font-weight: 400; }
+  .meta { background: #0a1f44; color: #cbd5e1; padding: 12px 40px; border-bottom: 4px solid #047857; font-size: 13px; display: flex; flex-wrap: wrap; gap: 6px 24px; }
+  .content { padding: 32px 40px 36px; }
+  h2 { margin: 32px 0 14px; color: #0a1f44; font-size: 22px; font-weight: 700; border-bottom: 2px solid #047857; padding-bottom: 8px; letter-spacing: -0.2px; }
+  h2:first-child { margin-top: 0; }
+  h3 { margin: 20px 0 8px; color: #1d3557; font-size: 16px; font-weight: 600; }
+  p { margin: 0 0 12px; font-size: 14.5px; }
+  .callout { background: #f0fdf4; border: 1px solid #86efac; border-left: 5px solid #16a34a; padding: 16px 18px; margin: 14px 0 18px; font-size: 14.5px; line-height: 1.55; }
+  .callout-amber { background: #fffbeb; border: 1px solid #fcd34d; border-left: 5px solid #d97706; padding: 16px 18px; margin: 14px 0 18px; font-size: 14.5px; line-height: 1.55; }
+  .metrics { width: 100%; border-collapse: collapse; margin: 16px 0 14px; font-size: 14px; }
+  .metrics th { background: #0a1f44; color: #ffffff; text-align: left; padding: 10px 14px; font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+  .metrics td { padding: 10px 14px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+  .metrics tr:nth-child(even) td { background: #f8fafc; }
+  .metrics td:last-child { font-weight: 500; }
+  .metrics .total td { background: #ecfdf5; font-weight: 700; color: #0a1f44; border-top: 2px solid #047857; }
+  ul, ol { padding-left: 22px; margin: 8px 0 16px; }
+  li { margin-bottom: 6px; font-size: 14.5px; }
+  strong { font-weight: 600; }
+  code { background: #f1f5f9; padding: 2px 6px; border-radius: 3px; font-size: 13px; font-family: "SF Mono", "Fira Code", Consolas, monospace; color: #334155; }
+  .section-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 18px 20px; margin: 14px 0 18px; }
+  .section-card h3 { margin-top: 0; color: #0a1f44; }
+  .badge { display: inline-block; background: #047857; color: #ffffff; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; text-transform: uppercase; letter-spacing: 0.3px; vertical-align: middle; margin-left: 8px; }
+  .badge-new { background: #2563eb; }
+  .badge-gap { background: #d97706; }
+  .divider { border: none; border-top: 1px solid #e5e7eb; margin: 28px 0; }
+  .footer { background: #f8fafc; border-top: 1px solid #dbe3ee; padding: 20px 40px 24px; font-size: 12px; color: #64748b; line-height: 1.55; }
+  .footer .brand { color: #0a1f44; font-weight: 600; }
+  .stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0 24px; }
+  .stat-cell { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px; text-align: center; }
+  .stat-num { font-size: 22px; font-weight: 700; color: #0a1f44; line-height: 1; }
+  .stat-num.save { color: #047857; }
+  .stat-lbl { font-size: 10px; color: #64748b; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.4px; font-weight: 600; }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="rainbow-bar"></div>
+    <div class="hero">
+      <p class="subtitle">Carbon &amp; Anchor by SBS &mdash; Management Brief</p>
+      <h1>Platform Release Overview</h1>
+      <p class="date-range">Reporting period: May 29 &ndash; June 16, 2026</p>
+    </div>
+    <div class="meta">
+      <span><strong>Date:</strong> June 16, 2026</span>
+      <span><strong>To:</strong> Leadership</span>
+      <span><strong>From:</strong> Office of the CTO</span>
+      <span><strong>Subject:</strong> What shipped &middot; Anchor service desk now live &middot; Jira/Atlassian cost savings &middot; Open gap: project management + kanban</span>
+    </div>
+    <div class="content">
+
+      <h2>Bottom Line</h2>
+      <p>Two platforms advanced this cycle. <strong>Carbon</strong> (federal compliance) gained a FedRAMP-style CMMC SSP generator that auto-populates from real tenant data, a consistent command-center UI, and self-accruing continuous-monitoring trends. <strong>Anchor</strong> (our in-house service desk / ITSM platform) went <strong>live in the government cloud</strong> at <code>anchor.azurewebsites.us</code> and now replaces the day-to-day functions we had been paying Atlassian Jira for &mdash; ticketing, SLAs, notifications, customer satisfaction, and the help-desk knowledge base.</p>
+      <div class="callout">
+        <strong>Headline for leadership:</strong> Standing up Anchor in our own gov-cloud boundary removes per-seat Atlassian licensing for service desk and knowledge base, with an estimated <strong>~$23K&ndash;$92K/year saved</strong> depending on agent count (≈98% lower cost &mdash; Anchor runs on ~$30/month of hosting), while keeping all data inside the FedRAMP boundary. <strong>One gap remains:</strong> we still need a project/work-management app with <strong>kanban boards</strong> to fully retire Jira.
+      </div>
+
+      <div class="stat-row">
+        <div class="stat-cell"><div class="stat-num">Live</div><div class="stat-lbl">Anchor in Gov Cloud</div></div>
+        <div class="stat-cell"><div class="stat-num save">~$0</div><div class="stat-lbl">Per-seat license cost</div></div>
+        <div class="stat-cell"><div class="stat-num save">~98%</div><div class="stat-lbl">Est. cost cut vs Jira (25 agents)</div></div>
+        <div class="stat-cell"><div class="stat-num">3</div><div class="stat-lbl">New end-user / admin guides</div></div>
+      </div>
+
+      <h2>What Shipped &mdash; High Level</h2>
+      <div class="section-card">
+        <h3>Carbon &mdash; Federal Compliance</h3>
+        <ul>
+          <li><strong>CMMC SSP, FedRAMP Appendix A style</strong> &mdash; covers all 110 NIST 800-171 requirements and <strong>auto-fills from the customer's own tenant data and evidence</strong>, with confidence labels so an estimate is never mistaken for a fact.</li>
+          <li><strong>Consistent command-center UI</strong> across ~25 screens, and <strong>continuous-monitoring trends that accrue automatically</strong> (no manual sync) with an honest multi-cloud posture view.</li>
+          <li><strong>Managed-service (CONMONaaS) documentation suite</strong> for offering Continuous Monitoring as a service.</li>
+        </ul>
+      </div>
+      <div class="section-card">
+        <h3>Anchor &mdash; Service Desk / ITSM <span class="badge badge-new">NOW LIVE</span></h3>
+        <ul>
+          <li><strong>Live in the government cloud</strong> at <code>anchor.azurewebsites.us</code> &mdash; ticketing, customer portal, and agent workspace, all inside our FedRAMP boundary.</li>
+          <li><strong>Email notifications fixed end-to-end</strong> &mdash; requesters and the support team are now notified on new tickets, assignments, updates, resolution, and closure (via M365 in GCC High).</li>
+          <li><strong>SLA tracking</strong> &mdash; priority-based response/resolution targets on a business-hours clock; corrected a defect that falsely flagged new tickets as "breached."</li>
+          <li><strong>Email-to-ticket threading</strong> &mdash; customer replies attach to the existing ticket instead of creating duplicates.</li>
+          <li><strong>"Rate my experience" (CSAT)</strong> now works on resolved tickets.</li>
+          <li><strong>Enterprise dashboards</strong> &mdash; Executive, SLA, Operations, Team, Customer Portfolio, Posture &amp; Compliance, On-call &amp; Change.</li>
+          <li><strong>Branding + documentation</strong> &mdash; official Anchor identity applied site-wide, plus three new guides: Administrator, End-User, and Intune device-enrollment (Company Portal + Outlook Classic for GovCloud).</li>
+        </ul>
+      </div>
+
+      <h2>Cost Savings vs Jira / Atlassian</h2>
+      <p>Anchor takes over the service-desk and knowledge-base functions we previously licensed from Atlassian. The table below is a <strong>representative model for 25 service-desk agents</strong> (end users / requesters are free in both). Figures are <em>list-price estimates</em> for Atlassian's government cloud tier &mdash; not a quote &mdash; and are deliberately conservative (agents only).</p>
+      <table class="metrics">
+        <tr><th>Function</th><th>Atlassian (gov cloud, est.)</th><th>Anchor</th></tr>
+        <tr><td>Service desk / ticketing (ITSM)</td><td>Jira Service Mgmt &mdash; ~$50/agent/mo</td><td>Included</td></tr>
+        <tr><td>Knowledge base / help docs</td><td>Confluence &mdash; ~$11/user/mo</td><td>Included (HelpDesk docs)</td></tr>
+        <tr><td>Project mgmt + kanban boards</td><td>Jira Software &mdash; ~$16/agent/mo</td><td><strong>Not yet &mdash; see gap below</strong></td></tr>
+        <tr><td>Per-seat licensing</td><td>~$924 / agent / year</td><td>$0</td></tr>
+        <tr><td>Hosting (whole deployment)</td><td>Bundled in license</td><td>~$360 / year ($30/mo, Azure Gov)</td></tr>
+        <tr class="total"><td>Annual total &mdash; 25 agents</td><td>~$23,100 / year</td><td>~$360 / year</td></tr>
+      </table>
+      <div class="callout">
+        <strong>Estimated net savings: ~$22,700/year at 25 agents (≈98%).</strong> Anchor's only run cost is ~$30/month of hosting, and it adds no per-seat cost, so savings scale almost entirely with headcount: roughly <strong>~$900&ndash;$1,000 saved per agent per year</strong> &mdash; about <strong>$46K/yr at 50 agents</strong> and <strong>$92K/yr at 100 agents</strong>. Beyond dollars: no third-party SaaS added to the FedRAMP boundary (avoids extra vendor ATO/ConMon overhead), data stays in the gov enclave, and there is no annual per-seat price escalation.
+      </div>
+      <p style="font-size: 12.5px; color: #64748b;">Assumptions: 25 agents; Atlassian Government Cloud list-price estimates (commercial cloud is lower, gov/FedRAMP tiers run higher and require annual commitment); Anchor hosting ≈ $30/month (Azure Gov App Service + container + Postgres). Mail rides existing M365 licensing. Actuals depend on tier, term, and negotiated pricing.</p>
+
+      <h2>Open Gap &mdash; Project Management App Needed <span class="badge badge-gap">ACTION</span></h2>
+      <div class="callout-amber">
+        <p style="margin-top:0;"><strong>To fully retire Jira, we still need a project / work-management application with kanban boards.</strong> Anchor today replaces Jira Service Management (ticketing) and Confluence (knowledge base), but it does <strong>not</strong> yet cover the team/project tracking that Jira Software provides &mdash; backlogs, sprints, and <strong>kanban boards</strong> for engineering and project work.</p>
+        <p style="margin-bottom:0;">Until that piece exists, the <strong>~$16/agent/month Jira Software line cannot be eliminated</strong>, so a portion of Atlassian spend (or an interim tool) remains. Recommended next investment: build kanban / work-management into Anchor (or stand up a companion app) so the full savings above are realized and the platform is a single system of record.</p>
+      </div>
+
+      <h2>What's Next</h2>
+      <ul>
+        <li><strong>Project management + kanban boards</strong> &mdash; scope and build the work-management surface that closes the last Jira gap.</li>
+        <li><strong>Deepen Carbon's SSP auto-population</strong> &mdash; per-domain detail and evidence-freshness warnings surfaced before export.</li>
+        <li><strong>Expose continuous-monitoring trend history</strong> in the monthly report and ATO package.</li>
+      </ul>
+
+      <hr class="divider" />
+      <p style="font-size: 12.5px; color: #64748b;">Operated entirely within our government-cloud boundary. Anchor: <a href="https://anchor.azurewebsites.us">anchor.azurewebsites.us</a> &middot; Carbon: <a href="https://m365gcc.azurewebsites.us">m365gcc.azurewebsites.us</a>. A detailed engineering release newsletter for the same period is available on request.</p>
+
+    </div>
+    <div class="footer">
+      <p><span class="brand">Carbon &amp; Anchor by SBS</span> &middot; Federal Compliance &amp; Service-Desk Platforms</p>
+      <p>Microsoft 365 Gov (GCC / GCC High / DoD) &middot; Azure Government &middot; Operated inside the FedRAMP boundary</p>
+      <p>Generated June 16, 2026 &middot; Management brief &mdash; high-level overview</p>
+    </div>
+  </div>
+</body>
+</html>

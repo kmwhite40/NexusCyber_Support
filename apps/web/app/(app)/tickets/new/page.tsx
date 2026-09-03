@@ -4,18 +4,19 @@ import { useRouter } from 'next/navigation';
 import { api, ApiError, type Ticket } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
 import { Card, CardBody, Button, Input, Textarea, Select, Field, Badge } from '@/components/ui/primitives';
+import { Gauge } from 'lucide-react';
 
 const IMPACT = [
-  { v: 1, label: '1 — Organization-wide' },
-  { v: 2, label: '2 — Large group' },
-  { v: 3, label: '3 — Small group' },
-  { v: 4, label: '4 — Single user' },
+  { v: 1, label: 'Most of my organization' },
+  { v: 2, label: 'A large group' },
+  { v: 3, label: 'A small group' },
+  { v: 4, label: 'Just me' },
 ];
 const URGENCY = [
-  { v: 1, label: '1 — Critical' },
-  { v: 2, label: '2 — High' },
-  { v: 3, label: '3 — Medium' },
-  { v: 4, label: '4 — Low' },
+  { v: 1, label: "Critical — I can't work" },
+  { v: 2, label: 'High — blocking me soon' },
+  { v: 3, label: 'Medium — needs attention' },
+  { v: 4, label: 'Low — whenever you can' },
 ];
 // Impact x Urgency -> Priority preview (mirrors server docs/nexus/03 §F.4)
 const MATRIX: Record<number, Record<number, string>> = {
@@ -43,6 +44,22 @@ export default function NewTicketPage() {
     }
   }, [me]);
 
+  // Prefill from query params (e.g. when a KB article didn't resolve the reader's issue).
+  React.useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    const subject = sp.get('subject');
+    const description = sp.get('description');
+    const type = sp.get('type');
+    if (subject || description || type) {
+      setForm((f) => ({
+        ...f,
+        ...(subject ? { subject: subject.slice(0, 300) } : {}),
+        ...(description ? { description } : {}),
+        ...(type ? { type } : {}),
+      }));
+    }
+  }, []);
+
   const priority = MATRIX[form.impact][form.urgency];
 
   async function submit(e: React.FormEvent) {
@@ -65,7 +82,7 @@ export default function NewTicketPage() {
     <div className="mx-auto max-w-2xl space-y-5">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Submit a ticket</h1>
-        <p className="mt-1 text-sm text-muted">We’ll route it, apply the right SLA, and keep you updated.</p>
+        <p className="mt-1 text-sm text-muted">We’ll get it to the right team and keep you updated.</p>
       </div>
 
       <Card>
@@ -93,12 +110,12 @@ export default function NewTicketPage() {
               <Textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="What happened, what you expected, any error messages…" />
             </Field>
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Impact">
+              <Field label="How many people are affected?">
                 <Select value={form.impact} onChange={(e) => setForm({ ...form, impact: Number(e.target.value) })}>
                   {IMPACT.map((i) => <option key={i.v} value={i.v}>{i.label}</option>)}
                 </Select>
               </Field>
-              <Field label="Urgency">
+              <Field label="How urgent is it?">
                 <Select value={form.urgency} onChange={(e) => setForm({ ...form, urgency: Number(e.target.value) })}>
                   {URGENCY.map((u) => <option key={u.v} value={u.v}>{u.label}</option>)}
                 </Select>
@@ -106,9 +123,10 @@ export default function NewTicketPage() {
             </div>
 
             <div className="mb-4 flex items-center gap-2 rounded-md border border-border bg-surface-2/50 px-3 py-2.5">
-              <span className="text-xs text-muted">Derived priority</span>
+              <Gauge className="h-4 w-4 text-muted" strokeWidth={1.75} />
+              <span className="text-xs text-muted">Priority</span>
               <Badge tone={priority === 'P1' ? 'danger' : priority === 'P2' ? 'warning' : 'brand'}>{priority}</Badge>
-              <span className="ml-auto text-[11px] text-muted">Impact × Urgency matrix</span>
+              <span className="ml-auto text-xs text-muted">Set automatically from your answers</span>
             </div>
 
             {error && <p className="mb-3 text-xs text-danger">{error}</p>}

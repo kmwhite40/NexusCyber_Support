@@ -79,8 +79,11 @@ async function performSafeAction(orgId: string | null, ticketId: string | undefi
   // session) can write to RLS-protected tables for the resolved org.
   await withSystemContext(async (sql) => {
     if (action.type === 'add_internal_note') {
+      // An automation note is an internal-visibility comment with no human author
+      // (author_id NULL = system/automation actor).
       await sql.query(
-        `INSERT INTO ticket_internal_notes (organization_id, ticket_id, body) VALUES ($1,$2,$3)`,
+        `INSERT INTO ticket_comments (organization_id, ticket_id, author_id, visibility, body)
+         VALUES ($1,$2,NULL,'internal',$3)`,
         [orgId, ticketId, String(action.text ?? 'Automation note')],
       );
     } else if (action.type === 'add_tag' && action.tag) {
@@ -89,7 +92,35 @@ async function performSafeAction(orgId: string | null, ticketId: string | undefi
     // page_oncall / escalate_ticket / create_posture_finding are recorded as performed
     // intents here; in production they call the respective modules with the rule's
     // scoped service principal.
-  }).catch(() => {});
+  });
+}
+
+/** Perform a single GATED action (customer-visible/destructive) after human approval. */
+async function performGatedAction(orgId: string | null, ticketId: string | undefined, action: Action) {
+  if (!ticketId) return;
+  await withSystemContext(async (sql) => {
+    switch (action.type) {
+      case 'add_comment':
+        await sql.query(
+          `INSERT INTO ticket_comments (organization_id, ticket_id, author_id, visibility, body)
+           VALUES ($1,$2,NULL,'customer',$3)`,
+          [orgId, ticketId, String(action.text ?? 'Automated update')],
+        );
+        break;
+      case 'change_status':
+        if (action.to) await sql.query('UPDATE tickets SET status=$1 WHERE id=$2', [String(action.to), ticketId]);
+        break;
+      case 'reopen_ticket':
+        await sql.query("UPDATE tickets SET status='reopened' WHERE id=$1 AND status IN ('resolved','closed')", [ticketId]);
+        break;
+      case 'close_stale_ticket':
+        await sql.query("UPDATE tickets SET status='closed', closed_at=now(), resolution_code='auto_closed' WHERE id=$1 AND status NOT IN ('closed')", [ticketId]);
+        break;
+      case 'notify_user':
+        publish('notification.requested', orgId, { ticket_id: ticketId, kind: 'automation', text: action.text ?? '' });
+        break;
+    }
+  });
 }
 
 let registered = false;
@@ -111,19 +142,86 @@ export function registerAutomationHandlers(): void {
         const idemKey = `auto:${rule.id}:${evt.event_id}`;
         const ticketId = (evt.data as Record<string, unknown>).ticket_id as string | undefined;
         for (const step of plan) if (step.performed) await performSafeAction(evt.organization_id, ticketId, step.action);
-        await pool
-          .query(
-            `INSERT INTO automation_executions (organization_id, rule_id, rule_version, trigger_event, outcome, steps, idempotency_key)
-             VALUES ($1,$2,$3,$4,'executed',$5,$6) ON CONFLICT (idempotency_key) DO NOTHING`,
-            [evt.organization_id, rule.id, rule.version, evt.type, JSON.stringify(plan), idemKey],
-          )
-          .catch(() => {});
-        publish('automation.executed', evt.organization_id, { execution_id: idemKey, rule_id: rule.id, version: rule.version, outcome: 'executed' });
+
+        const gated = plan.filter((s) => s.gated);
+        if (gated.length === 0) {
+          await pool
+            .query(
+              `INSERT INTO automation_executions (organization_id, rule_id, rule_version, trigger_event, outcome, steps, idempotency_key, ticket_id)
+               VALUES ($1,$2,$3,$4,'executed',$5,$6,$7) ON CONFLICT (idempotency_key) DO NOTHING`,
+              [evt.organization_id, rule.id, rule.version, evt.type, JSON.stringify(plan), idemKey, ticketId ?? null],
+            )
+            .catch(() => {});
+          publish('automation.executed', evt.organization_id, { execution_id: idemKey, rule_id: rule.id, version: rule.version, outcome: 'executed' });
+        } else {
+          // Gated actions require a human gate: record a pending execution + an approval.
+          await withSystemContext(async (sql) => {
+            const exec = (
+              await sql.query(
+                `INSERT INTO automation_executions (organization_id, rule_id, rule_version, trigger_event, outcome, steps, idempotency_key, ticket_id)
+                 VALUES ($1,$2,$3,$4,'pending_approval',$5,$6,$7)
+                 ON CONFLICT (idempotency_key) DO NOTHING RETURNING id`,
+                [evt.organization_id, rule.id, rule.version, evt.type, JSON.stringify(plan), idemKey, ticketId ?? null],
+              )
+            ).rows[0];
+            if (!exec) return; // duplicate event — already recorded
+            if (evt.organization_id) {
+              const approval = (
+                await sql.query(
+                  `INSERT INTO approvals (organization_id, subject_type, subject_id, status) VALUES ($1,'automation',$2,'requested') RETURNING id`,
+                  [evt.organization_id, exec.id],
+                )
+              ).rows[0];
+              await sql.query('UPDATE automation_executions SET approval_id=$1 WHERE id=$2', [approval.id, exec.id]);
+            }
+            publish('automation.pending_approval', evt.organization_id, { execution_id: exec.id, rule_id: rule.id, gated: gated.length });
+          });
+        }
       }
     } catch (err) {
       logger.error({ err, type: evt.type }, 'automation handler failed (would DLQ)');
     }
   });
+}
+
+/** Pending gated-action executions awaiting human approval. */
+export async function listPendingApprovals(actor: Principal) {
+  requireAutomationAccess(actor);
+  authorize(actor, 'automation.publish');
+  return (
+    await pool.query(
+      `SELECT e.id, e.rule_id, e.trigger_event, e.steps, e.ticket_id, e.created_at, r.name AS rule_name
+         FROM automation_executions e JOIN automation_rules r ON r.id = e.rule_id
+        WHERE e.outcome='pending_approval' ORDER BY e.created_at DESC LIMIT 100`,
+    )
+  ).rows;
+}
+
+/** Approve a pending execution: perform its gated actions and mark it executed. */
+export async function approveExecution(actor: Principal, executionId: string) {
+  authorize(actor, 'automation.publish');
+  const exec = (await pool.query('SELECT * FROM automation_executions WHERE id=$1', [executionId])).rows[0];
+  if (!exec) throw Errors.notFound('execution not found');
+  if (exec.outcome !== 'pending_approval') throw Errors.conflict(`execution is ${exec.outcome}, not pending approval`);
+  const plan = exec.steps as Array<{ action: Action; gated: boolean }>;
+  for (const step of plan) if (step.gated) await performGatedAction(exec.organization_id, exec.ticket_id ?? undefined, step.action);
+  await pool.query("UPDATE automation_executions SET outcome='executed' WHERE id=$1", [executionId]);
+  if (exec.approval_id) await pool.query("UPDATE approvals SET status='approved' WHERE id=$1", [exec.approval_id]);
+  await audit(actor, { action: 'automation.approve_execution', organizationId: exec.organization_id, resourceType: 'automation_execution', resourceId: executionId });
+  publish('automation.executed', exec.organization_id, { execution_id: executionId, rule_id: exec.rule_id, outcome: 'executed', approved_by: actor.id });
+  return { outcome: 'executed' };
+}
+
+/** Reject a pending execution: discard the gated actions. */
+export async function rejectExecution(actor: Principal, executionId: string) {
+  authorize(actor, 'automation.publish');
+  const exec = (await pool.query('SELECT * FROM automation_executions WHERE id=$1', [executionId])).rows[0];
+  if (!exec) throw Errors.notFound('execution not found');
+  if (exec.outcome !== 'pending_approval') throw Errors.conflict(`execution is ${exec.outcome}, not pending approval`);
+  await pool.query("UPDATE automation_executions SET outcome='rejected' WHERE id=$1", [executionId]);
+  if (exec.approval_id) await pool.query("UPDATE approvals SET status='rejected' WHERE id=$1", [exec.approval_id]);
+  await audit(actor, { action: 'automation.reject_execution', organizationId: exec.organization_id, resourceType: 'automation_execution', resourceId: executionId });
+  return { outcome: 'rejected' };
 }
 
 // ---------- CRUD / lifecycle (Nexus-managed) ----------

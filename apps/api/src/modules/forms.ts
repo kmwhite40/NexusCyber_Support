@@ -1,0 +1,283 @@
+// Custom request forms & field definitions (JSM parity). Forms describe typed fields;
+// submitted answers are validated and merged into a ticket's custom_fields jsonb.
+import { withOrgContext, withSystemContext } from '../db/pool.js';
+import { orgContextFor } from '../auth/principal.js';
+import { authorize, can } from '../authz/pdp.js';
+import { audit } from './audit.js';
+import { Errors } from '../errors.js';
+import { splitSensitiveAnswers, storeSensitive } from './sensitive-fields.js';
+import { isFieldVisible as isVisible, type FieldType, type FormField } from './form-fields.js';
+import type { Principal } from '../types.js';
+
+// Field shape + visibility predicate now live in the leaf module `form-fields.ts` so that
+// `sensitive-fields.ts` can use them without importing back into this file. Re-exported here
+// unchanged: every existing `from './forms.js'` import keeps working.
+export { isFieldVisible } from './form-fields.js';
+export type { FieldType, VisibleWhen, FormField } from './form-fields.js';
+
+export interface ValidationError {
+  field: string;
+  message: string;
+}
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+// Requires a zone designator (Z or +/-HH:MM): a local wall-clock time is ambiguous across an org.
+const ISO_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Intentionally permissive about formatting (spaces, dashes, parens, dots, +), but requires at least one digit.
+const PHONE = /^(?=.*\d)[+()\-.\s\d]{7,}$/;
+
+/** Validate answers against a form's field definitions. Pure. */
+export function validateAgainstForm(fields: FormField[], answers: Record<string, unknown>): { ok: boolean; errors: ValidationError[] } {
+  const errors: ValidationError[] = [];
+  for (const f of fields) {
+    if (f.data_type === 'attachment') continue;
+    if (!isVisible(f, answers)) continue;
+    const v = answers[f.key];
+    const missing =
+      v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0);
+    if (missing) {
+      if (f.required) errors.push({ field: f.key, message: `${f.label} is required` });
+      continue;
+    }
+    switch (f.data_type) {
+      case 'number':
+        if (typeof v !== 'number' && !(typeof v === 'string' && v.trim() !== '' && !Number.isNaN(Number(v)))) {
+          errors.push({ field: f.key, message: `${f.label} must be a number` });
+        }
+        break;
+      case 'select':
+        if (!f.options.includes(String(v))) errors.push({ field: f.key, message: `${f.label} must be one of: ${f.options.join(', ')}` });
+        break;
+      case 'checkbox':
+        if (typeof v !== 'boolean') errors.push({ field: f.key, message: `${f.label} must be true or false` });
+        break;
+      case 'date':
+        if (typeof v !== 'string' || !ISO_DATE.test(v)) errors.push({ field: f.key, message: `${f.label} must be a date (YYYY-MM-DD)` });
+        break;
+      case 'datetime':
+        // An INSTANT, not a date. Offboarding schedules a sign-in block for a moment HR named,
+        // and a bare YYYY-MM-DD cannot express "5pm Friday". A zone designator is required for
+        // the same reason: "17:00" without one means five different instants across the org.
+        if (typeof v !== 'string' || !ISO_DATETIME.test(v) || Number.isNaN(Date.parse(v))) {
+          errors.push({ field: f.key, message: `${f.label} must be a date and time with a timezone (e.g. 2026-09-05T17:00:00-04:00)` });
+        }
+        break;
+      case 'user':
+        if (typeof v !== 'string') errors.push({ field: f.key, message: `${f.label} must be a user` });
+        break;
+      case 'user_multi':
+        if (!Array.isArray(v) || v.some((x) => typeof x !== 'string')) errors.push({ field: f.key, message: `${f.label} must be a list of users` });
+        break;
+      case 'email':
+        if (typeof v !== 'string' || !EMAIL.test(v)) {
+          errors.push({ field: f.key, message: 'must be a valid email address' });
+        }
+        break;
+      case 'phone':
+        if (typeof v !== 'string' || !PHONE.test(v)) {
+          errors.push({ field: f.key, message: 'must be a valid phone number' });
+        }
+        break;
+    }
+  }
+  return { ok: errors.length === 0, errors };
+}
+
+function canManageForms(actor: Principal): boolean {
+  return can(actor, 'automation.author') || can(actor, 'customer.admin.manage_users');
+}
+
+export async function listForms(actor: Principal) {
+  authorize(actor, 'ticket.create');
+  return withOrgContext(orgContextFor(actor), async (sql) => {
+    const { rows } = await sql.query(
+      `SELECT f.id, f.organization_id, f.key, f.name, f.ticket_type, f.active,
+              (SELECT count(*)::int FROM form_fields ff WHERE ff.form_id=f.id) AS field_count
+         FROM request_forms f WHERE f.active ORDER BY f.name`,
+    );
+    return rows;
+  });
+}
+
+async function loadFields(sql: import('../db/pool.js').Sql, formId: string): Promise<FormField[]> {
+  const { rows } = await sql.query(
+    'SELECT key, label, data_type, required, options, maps_to, visible_when, sensitive, options_source FROM form_fields WHERE form_id=$1 ORDER BY position',
+    [formId],
+  );
+  return rows.map((r) => ({
+    key: r.key, label: r.label, data_type: r.data_type, required: r.required,
+    options: (r.options as string[]) ?? [], maps_to: r.maps_to ?? null,
+    visible_when: r.visible_when ?? null, sensitive: r.sensitive ?? false, options_source: r.options_source ?? null,
+  }));
+}
+
+export async function getForm(actor: Principal, id: string) {
+  authorize(actor, 'ticket.create');
+  return withOrgContext(orgContextFor(actor), async (sql) => {
+    const form = (await sql.query('SELECT * FROM request_forms WHERE id=$1', [id])).rows[0];
+    if (!form) throw Errors.notFound('form not found');
+    const fields = await loadFields(sql, id);
+    return { ...form, fields };
+  });
+}
+
+/** Resolve the form linked to a catalog item (service_catalog_items.form_key). Null when none. */
+export async function getFormByCatalogKey(actor: Principal, catalogKey: string) {
+  authorize(actor, 'ticket.create');
+  return withSystemContext(async (sql) => {
+    const item = (
+      await sql.query('SELECT form_key FROM service_catalog_items WHERE key=$1 AND active', [catalogKey])
+    ).rows[0];
+    if (!item?.form_key) return null;
+    const form = (
+      await sql.query('SELECT * FROM request_forms WHERE key=$1 AND organization_id IS NULL AND active', [item.form_key])
+    ).rows[0];
+    if (!form) return null;
+    const fields = await loadFields(sql, form.id);
+    return { ...form, fields };
+  });
+}
+
+export async function createForm(actor: Principal, input: { key: string; name: string; ticketType?: string }) {
+  if (!canManageForms(actor)) throw Errors.forbidden('not permitted to manage forms');
+  const orgId = actor.plane === 'customer' ? actor.organizationId : null;
+  return withSystemContext(async (sql) => {
+    const { rows } = await sql.query(
+      `INSERT INTO request_forms (organization_id, key, name, ticket_type, created_by) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [orgId, input.key, input.name, input.ticketType ?? null, actor.id],
+    );
+    await audit(actor, { action: 'form.create', organizationId: orgId, resourceType: 'request_form', resourceId: rows[0].id, detail: { key: input.key } });
+    return rows[0];
+  });
+}
+
+export async function addField(actor: Principal, formId: string, field: { key: string; label: string; dataType?: FieldType; required?: boolean; options?: string[]; position?: number }) {
+  if (!canManageForms(actor)) throw Errors.forbidden('not permitted to manage forms');
+  return withSystemContext(async (sql) => {
+    const form = (await sql.query('SELECT id FROM request_forms WHERE id=$1', [formId])).rows[0];
+    if (!form) throw Errors.notFound('form not found');
+    const { rows } = await sql.query(
+      `INSERT INTO form_fields (form_id, key, label, data_type, required, options, position)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (form_id, key) DO UPDATE SET label=EXCLUDED.label, data_type=EXCLUDED.data_type,
+         required=EXCLUDED.required, options=EXCLUDED.options, position=EXCLUDED.position RETURNING *`,
+      [formId, field.key, field.label, field.dataType ?? 'text', field.required ?? false, JSON.stringify(field.options ?? []), field.position ?? 0],
+    );
+    await audit(actor, { action: 'form.add_field', resourceType: 'request_form', resourceId: formId, detail: { field: field.key } });
+    return rows[0];
+  });
+}
+
+export interface MappedAnswers {
+  subject?: string;
+  description?: string;
+  requesterId?: string;
+  affectedUserId?: string;
+  customFields: Record<string, unknown>;
+  approverIds: string[];
+  /** Answers for fields flagged `sensitive`. NEVER present in `customFields` — callers must
+   *  hand these to `storeSensitive` (ticket_sensitive_fields), which is permission-gated,
+   *  audited on read, and purged on closure. */
+  sensitive: Record<string, unknown>;
+}
+
+/**
+ * Route a form's answers to ticket columns, approval steps, and custom_fields. Pure.
+ *
+ * The PII guarantee lives HERE, not at the call sites, because this is the only function
+ * that decides what a form submission writes into `tickets.custom_fields`:
+ *   - answers for fields that are not currently visible are dropped entirely (a direct API
+ *     client cannot smuggle in a conditional field's value by omitting its condition;
+ *     `validateAgainstForm` skips hidden fields, so they are never validated either);
+ *   - answers for `sensitive` fields go to `out.sensitive` only — never into `customFields`
+ *     and never onto a ticket column, so PII cannot ride along on a ticket read, a
+ *     notification payload, or an outbound webhook.
+ */
+export function mapFormAnswers(
+  fields: FormField[],
+  answers: Record<string, unknown>,
+  opts: { defaultRequesterId?: string | null } = {},
+): MappedAnswers {
+  // `normal` holds only the answered, currently-visible, non-sensitive keys; everything the
+  // routing below can legitimately persist. `sensitive` is routed out of band.
+  const { normal, sensitive } = splitSensitiveAnswers(fields, answers);
+  const out: MappedAnswers = { customFields: {}, approverIds: [], sensitive };
+  for (const f of fields) {
+    if (!(f.key in normal)) continue; // unanswered, hidden, or sensitive
+    const v = normal[f.key];
+    switch (f.maps_to) {
+      case 'subject':
+        // Several fields may carry maps_to='subject' (e.g. legal first + last name); they
+        // compose, in field order, into one subject rather than the last one winning.
+        // The value is ALSO kept as a custom field: maps_to routes a value onto a ticket
+        // column, it does not erase it from the request record. The provisioning planner
+        // reads legal_first_name / legal_last_name back out of custom_fields, and a
+        // composed subject cannot be split apart again. Same precedent as 'manager'/'affected'.
+        if (v) {
+          out.subject = out.subject ? `${out.subject} ${String(v)}` : String(v);
+          out.customFields[f.key] = v;
+        }
+        break;
+      case 'description':
+        if (v) out.description = String(v);
+        break;
+      case 'requester':
+        if (v) { out.requesterId = String(v); out.affectedUserId = String(v); }
+        break;
+      case 'affected':
+        // The person the request is ABOUT (e.g. offboarding) when that differs from
+        // the requester. Sets affected-user only; requester falls back to the submitter.
+        if (v) { out.affectedUserId = String(v); out.customFields[f.key] = v; }
+        break;
+      case 'approvers':
+        if (Array.isArray(v)) out.approverIds = v.map(String).filter(Boolean);
+        break;
+      case 'attachment':
+        break; // file handled out of band
+      case 'manager':
+        if (v) out.customFields[f.key] = v; // recorded; also available as custom field
+        break;
+      default:
+        if (v !== undefined && v !== null && v !== '') out.customFields[f.key] = v;
+    }
+  }
+  if (!out.requesterId && opts.defaultRequesterId) {
+    out.requesterId = opts.defaultRequesterId;
+    if (!out.affectedUserId) out.affectedUserId = opts.defaultRequesterId;
+  }
+  return out;
+}
+
+/** Pure: decides what a form submission writes into `tickets.custom_fields` vs. what gets
+ *  routed to the sensitive-fields store instead. Sensitive answers (per each field's
+ *  `sensitive` flag) never appear in `customFields` — this is the single source of truth
+ *  `submitAnswers` uses, so testing it directly proves the routing without touching the DB. */
+export function customFieldsFor(
+  fields: FormField[],
+  answers: Record<string, unknown>,
+  formId: string,
+): { customFields: Record<string, unknown>; sensitive: Record<string, unknown> } {
+  const { normal, sensitive } = splitSensitiveAnswers(fields, answers);
+  return { customFields: { ...normal, _form: formId }, sensitive };
+}
+
+/** Validate answers against a form and merge the non-sensitive ones into a ticket's
+ *  custom_fields; sensitive answers are persisted separately via storeSensitive (Task 3). */
+export async function submitAnswers(actor: Principal, ticketId: string, formId: string, answers: Record<string, unknown>) {
+  return withOrgContext(orgContextFor(actor), async (sql) => {
+    const t = (await sql.query('SELECT organization_id, custom_fields FROM tickets WHERE id=$1', [ticketId])).rows[0];
+    if (!t) throw Errors.notFound('ticket not found');
+    authorize(actor, 'ticket.update', { organizationId: t.organization_id });
+    const fields = await loadFields(sql, formId);
+    if (fields.length === 0) throw Errors.notFound('form not found or has no fields');
+    const result = validateAgainstForm(fields, answers);
+    if (!result.ok) throw Errors.validation(result.errors.map((e) => e.message).join('; '));
+    const { customFields, sensitive } = customFieldsFor(fields, answers, formId);
+    const merged = { ...(t.custom_fields ?? {}), ...customFields };
+    await sql.query('UPDATE tickets SET custom_fields=$1 WHERE id=$2', [JSON.stringify(merged), ticketId]);
+    await storeSensitive(ticketId, t.organization_id, sensitive);
+    await audit(actor, { action: 'form.submit', organizationId: t.organization_id, resourceType: 'ticket', resourceId: ticketId, detail: { form: formId } });
+    return { ok: true, custom_fields: merged };
+  });
+}

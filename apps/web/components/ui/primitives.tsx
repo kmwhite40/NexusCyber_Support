@@ -111,6 +111,65 @@ export function Field({ label, children, hint }: { label: string; children: Reac
   );
 }
 
+/** A controlled segmented control / tab switcher. Replaces the hand-rolled
+ *  raw-button tab groups that drifted across analytics/dashboards/changes/services. */
+export function SegmentedControl<T extends string>({
+  options,
+  value,
+  onChange,
+  size = 'md',
+  className,
+}: {
+  options: ReadonlyArray<{ value: T; label: React.ReactNode }>;
+  value: T;
+  onChange: (value: T) => void;
+  size?: 'sm' | 'md';
+  className?: string;
+}) {
+  const pad = size === 'sm' ? 'h-7 px-2.5 text-xs' : 'h-8 px-3 text-sm';
+  return (
+    <div
+      role="tablist"
+      className={cn('inline-flex items-center gap-1 rounded-lg border border-border bg-surface-2/60 p-1', className)}
+    >
+      {options.map((o) => {
+        const active = o.value === value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            role="tab"
+            aria-selected={active ? 'true' : 'false'}
+            onClick={() => onChange(o.value)}
+            className={cn(
+              'inline-flex items-center justify-center gap-1.5 rounded-md font-medium transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50',
+              pad,
+              active ? 'bg-brand text-brand-fg shadow-sm' : 'text-muted hover:text-fg',
+            )}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Brand-accented checkbox; replaces native checkboxes for visual consistency. */
+export function Checkbox({ className, ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <input
+      type="checkbox"
+      className={cn(
+        'h-4 w-4 rounded border-border bg-surface-2/60 accent-[hsl(var(--brand))]',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 transition',
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
 export function Badge({
   className,
   tone = 'neutral',

@@ -1,8 +1,10 @@
 node_modules/
 dist/
 .next/
+.next-deploy/
 .env
 *.log
 .DS_Store
 coverage/
 .claude/
+infra/azure/.secrets.gov.env

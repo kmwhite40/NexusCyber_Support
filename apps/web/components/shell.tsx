@@ -7,25 +7,50 @@ import { useAuth } from './auth-context';
 import { Badge } from './ui/primitives';
 import { Avatar, AvatarFallback } from './ui/avatar';
 import { BrandMark } from './ui/brand';
+import { ThemeToggle } from './theme-toggle';
 
-type NavItem = { href: string; label: string; icon: React.ReactNode; anyPerm?: string[] };
+type NavItem = { href: string; label: string; icon: React.ReactNode; anyPerm?: string[]; section?: string };
 
 // Agents get the operational control plane; customers get a focused support experience.
 const NEXUS_NAV: NavItem[] = [
-  { href: '/dashboard', label: 'Dashboard', icon: <IconGrid /> },
-  { href: '/catalog', label: 'Service catalog', icon: <IconCatalog /> },
-  { href: '/tickets', label: 'Tickets', icon: <IconTicket /> },
-  { href: '/analytics', label: 'Analytics', icon: <IconChart />, anyPerm: ['report.read.operational', 'report.read.customer'] },
-  { href: '/oncall', label: 'On-call', icon: <IconPager />, anyPerm: ['oncall.acknowledge', 'oncall.manage', 'oncall.page'] },
-  { href: '/posture', label: 'Posture', icon: <IconShield />, anyPerm: ['posture.read'] },
-  { href: '/audit', label: 'Audit log', icon: <IconScroll />, anyPerm: ['audit.read'] },
+  { href: '/get-started', label: 'Get started', icon: <IconRocket /> },
+  // Work
+  { href: '/dashboard', label: 'Dashboard', icon: <IconGrid />, section: 'Work' },
+  { href: '/tickets', label: 'Tickets', icon: <IconTicket />, section: 'Work' },
+  { href: '/queues', label: 'Queues', icon: <IconLayers />, anyPerm: ['ticket.read.all_assigned_customers'], section: 'Work' },
+  { href: '/incidents', label: 'Incidents', icon: <IconAlert />, section: 'Work' },
+  { href: '/catalog', label: 'Service catalog', icon: <IconCatalog />, section: 'Work' },
+  { href: '/kb', label: 'Knowledge base', icon: <IconBook />, anyPerm: ['kb.read'], section: 'Work' },
+  { href: '/changes', label: 'Changes', icon: <IconCalendar />, anyPerm: ['change.create', 'change.approve', 'change.vote', 'change.implement', 'cab.manage'], section: 'Work' },
+  { href: '/problems', label: 'Problems', icon: <IconBug />, anyPerm: ['problem.manage'], section: 'Work' },
+  { href: '/archived', label: 'Archived', icon: <IconArchive />, section: 'Work' },
+  // Operations
+  { href: '/oncall', label: 'On-call', icon: <IconPager />, anyPerm: ['oncall.acknowledge', 'oncall.manage', 'oncall.page'], section: 'Operations' },
+  { href: '/escalation-policies', label: 'Escalation', icon: <IconPager />, anyPerm: ['escalation.read', 'escalation.manage'], section: 'Operations' },
+  { href: '/alerts', label: 'Alerts', icon: <IconBell />, anyPerm: ['alert.read'], section: 'Operations' },
+  { href: '/services', label: 'Services', icon: <IconServer />, anyPerm: ['service.read', 'service.manage'], section: 'Operations' },
+  { href: '/customers', label: 'Customers', icon: <IconUsers />, anyPerm: ['org.read', 'org.manage'], section: 'Operations' },
+  { href: '/billing', label: 'Billing', icon: <IconReceipt />, anyPerm: ['org.manage'], section: 'Operations' },
+  { href: '/team', label: 'Platform users', icon: <IconUsers />, anyPerm: ['admin.users.manage'], section: 'Operations' },
+  { href: '/channels', label: 'Channels', icon: <IconPlug />, anyPerm: ['channel.read', 'channel.manage'], section: 'Operations' },
+  { href: '/automations', label: 'Automations', icon: <IconRobot />, anyPerm: ['automation.author'], section: 'Operations' },
+  // Insights
+  { href: '/dashboards', label: 'Dashboards', icon: <IconGauge />, anyPerm: ['dashboard.read'], section: 'Insights' },
+  { href: '/analytics', label: 'Analytics', icon: <IconChart />, anyPerm: ['report.read.operational', 'report.read.customer'], section: 'Insights' },
+  { href: '/audit', label: 'Audit log', icon: <IconScroll />, anyPerm: ['audit.read'], section: 'Insights' },
+  { href: '/email-logs', label: 'Email logs', icon: <IconMail />, anyPerm: ['notifications.read'], section: 'Insights' },
+  // Security
+  { href: '/posture', label: 'Posture', icon: <IconShield />, anyPerm: ['posture.read'], section: 'Security' },
+  { href: '/compliance', label: 'Compliance', icon: <IconClipboard />, anyPerm: ['compliance.read'], section: 'Security' },
 ];
 
 const CUSTOMER_NAV: NavItem[] = [
   { href: '/portal', label: 'Get help', icon: <IconHelp /> },
+  { href: '/kb', label: 'Knowledge base', icon: <IconBook />, anyPerm: ['kb.read'] },
   { href: '/tickets', label: 'My requests', icon: <IconTicket /> },
   { href: '/catalog', label: 'Service catalog', icon: <IconCatalog /> },
   { href: '/posture', label: 'Security posture', icon: <IconShield />, anyPerm: ['posture.read'] },
+  { href: '/compliance', label: 'Compliance', icon: <IconClipboard />, anyPerm: ['compliance.read'] },
   { href: '/analytics', label: 'Reports', icon: <IconChart />, anyPerm: ['report.read.customer'] },
 ];
 
@@ -45,6 +70,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const isCustomer = me.plane === 'customer';
   const items = (isCustomer ? CUSTOMER_NAV : NEXUS_NAV).filter((n) => !n.anyPerm || n.anyPerm.some((p) => can(p)));
 
+  const SECTION_ORDER = ['Work', 'Operations', 'Insights', 'Security'];
+  const renderItem = (n: NavItem) => {
+    const active = pathname === n.href || pathname.startsWith(n.href + '/');
+    return (
+      <Link
+        key={n.href}
+        href={n.href}
+        className={cn(
+          'flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors',
+          active ? 'bg-brand/15 text-brand' : 'text-muted hover:bg-surface-2 hover:text-fg',
+        )}
+      >
+        <span className={cn(active ? 'text-brand' : 'text-muted')}>{n.icon}</span>
+        {n.label}
+      </Link>
+    );
+  };
+  const ungrouped = items.filter((n) => !n.section);
+
   return (
     <div className="flex min-h-screen">
       {/* Sidebar */}
@@ -52,26 +96,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <Link href={isCustomer ? '/portal' : '/dashboard'} className="mb-7 flex items-center gap-2.5 px-2">
           <BrandMark size={34} />
           <div>
-            <div className="text-sm font-semibold leading-none text-fg">Nexus<span className="text-muted">Cyber</span></div>
+            <div className="text-sm font-semibold leading-none text-fg">Anchor</div>
             <div className="text-[10px] uppercase tracking-widest text-muted">{isCustomer ? 'Support' : 'Control Plane'}</div>
           </div>
         </Link>
 
-        <nav className="flex-1 space-y-1">
-          {items.map((n) => {
-            const active = pathname === n.href || pathname.startsWith(n.href + '/');
+        <nav className="flex-1 space-y-1 overflow-y-auto">
+          {ungrouped.map(renderItem)}
+          {SECTION_ORDER.map((sec) => {
+            const secItems = items.filter((n) => n.section === sec);
+            if (secItems.length === 0) return null;
             return (
-              <Link
-                key={n.href}
-                href={n.href}
-                className={cn(
-                  'flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors',
-                  active ? 'bg-brand/15 text-brand' : 'text-muted hover:bg-surface-2 hover:text-fg',
-                )}
-              >
-                <span className={cn(active ? 'text-brand' : 'text-muted')}>{n.icon}</span>
-                {n.label}
-              </Link>
+              <div key={sec} className="pt-3">
+                <div className="px-3 pb-1 text-[10px] font-medium uppercase tracking-widest text-muted/70">{sec}</div>
+                {secItems.map(renderItem)}
+              </div>
             );
           })}
         </nav>
@@ -85,7 +124,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </Avatar>
             <div className="min-w-0">
               <div className="truncate text-xs font-medium text-fg">{me.email}</div>
-              <div className="text-[10px] text-muted">{me.plane === 'nexus' ? 'Nexus agent' : 'Customer'}</div>
+              <div className="text-[10px] text-muted">{me.plane === 'nexus' ? 'Anchor agent' : 'Customer'}</div>
             </div>
           </div>
           <button type="button" onClick={logout} className="mt-3 w-full rounded-md border border-border py-1.5 text-xs text-muted hover:bg-border hover:text-fg">
@@ -103,6 +142,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-3">
             <Badge tone="brand">{me.roles[0] ?? 'user'}</Badge>
             <Badge tone="neutral">{me.plane}</Badge>
+            <ThemeToggle />
           </div>
         </header>
         <main className="flex-1 px-5 py-6 lg:px-8">{children}</main>
@@ -112,15 +152,32 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 }
 
 function titleFor(path: string): string {
+  if (path.startsWith('/get-started')) return 'Get started';
+  if (path.startsWith('/archived')) return 'Archived work items';
   if (path.startsWith('/portal')) return 'Help center';
   if (path.startsWith('/tickets/new')) return 'Submit a ticket';
   if (path.startsWith('/tickets/')) return 'Ticket';
   if (path.startsWith('/tickets')) return 'Tickets';
   if (path.startsWith('/catalog')) return 'Service catalog';
+  if (path.startsWith('/kb')) return 'Knowledge base';
+  if (path.startsWith('/changes')) return 'Change management';
+  if (path.startsWith('/problems')) return 'Problem management';
+  if (path.startsWith('/queues')) return 'Work queues';
   if (path.startsWith('/oncall')) return 'On-call console';
   if (path.startsWith('/posture')) return 'Security posture';
+  if (path.startsWith('/compliance')) return 'Compliance';
+  if (path.startsWith('/automations')) return 'Automation rules';
   if (path.startsWith('/analytics')) return 'Helpdesk analytics';
   if (path.startsWith('/audit')) return 'Audit log';
+  if (path.startsWith('/incidents')) return 'Incidents';
+  if (path.startsWith('/services')) return 'Services & assets';
+  if (path.startsWith('/customers')) return 'Customers';
+  if (path.startsWith('/billing')) return 'Billing & utilization';
+  if (path.startsWith('/email-logs')) return 'Email logs';
+  if (path.startsWith('/alerts')) return 'Alerts';
+  if (path.startsWith('/channels')) return 'Channels';
+  if (path.startsWith('/escalation-policies')) return 'Escalation policies';
+  if (path.startsWith('/dashboards')) return 'Dashboards';
   return 'Dashboard';
 }
 
@@ -133,3 +190,19 @@ function IconChart() { return <svg width="18" height="18" viewBox="0 0 24 24" fi
 function IconCatalog() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 17.5h7M17.5 14v7"/></svg>; }
 function IconPager() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>; }
 function IconHelp() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3 2.5c-.7.3-1 .8-1 1.5v.5"/><circle cx="12" cy="17" r="0.6" fill="currentColor"/></svg>; }
+function IconClipboard() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 15 4v1H9V4z"/><path d="M9 11l2 2 4-4"/></svg>; }
+function IconReceipt() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M5 3v18l2-1.4 2 1.4 2-1.4 2 1.4 2-1.4 2 1.4V3l-2 1.4L14 3l-2 1.4L10 3 8 4.4 5 3z"/><path d="M9 8h6M9 12h6"/></svg>; }
+function IconBook() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 5a2 2 0 0 1 2-2h12v16H6a2 2 0 0 0-2 2V5z"/><path d="M18 17H6a2 2 0 0 0-2 2"/></svg>; }
+function IconCalendar() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>; }
+function IconBug() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="8" y="6" width="8" height="12" rx="4"/><path d="M12 6V4M5 9l2 1M19 9l-2 1M5 15l2-1M19 15l-2-1M4 12h2M18 12h2"/></svg>; }
+function IconLayers() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5M3 17l9 5 9-5"/></svg>; }
+function IconRobot() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="4" y="8" width="16" height="11" rx="2.5"/><path d="M12 8V4M9 13h.01M15 13h.01M9 16h6"/><circle cx="12" cy="3" r="1"/></svg>; }
+function IconAlert() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 3l9 16H3l9-16z"/><path d="M12 10v4"/><circle cx="12" cy="17" r="0.6" fill="currentColor"/></svg>; }
+function IconServer() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>; }
+function IconUsers() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 5.5a3 3 0 0 1 0 5.5M21 20a6 6 0 0 0-5-5.9"/></svg>; }
+function IconMail() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>; }
+function IconBell() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>; }
+function IconPlug() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9 2v6M15 2v6M7 8h10v3a5 5 0 0 1-10 0V8zM12 16v6"/></svg>; }
+function IconGauge() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 13l4-4M5 19a9 9 0 1 1 14 0"/></svg>; }
+function IconRocket() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M5 15c-1.5 1.5-2 5-2 5s3.5-.5 5-2M9 11a4 4 0 0 1 4-4M14.5 4.5C17 3 21 3 21 3s0 4-1.5 6.5C18 12 13 16 11 16l-3-3c0-2 4-7 6.5-8.5z"/><circle cx="14.5" cy="9.5" r="1"/></svg>; }
+function IconArchive() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M9 12h6"/></svg>; }

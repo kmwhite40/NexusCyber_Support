@@ -1,265 +1,387 @@
 'use client';
-import { useEffect } from 'react';
+// Customer-facing support homepage (the public front door at "/"). Speaks to the
+// end user who needs IT help — submit a request, track it, self-serve answers —
+// NOT the internal operator console. Three-color system:
+//   surface → hsl(var(--bg)) · text → hsl(var(--fg)) · accent → hsl(var(--brand))
+// Semantic colors (success/warning) appear ONLY in service-status badges.
+// The floating-cloud WebGL backdrop (GLSLHills) is preserved per design intent.
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
-  Ticket,
-  Siren,
-  ShieldCheck,
-  Lock,
-  Cloud,
-  Workflow,
-  Database,
-  FileCheck,
-  Network,
-  Bot,
-  ArrowRight,
+  Activity, ArrowRight, BookOpen, CheckCircle2, ChevronRight, LayoutGrid,
+  LifeBuoy, ListChecks, RefreshCw, Search, Ticket, Zap,
 } from 'lucide-react';
 import { useAuth } from '@/components/auth-context';
 import { homePath } from '@/lib/api';
 import { GLSLHills } from '@/components/ui/glsl-hills';
-import DisplayCards from '@/components/ui/display-cards';
-import { Navbar1 } from '@/components/ui/navbar1';
+import { Button } from '@/components/ui/primitives';
 import { BrandMark } from '@/components/ui/brand';
-import { LiquidButton, MetalButton } from '@/components/ui/liquid-glass-button';
-import { Card, CardBody, Badge } from '@/components/ui/primitives';
 
-const PILLAR_CARDS = [
-  {
-    icon: <Ticket className="size-4 text-brand" />,
-    title: 'ITSM & ITIL',
-    description: 'Incidents, requests, change & problem',
-    date: 'One queue, every customer',
-    iconClassName: 'text-brand',
-    titleClassName: 'text-brand',
-    className:
-      "[grid-area:stack] hover:-translate-y-10 before:absolute before:w-[100%] before:outline-1 before:rounded-xl before:outline-border before:h-[100%] before:content-[''] before:bg-blend-overlay before:bg-background/50 grayscale-[100%] hover:before:opacity-0 before:transition-opacity before:duration-700 hover:grayscale-0 before:left-0 before:top-0",
-  },
-  {
-    icon: <Siren className="size-4 text-accent" />,
-    title: 'On-call & Major Incident',
-    description: 'Rotations, paging, escalation',
-    date: 'One severity model',
-    iconClassName: 'text-accent',
-    titleClassName: 'text-accent',
-    className:
-      "[grid-area:stack] translate-x-16 translate-y-10 hover:-translate-y-1 before:absolute before:w-[100%] before:outline-1 before:rounded-xl before:outline-border before:h-[100%] before:content-[''] before:bg-blend-overlay before:bg-background/50 grayscale-[100%] hover:before:opacity-0 before:transition-opacity before:duration-700 hover:grayscale-0 before:left-0 before:top-0",
-  },
-  {
-    icon: <ShieldCheck className="size-4 text-success" />,
-    title: 'Security Posture',
-    description: 'Findings, evidence, remediation',
-    date: 'System of record',
-    iconClassName: 'text-success',
-    titleClassName: 'text-success',
-    className: '[grid-area:stack] translate-x-32 translate-y-20 hover:translate-y-10',
-  },
-];
-
+/* ----------------------------- data ----------------------------- */
 const FEATURES = [
-  { icon: Lock, title: 'Tenant isolation by default', body: 'Postgres row-level security plus an app-layer org guard — belt and suspenders, per request.' },
-  { icon: Cloud, title: 'Dual sovereignty', body: 'One codebase deploys to Commercial and a separate Azure Government enclave, gated by a capability matrix.' },
-  { icon: ShieldCheck, title: 'Posture as a system of record', body: 'Findings linked to tickets, SLAs, evidence and POA&M — not a bolt-on GRC tool.' },
-  { icon: Workflow, title: 'Automation with guardrails', body: 'Simulate → publish → rollback, human-in-the-loop, idempotent actions, full audit.' },
-  { icon: Database, title: 'CMDB & assets', body: 'Configuration items, relationships and Graph discovery driving impact analysis.' },
-  { icon: FileCheck, title: 'Evidence by default', body: 'Consent records, audit logs, change records and snapshots packaged for assessors.' },
-  { icon: Network, title: 'Microsoft 365 native', body: 'Graph, Teams and email per-cloud — national endpoints, least-privilege, secretless.' },
-  { icon: Bot, title: 'AI — optional & isolated', body: 'Per-tenant, off by default in gov, no cross-tenant training, human-approved output.' },
-];
+  {
+    icon: Ticket,
+    title: 'Submit a request',
+    body: 'Report an issue or ask for a service in under a minute. Smart forms set the priority and route it to the right team instantly.',
+    meta: 'Incidents & requests',
+    href: '/tickets/new',
+    span: 'lg:col-span-2',
+  },
+  {
+    icon: BookOpen,
+    title: 'Help Center',
+    body: 'Search clear, step-by-step guides that resolve the most common issues — no waiting, no ticket required.',
+    meta: 'Self-serve answers',
+    href: '/kb',
+    span: 'lg:row-span-2',
+  },
+  {
+    icon: ListChecks,
+    title: 'Track your tickets',
+    body: 'Real-time status and updates on everything you’ve submitted, in one place.',
+    meta: 'Live updates',
+    href: '/portal',
+    span: '',
+  },
+  {
+    icon: LayoutGrid,
+    title: 'Service catalog',
+    body: 'Request access, hardware, and software with guided, pre-approved forms.',
+    meta: 'Guided requests',
+    href: '/catalog',
+    span: '',
+  },
+] as const;
 
-const STATS = [
-  { value: '4', label: 'Cloud environments' },
-  { value: '100%', label: 'Tenant isolation' },
-  { value: '11', label: 'Ticket types' },
-  { value: 'A–F', label: 'Posture grading' },
-];
+const SERVICES = [
+  { name: 'Support Portal', state: 'operational' },
+  { name: 'Email & Calendar', state: 'operational' },
+  { name: 'Single Sign-On', state: 'operational' },
+  { name: 'VPN & Remote Access', state: 'degraded' },
+  { name: 'File Storage', state: 'operational' },
+] as const;
 
-const navData = {
-  logo: { url: '/', src: '/nexus-mark.svg', alt: 'Nexus Cyber', title: 'Nexus Cyber' },
-  auth: { login: { text: 'Log in', url: '/login' }, signup: { text: 'Get started', url: '/signup' } },
+const HELP_TOPICS = [
+  { title: 'Reset your password', tag: 'Accounts' },
+  { title: 'Set up VPN on a new device', tag: 'Connectivity' },
+  { title: 'Request a new laptop', tag: 'Hardware' },
+  { title: 'Install Microsoft 365 apps', tag: 'Software' },
+] as const;
+
+const STATE_STYLES: Record<string, { dot: string; text: string; label: string }> = {
+  operational: { dot: 'bg-success', text: 'text-success', label: 'Operational' },
+  degraded: { dot: 'bg-warning', text: 'text-warning', label: 'Degraded' },
+  down: { dot: 'bg-danger', text: 'text-danger', label: 'Outage' },
 };
 
+/* Mount the WebGL clouds only when the browser can create a GL context.
+   Enclaves / browsers without WebGL fall back to the gradient backdrop
+   instead of crashing the page (GLSLHills throws on a missing context). */
+function CloudsBackdrop() {
+  const [webgl, setWebgl] = useState(false);
+  useEffect(() => {
+    try {
+      const canvas = document.createElement('canvas');
+      if (canvas.getContext('webgl2') || canvas.getContext('webgl')) setWebgl(true);
+    } catch {
+      /* no WebGL — keep the gradient fallback */
+    }
+  }, []);
+  return webgl ? <GLSLHills /> : null;
+}
+
+/* --------------------------- component --------------------------- */
 export default function Landing() {
   const { me, loading } = useAuth();
   const router = useRouter();
+  const [secs, setSecs] = useState(0);
 
   useEffect(() => {
     if (!loading && me) router.replace(homePath(me.plane));
   }, [me, loading, router]);
 
+  // Live "updated Ns ago" ticker for the service-status block.
+  useEffect(() => {
+    const t = setInterval(() => setSecs((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+
   return (
-    <div className="relative w-full">
-      {/* ---------- Hero ---------- */}
+    <div className="relative w-full bg-bg">
+      {/* ====================== NAV ====================== */}
+      <header className="absolute inset-x-0 top-0 z-30">
+        <nav className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
+          <Link href="/" className="flex items-center gap-2.5">
+            <BrandMark size={32} />
+            <span className="text-lg font-semibold tracking-tight text-fg">Anchor</span>
+          </Link>
+          <div className="flex items-center gap-1 sm:gap-2">
+            <Link
+              href="/kb"
+              className="hidden items-center gap-1.5 rounded-md px-3 py-2 text-base font-medium text-fg/70 transition-colors hover:text-fg sm:inline-flex"
+            >
+              <BookOpen className="h-[18px] w-[18px]" strokeWidth={1.75} />
+              Help Center
+            </Link>
+            <Link
+              href="/login"
+              className="hidden rounded-md px-3 py-2 text-base font-medium text-fg/70 transition-colors hover:text-fg sm:inline-flex"
+            >
+              Sign in
+            </Link>
+            <Link href="/tickets/new">
+              <Button size="lg" className="px-5 text-base">
+                <Ticket className="h-[18px] w-[18px]" strokeWidth={2} />
+                Submit a Ticket
+              </Button>
+            </Link>
+          </div>
+        </nav>
+      </header>
+
+      {/* ====================== HERO (clouds kept) ====================== */}
       <section className="relative flex min-h-screen w-full flex-col overflow-hidden">
         <div className="absolute inset-0">
-          <GLSLHills />
+          <CloudsBackdrop />
         </div>
-        <div className="pointer-events-none absolute inset-0 z-[2] bg-gradient-to-b from-bg/20 via-bg/55 to-bg" />
+        <div className="pointer-events-none absolute inset-0 z-[2] bg-gradient-to-b from-bg/30 via-bg/60 to-bg" />
 
-        {/* Navbar (vendored 21st.dev Navbar1) */}
-        <div className="relative z-20">
-          <Navbar1 {...navData} />
-        </div>
+        <div className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 pb-24 pt-28 text-center">
+          <span className="mb-7 inline-flex items-center gap-2 rounded-full border border-border bg-surface/50 px-4 py-2 text-sm font-medium text-fg/70 backdrop-blur">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand/70" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
+            </span>
+            Your IT support, in one place
+          </span>
 
-        <div className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 text-center">
-          <div className="max-w-3xl space-y-6">
-            <div className="flex justify-center">
-              <Badge tone="accent">Multi-tenant · GCC High ready · Posture-native</Badge>
-            </div>
-            <h1 className="font-semibold tracking-tight">
-              <span className="block text-5xl font-thin italic text-fg/80 sm:text-6xl">The cyber operations</span>
-              <span className="block bg-gradient-to-r from-brand via-fg to-accent bg-clip-text text-6xl text-transparent sm:text-7xl">
-                control plane
-              </span>
-            </h1>
-            <p className="mx-auto max-w-xl text-sm text-fg/60">
-              Nexus Cyber unifies IT service management, on-call response, and continuous security
-              posture — isolated per customer and ready for Commercial and Government clouds.
-            </p>
-            <div className="flex items-center justify-center gap-4 pt-2">
-              <Link href="/signup">
-                <LiquidButton size="xl" className="text-fg">
-                  Create your organization
-                  <ArrowRight className="ml-1 size-4" />
-                </LiquidButton>
-              </Link>
-              <Link href="/login">
-                <MetalButton variant="default">Explore the demo</MetalButton>
-              </Link>
-            </div>
+          <h1 className="max-w-3xl text-balance text-5xl font-semibold leading-[1.05] tracking-tight text-fg sm:text-6xl md:text-7xl">
+            Get IT help,
+            <br className="hidden sm:block" />{' '}
+            <span className="text-brand">resolved in real-time.</span>
+          </h1>
+
+          <p className="mt-6 max-w-2xl text-pretty text-xl leading-relaxed text-fg/60 sm:text-2xl">
+            Submit a request, track its progress, and find instant answers — all in one
+            secure portal, with a support team that resolves issues fast.
+          </p>
+
+          <div className="mt-9 flex flex-col items-center gap-3 sm:flex-row">
+            <Link href="/tickets/new">
+              <Button size="lg" className="h-12 px-8 text-base">
+                <Ticket className="h-[18px] w-[18px]" strokeWidth={2} />
+                Submit a Ticket
+              </Button>
+            </Link>
+            <Link href="/kb">
+              <Button variant="outline" size="lg" className="h-12 px-8 text-base backdrop-blur">
+                <Search className="h-[18px] w-[18px]" strokeWidth={1.75} />
+                Browse Help Center
+              </Button>
+            </Link>
           </div>
-        </div>
 
-        <div className="relative z-10 mb-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-1 px-6 text-[11px] uppercase tracking-widest text-fg/40">
-          <span>NIST 800-53 / 171</span><span>·</span><span>CMMC 2.0</span><span>·</span>
-          <span>FedRAMP</span><span>·</span><span>SOC 2</span><span>·</span><span>ISO 27001</span>
-        </div>
-      </section>
-
-      {/* ---------- Pillars (DisplayCards) ---------- */}
-      <section className="relative z-10 mx-auto flex max-w-5xl flex-col items-center px-6 py-24">
-        <Badge tone="brand">Three products, one platform</Badge>
-        <h2 className="mt-4 text-center text-3xl font-semibold tracking-tight sm:text-4xl">
-          ITSM, on-call, and posture — fused
-        </h2>
-        <p className="mt-3 max-w-xl text-center text-sm text-fg/60">
-          No second vendor, no second source of truth. A posture finding becomes a ticket, a ticket
-          can page on-call, and every action produces compliance evidence.
-        </p>
-        <div className="mt-16 w-full">
-          <DisplayCards cards={PILLAR_CARDS} />
-        </div>
-      </section>
-
-      {/* ---------- Feature grid ---------- */}
-      <section className="relative z-10 mx-auto max-w-6xl px-6 py-12">
-        <div className="mb-10 text-center">
-          <Badge tone="accent">Enterprise-grade by design</Badge>
-          <h2 className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">Built for the hardest tenants</h2>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {FEATURES.map((f) => (
-            <Card key={f.title} className="h-full transition-transform hover:-translate-y-1">
-              <CardBody>
-                <div className="mb-3 grid h-10 w-10 place-items-center rounded-lg border border-border bg-surface-2 text-brand">
-                  <f.icon className="size-5" />
-                </div>
-                <h3 className="text-sm font-semibold text-fg">{f.title}</h3>
-                <p className="mt-1.5 text-xs leading-relaxed text-muted">{f.body}</p>
-              </CardBody>
-            </Card>
-          ))}
-        </div>
-      </section>
-
-      {/* ---------- Stats band ---------- */}
-      <section className="relative z-10 mx-auto max-w-5xl px-6 py-16">
-        <Card className="overflow-hidden">
-          <div className="grid grid-cols-2 divide-x divide-border md:grid-cols-4">
-            {STATS.map((s) => (
-              <div key={s.label} className="px-6 py-8 text-center">
-                <div className="bg-gradient-to-b from-fg to-fg/50 bg-clip-text text-4xl font-semibold text-transparent tabular-nums">
-                  {s.value}
-                </div>
-                <div className="mt-1 text-xs uppercase tracking-wider text-muted">{s.label}</div>
+          <dl className="mt-14 grid grid-cols-3 gap-x-8 gap-y-2 sm:gap-x-16">
+            {[
+              ['Azure Gov', 'Secure US-Gov hosting'],
+              ['24 / 7', 'Critical-issue hotline'],
+              ['One portal', 'Requests, catalog & answers'],
+            ].map(([n, l]) => (
+              <div key={l} className="text-center">
+                <dt className="text-3xl font-semibold tracking-tight text-fg sm:text-4xl">{n}</dt>
+                <dd className="mt-1.5 text-sm uppercase tracking-widest text-fg/45 sm:text-base">{l}</dd>
               </div>
             ))}
-          </div>
-        </Card>
-      </section>
+          </dl>
+        </div>
 
-      {/* ---------- CTA ---------- */}
-      <section className="relative z-10 mx-auto max-w-4xl px-6 py-24 text-center">
-        <h2 className="text-4xl font-semibold tracking-tight">Stand up your control plane.</h2>
-        <p className="mx-auto mt-3 max-w-lg text-sm text-fg/60">
-          Create an isolated organization in seconds, or sign in to the demo to explore tenant
-          isolation, RBAC + ABAC, the SLA engine, and the posture database live.
-        </p>
-        <div className="mt-8 flex items-center justify-center gap-4">
-          <Link href="/signup">
-            <LiquidButton size="xl" className="text-fg">
-              Get started free
-              <ArrowRight className="ml-1 size-4" />
-            </LiquidButton>
-          </Link>
-          <Link href="/login" className="text-sm font-medium text-brand hover:underline">
-            or explore the demo →
-          </Link>
+        <div className="relative z-10 mb-7 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 px-6 text-sm uppercase tracking-widest text-fg/40">
+          <span>NIST 800-53</span><span aria-hidden>·</span>
+          <span>CMMC 2.0</span><span aria-hidden>·</span>
+          <span>FedRAMP</span><span aria-hidden>·</span>
+          <span>SOC 2</span><span aria-hidden>·</span>
+          <span>ISO 27001</span>
         </div>
       </section>
 
-      {/* ---------- Footer ---------- */}
-      <footer className="relative z-10 border-t border-border bg-surface">
-        <div className="mx-auto max-w-6xl px-6 py-14">
-          <div className="grid gap-10 md:grid-cols-[1.5fr_1fr_1fr_1fr]">
-            {/* Brand */}
-            <div>
-              <div className="flex items-center gap-2.5">
-                <BrandMark size={36} />
-                <span className="text-base font-semibold text-fg">Nexus<span className="text-muted">Cyber</span></span>
+      {/* ====================== WAYS TO GET HELP (bento) ====================== */}
+      <section className="relative z-10 border-t border-border bg-bg">
+        <div className="mx-auto max-w-6xl px-6 py-20 sm:py-28">
+          <div className="mb-12 max-w-2xl">
+            <span className="inline-flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-brand">
+              <Zap className="h-4 w-4" strokeWidth={2} /> Ways to get help
+            </span>
+            <h2 className="mt-3 text-4xl font-semibold tracking-tight text-fg sm:text-5xl">
+              Everything you need, one portal.
+            </h2>
+            <p className="mt-4 text-xl leading-relaxed text-fg/55">
+              Whether it’s a quick question or a hardware request — start here and we’ll take it from there.
+            </p>
+          </div>
+
+          <div className="grid auto-rows-fr grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 lg:grid-rows-2">
+            {FEATURES.map((f, i) => {
+              const Icon = f.icon;
+              return (
+                <Link
+                  key={f.title}
+                  href={f.href}
+                  style={{ animationDelay: `${i * 70}ms` }}
+                  className={`group flex animate-fade-up flex-col justify-between rounded-xl border border-border glass p-6 shadow-card transition-all duration-200 hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-glow ${f.span}`}
+                >
+                  <div>
+                    <div className="mb-5 inline-flex h-12 w-12 items-center justify-center rounded-lg border border-brand/20 bg-brand/10 text-brand">
+                      <Icon className="h-6 w-6" strokeWidth={1.75} />
+                    </div>
+                    <h3 className="text-xl font-semibold tracking-tight text-fg sm:text-2xl">{f.title}</h3>
+                    <p className="mt-2 text-base leading-relaxed text-fg/55 sm:text-lg">{f.body}</p>
+                  </div>
+                  <div className="mt-6 flex items-center justify-between">
+                    <span className="text-sm font-medium uppercase tracking-wider text-fg/40">{f.meta}</span>
+                    <ArrowRight
+                      className="h-4 w-4 text-brand opacity-0 transition-all duration-200 group-hover:translate-x-0.5 group-hover:opacity-100"
+                      strokeWidth={2}
+                    />
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      {/* ====================== SERVICE STATUS + POPULAR HELP ====================== */}
+      <section className="relative z-10 border-t border-border bg-bg">
+        <div className="mx-auto max-w-6xl px-6 py-20 sm:py-24">
+          <div className="overflow-hidden rounded-2xl border border-border glass shadow-card">
+            {/* header */}
+            <div className="flex flex-col gap-3 border-b border-border px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-3">
+                <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-brand/20 bg-brand/10 text-brand">
+                  <Activity className="h-5 w-5" strokeWidth={1.75} />
+                </span>
+                <div>
+                  <h2 className="text-lg font-semibold tracking-tight text-fg">Service status</h2>
+                  <p className="text-sm text-fg/45">Updated {secs}s ago · auto-refreshing</p>
+                </div>
               </div>
-              <p className="mt-4 max-w-xs text-sm leading-relaxed text-muted">
-                The cyber operations control plane — ITSM, on-call, and security posture, isolated
-                per customer and ready for Commercial and Government clouds.
-              </p>
-              <div className="mt-5 flex flex-wrap gap-2">
-                <Badge tone="neutral">Commercial</Badge>
-                <Badge tone="neutral">GCC High</Badge>
-                <Badge tone="neutral">Azure Government</Badge>
+              <div className="flex items-center gap-3">
+                <span className="inline-flex items-center gap-2 rounded-full border border-success/30 bg-success/10 px-3.5 py-1.5 text-sm font-medium text-success">
+                  <span className="relative flex h-2 w-2">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success/70" />
+                    <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
+                  </span>
+                  All core systems operational
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSecs(0)}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-border text-fg/60 transition-colors hover:bg-surface-2 hover:text-fg"
+                  aria-label="Refresh status"
+                >
+                  <RefreshCw className="h-[18px] w-[18px]" strokeWidth={1.75} />
+                </button>
               </div>
             </div>
 
-            {/* Link columns */}
-            <FooterCol title="Platform" links={[['ITSM & ITIL', '/login'], ['On-call', '/login'], ['Security posture', '/login'], ['CMDB', '/login']]} />
-            <FooterCol title="Solutions" links={[['MSP / CSP', '/signup'], ['Government cloud', '/signup'], ['Compliance', '/signup'], ['Microsoft 365', '/signup']]} />
-            <FooterCol title="Company" links={[['Sign in', '/login'], ['Get started', '/signup'], ['Security', '#'], ['Status', '#']]} />
-          </div>
+            {/* body */}
+            <div className="grid grid-cols-1 divide-y divide-border lg:grid-cols-2 lg:divide-x lg:divide-y-0">
+              {/* services the customer uses */}
+              <div className="p-6">
+                <h3 className="mb-4 text-sm font-semibold uppercase tracking-widest text-fg/45">Systems</h3>
+                <ul className="space-y-1">
+                  {SERVICES.map((s) => {
+                    const st = STATE_STYLES[s.state];
+                    return (
+                      <li
+                        key={s.name}
+                        className="flex items-center justify-between rounded-lg px-3 py-2.5 transition-colors hover:bg-surface-2/60"
+                      >
+                        <span className="flex items-center gap-3 text-base text-fg/80">
+                          <span className={`h-2 w-2 rounded-full ${st.dot}`} />
+                          {s.name}
+                        </span>
+                        <span className={`inline-flex items-center gap-1.5 text-sm font-medium ${st.text}`}>
+                          {s.state === 'operational' && <CheckCircle2 className="h-4 w-4" strokeWidth={2} />}
+                          {st.label}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
 
-          <div className="mt-12 flex flex-col items-center justify-between gap-3 border-t border-border pt-6 text-xs text-muted sm:flex-row">
-            <span>© {`Nexus Cyber`} — reference implementation</span>
-            <div className="flex items-center gap-5">
-              <Link href="#" className="hover:text-fg">Privacy</Link>
-              <Link href="#" className="hover:text-fg">Terms</Link>
-              <Link href="#" className="hover:text-fg">NIST · CMMC · FedRAMP</Link>
+              {/* popular self-serve answers */}
+              <div className="p-6">
+                <div className="mb-4 flex items-center justify-between">
+                  <h3 className="text-sm font-semibold uppercase tracking-widest text-fg/45">Popular in the Help Center</h3>
+                  <Link href="/kb" className="text-sm font-medium text-brand hover:underline">
+                    Browse all →
+                  </Link>
+                </div>
+                <ul className="space-y-2">
+                  {HELP_TOPICS.map((t) => (
+                    <li key={t.title}>
+                      <Link
+                        href="/kb"
+                        className="group flex items-center justify-between gap-3 rounded-lg border border-border bg-surface/40 px-3.5 py-3 transition-colors hover:border-brand/30"
+                      >
+                        <span className="flex min-w-0 items-center gap-3">
+                          <LifeBuoy className="h-[18px] w-[18px] shrink-0 text-brand" strokeWidth={1.75} />
+                          <span className="truncate text-base font-medium text-fg">{t.title}</span>
+                        </span>
+                        <span className="flex shrink-0 items-center gap-2">
+                          <span className="hidden text-xs uppercase tracking-wider text-fg/35 sm:inline">{t.tag}</span>
+                          <ChevronRight className="h-4 w-4 text-fg/30 transition-colors group-hover:text-brand" strokeWidth={1.75} />
+                        </span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
           </div>
+
+          {/* closing CTA */}
+          <div className="mt-12 flex flex-col items-center gap-4 rounded-2xl border border-border glass px-6 py-12 text-center shadow-card sm:py-16">
+            <h2 className="max-w-xl text-3xl font-semibold tracking-tight text-fg sm:text-4xl">
+              Can’t find what you need?
+            </h2>
+            <p className="max-w-md text-lg leading-relaxed text-fg/55 sm:text-xl">
+              Our support team is ready to help — submit a ticket and we’ll take it from here.
+            </p>
+            <div className="mt-2 flex flex-col gap-3 sm:flex-row">
+              <Link href="/tickets/new">
+                <Button size="lg" className="h-12 px-8 text-base">
+                  <Ticket className="h-[18px] w-[18px]" strokeWidth={2} />
+                  Submit a Ticket
+                </Button>
+              </Link>
+              <Link href="/login">
+                <Button variant="outline" size="lg" className="h-12 px-8 text-base">
+                  Sign in to your portal
+                </Button>
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ====================== FOOTER ====================== */}
+      <footer className="relative z-10 border-t border-border bg-bg">
+        <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-6 py-8 text-base text-fg/45 sm:flex-row">
+          <span className="flex items-center gap-2">
+            <BrandMark size={20} />
+            Copyright © 2026 NexusCyber. Operated as part of Strategic Business Systems, Inc.
+          </span>
+          <nav className="flex items-center gap-5">
+            <Link href="/privacy" className="transition-colors hover:text-fg/80">Privacy</Link>
+            <Link href="/terms" className="transition-colors hover:text-fg/80">Terms</Link>
+            <Link href="/kb" className="transition-colors hover:text-fg/80">Help Center</Link>
+          </nav>
         </div>
       </footer>
-    </div>
-  );
-}
-
-function FooterCol({ title, links }: { title: string; links: Array<[string, string]> }) {
-  return (
-    <div>
-      <h4 className="text-xs font-semibold uppercase tracking-wider text-fg">{title}</h4>
-      <ul className="mt-4 space-y-2.5">
-        {links.map(([label, href]) => (
-          <li key={label}>
-            <Link href={href} className="text-sm text-muted transition-colors hover:text-fg">{label}</Link>
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }

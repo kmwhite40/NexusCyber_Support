@@ -1,43 +1,76 @@
 'use client';
-// NexusCyber brand mark — a four-armed circuit "nexus" emblem (4-fold rotational
-// symmetry) recreated as inline SVG so it stays crisp and inherits sizing/color.
+// Anchor brand mark — the exact icon from the brand pack (transparent PNG, served
+// from /public). Rendered as <img> so it stays pixel-faithful; the wordmark in
+// BrandLockup is live text so the lockup blends on any (light/dark) background.
 import * as React from 'react';
 
 export function BrandMark({ size = 32, className }: { size?: number; className?: string }) {
-  const gid = React.useId();
   return (
-    <svg width={size} height={size} viewBox="0 0 64 64" className={className} role="img" aria-label="NexusCyber">
-      <defs>
-        <linearGradient id={gid} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#e8eef6" />
-          <stop offset="0.5" stopColor="#90a3b8" />
-          <stop offset="1" stopColor="#3d4957" />
-        </linearGradient>
-      </defs>
-      <g fill="none" stroke={`url(#${gid})`} strokeWidth="3" strokeLinecap="round">
-        {[0, 90, 180, 270].map((deg) => (
-          <g key={deg} transform={`rotate(${deg} 32 32)`}>
-            <path d="M32 12 A20 20 0 0 1 52 32" />
-            <path d="M32 19 A13 13 0 0 1 45 32" />
-            <path d="M46.14 17.86 L41.19 22.81" />
-            <circle cx="32" cy="12" r="2.6" fill={`url(#${gid})`} stroke="none" />
-            <circle cx="41.19" cy="22.81" r="2" fill={`url(#${gid})`} stroke="none" />
-          </g>
-        ))}
-      </g>
-      <circle cx="32" cy="32" r="2.4" fill={`url(#${gid})`} />
-    </svg>
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src="/anchor-mark.png"
+      alt="Anchor"
+      width={size}
+      height={size}
+      draggable={false}
+      className={className}
+      style={{ width: size, height: size, objectFit: 'contain' }}
+    />
   );
 }
 
-/** Emblem + wordmark lockup. */
-export function BrandLockup({ size = 32, className }: { size?: number; className?: string }) {
+/**
+ * Emblem + wordmark lockup (optionally with the "ITSM Platform" tagline).
+ * `stacked` arranges the mark centered above the wordmark so the emblem,
+ * wordmark, and anything below share a single vertical center axis (used in
+ * the landing hero); the default horizontal lockup is used in the navbar.
+ */
+export function BrandLockup({
+  size = 32,
+  tagline = false,
+  stacked = false,
+  className,
+}: {
+  size?: number;
+  tagline?: boolean;
+  stacked?: boolean;
+  className?: string;
+}) {
+  const wordmark = (
+    <span
+      style={{
+        display: 'inline-flex',
+        flexDirection: 'column',
+        alignItems: stacked ? 'center' : 'flex-start',
+        lineHeight: 1.02,
+      }}
+    >
+      <span className="font-semibold tracking-tight text-fg" style={{ fontSize: size * 0.66 }}>Anchor</span>
+      {tagline && (
+        <span
+          className="font-medium uppercase text-muted"
+          // Pad the leading edge to offset trailing letter-spacing so the
+          // tagline optically centers under the wordmark when stacked.
+          style={{ fontSize: size * 0.235, letterSpacing: '0.22em', paddingLeft: stacked ? '0.22em' : undefined }}
+        >
+          ITSM Platform
+        </span>
+      )}
+    </span>
+  );
+
   return (
-    <span className={className} style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+    <span
+      className={className}
+      style={{
+        display: 'inline-flex',
+        flexDirection: stacked ? 'column' : 'row',
+        alignItems: 'center',
+        gap: stacked ? size * 0.2 : size * 0.26,
+      }}
+    >
       <BrandMark size={size} />
-      <span className="text-base font-semibold tracking-tight text-fg">
-        Nexus<span className="text-muted">Cyber</span>
-      </span>
+      {wordmark}
     </span>
   );
 }

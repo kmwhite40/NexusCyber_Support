@@ -18,6 +18,12 @@ export const Errors = {
   forbidden: (detail?: string) => new ApiError(403, 'Forbidden', detail, 'forbidden'),
   notFound: (detail?: string) => new ApiError(404, 'Not Found', detail, 'not_found'),
   conflict: (detail?: string) => new ApiError(409, 'Conflict', detail, 'conflict'),
+  // Distinct from `conflict` on purpose: a caller-supplied precondition (an etag, a plan
+  // fingerprint) no longer matches current state, so the request must be rebuilt from a fresh
+  // read rather than retried. Provisioning's preview/execute binding depends on the UI being
+  // able to tell this apart from "a run is already in progress", which is also a 409.
+  preconditionFailed: (detail?: string) =>
+    new ApiError(412, 'Precondition Failed', detail, 'precondition_failed'),
   validation: (detail?: string) => new ApiError(422, 'Unprocessable Entity', detail, 'validation'),
   badRequest: (detail?: string) => new ApiError(400, 'Bad Request', detail, 'bad_request'),
 };

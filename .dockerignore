@@ -1,0 +1,11 @@
+# Applied to root-context image builds (apps/api/Dockerfile, apps/web/Dockerfile).
+**/node_modules
+**/dist
+**/.next
+.git
+**/*.log
+**/.env
+**/tsconfig.tsbuildinfo
+docs
+.github
+.superpowers

@@ -17,7 +17,15 @@ apps/
          - auth: dev JWT sessions + token validation seam (prod = OIDC)
          - PDP: RBAC + ABAC authorization, deny-by-default
          - domain: organizations, users, tickets, SLA engine, posture, audit
-         - in-process event bus + notification stub
+         - in-process event bus + notifications (M365 Graph mail in prod)
+         - request forms: conditional visibility, server-sourced select options
+         - PII vault: onboarding personal data held outside tickets.custom_fields,
+           permission-gated (pii.view), audited per read, purged on ticket closure
+         - onboarding provisioning: pure planner + resumable executor for Entra
+           account / licence / group / Temporary Access Pass / Windows 365 Cloud PC
+         - CAB: quorum voting, deliberation, board administration, deadline sweeper
+         - background jobs: SLA sweeper, mail ingest, retention purge,
+           Cloud PC poller, CAB deadline sweeper
          - SQL migrations (mirrors docs/nexus/artifacts/db/schema.sql)
   web/   Next.js (App Router) + Tailwind
          - marketing landing (animated GLSL hero, navbar, pillars, features, CTA)
@@ -29,8 +37,12 @@ apps/
            resolution-vs-rating scatter (modeled on an IT Helpdesk Power BI dashboard*)
          - service catalog (workflow-backed request fulfillment) + ConMon panel
          - on-call console (rotation, current responder, pages, ack/escalate)
+         - change management: CAB vote panel (tally, quorum, recusal), change
+           detail with deliberation + PIR, board / blackout / template settings
+         - onboarding provisioning panel (dry-run preview, then Provision)
          - animated 404 page
          - shadcn/21st.dev-style component library (vendored, not CDN)
+         - Vitest + Testing Library suite (see Useful scripts)
 ```
 
 ### Vendored 21st.dev / shadcn UI components
@@ -88,9 +100,33 @@ For local development the API issues signed session JWTs from a seeded user dire
 
 ```bash
 npm run typecheck                  # tsc across workspaces
-npm --workspace apps/api run test  # vitest unit tests (PDP, SLA, priority, posture, on-call)
+npm --workspace apps/api run test  # vitest (PDP, SLA, posture, on-call, planner, voting, ...)
+npm --workspace apps/web run test  # vitest + Testing Library (form visibility, panels)
 npm run build                      # build api + web
 npm run bootstrap                  # install + db up + migrate + seed (one shot)
+
+scripts/deploy-api.sh              # build in ACR, pin digest, restart, wait for /readyz
+scripts/deploy-web.sh              # prebuilt Next standalone bundle -> OneDeploy
+scripts/probe-provisioning-tenant.sh   # READ-ONLY tenant probe (SKUs, Cloud PC
+                                       # policies, API version, TAP policy)
+
+Integration tests (`apps/api/test/integration/*.int.test.ts`) skip silently unless
+`DATABASE_URL` is set. To run migrations or those tests against the dev database:
+
+```bash
+cd <repo root>
+set -a; . ./.env; set +a          # exports DATABASE_URL (dev DB is on port 5544)
+npm --workspace apps/api run migrate
+```
+
+Two traps, both of which fail in confusing ways:
+
+- **`npm run migrate -- --env-file ...` does not work.** The `--` forwards the flag to the
+  *script*, not to node, so `DATABASE_URL` stays unset and `config.ts` falls back to its
+  default of `localhost:5432` — while the dev database is on **5544**. Source `.env` instead.
+- **Run workspace scripts from the repo root, or name the workspace.** `npm run` resolves the
+  workspace from your current directory, so `npm run migrate` inside `apps/web/...` fails with
+  `Missing script: "migrate"` — only `apps/api` has one.
 ```
 
 ## Enterprise hardening
@@ -102,10 +138,99 @@ npm run bootstrap                  # install + db up + migrate + seed (one shot)
   resolved via the system context so NULL-org rows aren't blocked by tenant policies.
 - **On-call/paging engine**: deterministic weekly rotation, current-responder resolution,
   page → acknowledge → escalate (single-owner reassignment).
-- **Tests**: 22 unit tests (authorization PDP, SLA business-hours math, priority matrix,
-  posture scoring, on-call rotation) run without a database.
-- **CI** ([.github/workflows/ci.yml](.github/workflows/ci.yml)): typecheck → test → build, plus
-  `npm audit` (high+) and a secret scan.
+- **Observability**: `GET /metrics` (Prometheus text) — HTTP responses by status class,
+  5xx errors, and domain events (`sla.breached`, `oncall.page`, `change.*`, …) counted in-process.
+- **ITSM service-management parity** (Jira Service Management-class): **ticket linking & merge**
+  (duplicate/caused-by/blocks/child-of + incident→problem→change association), **Problem
+  management** (root cause, known-error workarounds, recurring-incident clustering), **Change
+  management + CAB** (standard/normal/emergency, multi-step Change Advisory Board approval,
+  scheduling with window-conflict detection, change calendar), **CSAT** satisfaction surveys
+  on resolution, and **saved agent queues** with SLA-aware (soonest-breach-first) sorting.
+- **Knowledge base** (Confluence-style): spaces → hierarchical pages with immutable version
+  history, draft→review→published lifecycle, Postgres full-text search with highlighted
+  snippets, page comments, and ticket-deflection tracking.
+- **Compliance & evidence**: NIST 800-53 control catalog with runtime evidence mappings
+  (posture / ConMon / audit), per-control coverage (satisfied / partial / gap), hash-stamped
+  evidence-package export, and posture exceptions with separation-of-duties approval.
+- **Tamper-evident audit + SIEM export**: hash-chained `audit_logs` with a monotonic sequence
+  and advisory-lock-serialized appends (the chain cannot fork under concurrency); `GET
+  /audit/verify` recomputes the chain, `GET /audit/export` streams NDJSON or CEF to a SIEM sink.
+- **JIT elevation & break-glass**: time-boxed privilege grants with separation-of-duties
+  approval, effective only while active; break-glass grants are immediate but loud (critical
+  audit event + on-call page).
+- **Secure attachments**: content-type/size allow-listing, content hashing, malware-scan seam
+  (EICAR-aware mock), and org-scoped streaming downloads — infected files are stored but never
+  served.
+- **Adapter seams** (gov-egress-safe): SIEM sink, blob store, and malware scanner are swappable
+  interfaces with mock implementations; no third-party runtime fetch.
+- **Tests**: 137 unit + DB-backed integration tests (PDP, SLA math, priority matrix, posture
+  scoring, on-call rotation, compliance coverage, audit-chain integrity, elevation SoD,
+  attachments, KB lifecycle, ticket links/merge, change/CAB, problem clustering, CSAT,
+  queues, metrics); integration suites auto-skip when no `DATABASE_URL` is configured.
+- **CI** ([.github/workflows/ci.yml](.github/workflows/ci.yml)): typecheck → migrate/seed →
+  test (with a Postgres service) → build, plus `npm audit` (high+), secret scan, **CodeQL**
+  SAST, **CycloneDX SBOM**, and dependency review.
+
+## Microsoft 365 (GCC) notifications
+
+The API integrates with M365 (GCC by default) for email notifications and inbound
+mail-to-ticket. With no credentials, a **console dev transport** logs messages instead
+of sending — the full pipeline still runs. To go live, set the `M365_*` vars in `.env`
+(see `.env.example`): an app registration with the **Mail.Send** (and, for ingestion,
+**Mail.Read**) application permissions, admin-consented, plus the service mailbox UPN.
+Verify with `GET /api/v1/integrations/m365/health` and `POST /api/v1/integrations/m365/test`
+(`{"sendTo":"you@agency.gov"}`). GCC uses the commercial Graph endpoints; GCC High/DoD
+use the `.us` endpoints (already seeded in `cloud_environments`).
+
+## Onboarding provisioning (feature-flagged, currently OFF)
+
+Turns the SBS "New User Computer/Network Access Form" into a catalog request that, after
+approval, provisions the account end to end: Entra user, licence baseline, security groups,
+a Temporary Access Pass delivered to the supervisor, and a Windows 365 Cloud PC.
+
+Two properties shape the design:
+
+- **The preview is the plan.** `planRun` is pure, and `provision` executes the *same* plan the
+  admin approved in the dry run — bound by a fingerprint, so a change to the ticket between
+  preview and execute is refused rather than silently provisioned.
+- **Cloud PC provisioning is declarative.** There is no "create a Cloud PC" API. A Cloud PC
+  appears when the user holds a Windows 365 licence *and* belongs to a group targeted by a
+  provisioning policy. **The licence must be assigned before the group membership**, or the
+  Cloud PC silently never builds. The engine never defines VM specs; the existing policy stays
+  the source of truth.
+
+Everything stays dark until `M365_PROV_ENABLED=true`, and `enabled` additionally requires the
+tenant id, client id, secret, UPN domain and a non-empty licence baseline — a half-configured
+app fails closed rather than partway through creating a federal identity.
+
+Before switching it on, see the spec's open items and
+[docs/nexus/artifacts/deploy/anchor-provisioning-app-registration.md](docs/nexus/artifacts/deploy/anchor-provisioning-app-registration.md).
+`scripts/probe-provisioning-tenant.sh` answers most of them in one read-only run.
+
+## Change management + CAB voting
+
+Quorum-based Change Advisory Board approval: a board with configurable quorum, threshold and
+per-member weights; deliberation comments; blackout windows; change templates; a post-implementation
+review gate; notifications; and a deadline sweeper.
+
+Design decisions worth knowing before changing this code:
+
+- **Only `resolveVote` decides.** It is pure, and it is the sole writer of an approved or rejected
+  status. Quorum and threshold are **snapshotted onto the change at submit**, so editing the board
+  mid-vote cannot move the goalposts.
+- **The raiser cannot approve their own change.** They are recused from their own board before the
+  quorum snapshot, pre-approval ("standard") is bound to a template authored under `cab.manage`
+  rather than self-declared, and a role that can raise a change does not administer the board.
+- **The deadline sweeper notifies; it never decides.** A timer does not get to approve or reject a
+  production change.
+- **Blackout windows are advisory** — surfaced when scheduling, never enforced.
+
+> **Deploying this changes live permissions and data.** Migrations `0061`/`0062` revoke
+> `change.create` from `ServiceDeskManager` and reclassify existing templates, on the next API boot,
+> with no feature flag. Read
+> [docs/nexus/artifacts/deploy/cab-permission-changes-runbook.md](docs/nexus/artifacts/deploy/cab-permission-changes-runbook.md)
+> first — it covers the announcement sequence and is honest that forward-only migrations mean
+> recovery is a compensating migration, not a revert.
 
 ## Mapping to the spec
 

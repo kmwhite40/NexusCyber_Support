@@ -1,0 +1,220 @@
+// Fires approved offboarding plans at the instant HR instructed.
+//
+// THE INVERSION, and it is deliberate — do not "fix" this into consistency with provisioning.
+//
+// The provisioning engine refuses to execute when the rebuilt plan no longer matches the
+// approved fingerprint, because creating the wrong account is worse than creating nothing.
+// Offboarding is the opposite: FAILING TO DISABLE A TERMINATED EMPLOYEE IS THE DANGEROUS
+// OUTCOME. So when a plan has drifted between approval and the scheduled moment, this job still
+// blocks sign-in and revokes sessions — steps that make the account safe and destroy no data —
+// and halts everything touching licences, groups or the mailbox for a human to review.
+//
+// Spec: docs/superpowers/specs/2026-09-02-sbs-offboarding-design.md
+import { withSystemContext, type Sql } from '../db/pool.js';
+import { logger } from '../logger.js';
+import { planOffboard, offboardFingerprint } from '../modules/offboarding/planner.js';
+import { executeOffboardPlan } from '../modules/offboarding/executor.js';
+import { readOffboardTenantState, buildOffboardOps } from '../modules/offboarding/index.js';
+import { recordHold } from '../modules/retention/index.js';
+
+/** Bounded so one sweep cannot monopolise Graph throttling budget or a database connection. */
+const CLAIM_BATCH = 25;
+
+interface ClaimedRun {
+  id: string;
+  ticket_id: string;
+  organization_id: string;
+  plan: { fingerprint?: string } | null;
+}
+
+/**
+ * How long a run may sit in 'running' before it is presumed abandoned. Generous: a real run is
+ * a handful of Graph calls, so anything past this is a process that died mid-execution.
+ */
+// 30 minutes was too tight. A real run does sequential removeFromGroup calls, and Graph
+// throttling retries with backoff, so a legitimate teardown of an account with many memberships
+// can exceed it — at which point this would flip a LIVE run to needs_review, the live process
+// would then overwrite that, and in the gap a second run could be armed against an account
+// mid-teardown. Two hours is comfortably past any real run and still catches a dead process
+// within one sweep.
+const STRANDED_AFTER = "interval '2 hours'";
+
+export async function sweepDueOffboardings(
+  now: Date = new Date(),
+): Promise<{ claimed: number; executed: number; needsReview: number; stranded: number }> {
+  let executed = 0;
+  let needsReview = 0;
+
+  // A run claimed as 'running' whose process then died was invisible forever: the claim below
+  // only looks at 'scheduled', so nothing revisited it and nobody learned the termination had
+  // not completed.
+  //
+  // Deliberately NOT re-executed. Replaying destructive steps blind is worse than flagging —
+  // removeFromGroup against an already-removed membership fails, and a half-finished teardown is
+  // exactly the state a human should look at.
+  const stranded = await withSystemContext(async (sql: Sql) => {
+    const { rows } = await sql.query(
+      `UPDATE provisioning_runs
+          SET status = 'needs_review', finished_at = now(),
+              error = 'run was interrupted before it finished; review what completed before retrying'
+        WHERE kind = 'offboarding' AND status = 'running'
+          AND started_at < now() - ${STRANDED_AFTER}
+        RETURNING id`,
+    );
+    return rows.length;
+  });
+  if (stranded > 0) logger.warn({ stranded }, 'offboarding runs found stranded in running');
+
+  // SKIP LOCKED is what makes concurrent sweepers safe — two app instances, or the old and new
+  // container overlapping during a rolling deploy. A row already claimed by another transaction
+  // is passed over rather than waited on, so a termination is never executed twice.
+  const due = await withSystemContext(async (sql: Sql) => {
+    const { rows } = await sql.query(
+      `UPDATE provisioning_runs SET status = 'running', started_at = now()
+        WHERE id IN (
+          SELECT id FROM provisioning_runs
+           WHERE kind = 'offboarding' AND status = 'scheduled' AND scheduled_for <= $1
+           ORDER BY scheduled_for
+           FOR UPDATE SKIP LOCKED
+           LIMIT ${CLAIM_BATCH}
+        )
+        RETURNING id, ticket_id, organization_id, plan`,
+      [now.toISOString()],
+    );
+    return rows as ClaimedRun[];
+  });
+
+  for (const run of due) {
+    try {
+      // Rebuild from CURRENT tenant state. The approved plan is a record of what was agreed, not
+      // a script to replay blindly against a directory that may have moved on.
+      const state = await readOffboardTenantState(run.ticket_id);
+      const fresh = planOffboard(state);
+      // Blockers on the rebuilt plan count as drift: whatever was approved, THIS is not
+      // executable, so only the security steps may run.
+      const drifted = offboardFingerprint(fresh) !== run.plan?.fingerprint
+        || fresh.blockers.length > 0;
+
+      if (!state.user) {
+        await finish(run, 'failed', 'the account no longer exists in the tenant');
+        continue;
+      }
+
+      const ops = await buildOffboardOps(run.id, run.organization_id);
+      const outcomes = await executeOffboardPlan(
+        fresh, state.user.id, ops, { onlySecuritySteps: drifted },
+      );
+
+      // THE RETENTION OBLIGATION ATTACHES TO A DISABLED ACCOUNT, not to a completed run.
+      //
+      // This used to sit on the 'succeeded' branch only — but any licensed user's run halts at
+      // the manual mailbox conversion and finishes 'needs_review', and nothing transitions
+      // needs_review -> succeeded. So for the COMMON departure no hold was ever recorded and the
+      // whole compliance feature silently did nothing. The trigger is block_signin succeeding:
+      // from that moment the account is disabled and the 1yr/7yr clock is running, whatever else
+      // remains to be done.
+      //
+      // A failure here NEVER fails the run: the teardown genuinely happened, and losing that fact
+      // is worse than losing a hold, which can be reconstructed from the run. The failure is
+      // logged at error level so a missing hold is loud rather than silent.
+      if (outcomes.some((o) => o.key === 'block_signin' && o.status === 'succeeded')) {
+        try {
+          await recordHold({
+            organizationId: run.organization_id,
+            runId: run.id,
+            ticketId: run.ticket_id,
+            upn: state.user.userPrincipalName,
+            entraObjectId: state.user.id,
+            displayName: state.user.displayName,
+            offboardedAt: now,
+            directoryRoleCount: state.directoryRoleCount,
+            departingUserId: typeof state.answers.departing_user === 'string'
+              ? state.answers.departing_user
+              : null,
+          });
+        } catch (err) {
+          logger.error({ err, runId: run.id, ticketId: run.ticket_id },
+            'account was disabled but the retention hold was NOT recorded');
+        }
+      }
+
+      if (drifted) {
+        // Read the outcomes before claiming anything. Reporting "sign-in blocked and sessions
+        // revoked" while the account is still enabled is worse than reporting a failure: it
+        // tells the desk the dangerous half is handled when it is not.
+        const failedSecurity = outcomes.find((o) => o.status === 'failed');
+        if (failedSecurity) {
+          // Say which half held. Reporting "the account could not be secured" when block_signin
+          // SUCCEEDED and only revoke_sessions failed tells the desk the account is still enabled
+          // when it is in fact disabled — and a retention hold has already been recorded against
+          // it. Wrong in the opposite direction, and just as misleading.
+          const disabled = outcomes.some((o) => o.key === 'block_signin' && o.status === 'succeeded');
+          await finish(run, 'failed',
+            `plan changed since approval; ${disabled ? 'sign-in was blocked' : 'sign-in was NOT blocked'}`
+            + ` and ${failedSecurity.key} failed — ${failedSecurity.error ?? 'step failed'}`);
+        } else {
+          needsReview += 1;
+          logger.warn(
+            { runId: run.id, ticketId: run.ticket_id },
+            'offboarding plan changed since approval; blocked sign-in and revoked sessions, halted the rest for review',
+          );
+          await finish(run, 'needs_review',
+            'plan changed since approval; sign-in blocked and sessions revoked, data-affecting steps halted');
+        }
+      } else if (outcomes.some((o) => o.status === 'failed')) {
+        const failed = outcomes.find((o) => o.status === 'failed')!;
+        await finish(run, 'failed', `${failed.key}: ${failed.error ?? 'step failed'}`);
+      } else if (outcomes.some((o) => o.status === 'awaiting_manual')) {
+        // The mailbox conversion is waiting on a human. Not a failure — the run is paused, and
+        // nothing past that step may proceed until it is confirmed.
+        needsReview += 1;
+        await finish(run, 'needs_review', 'waiting on the manual mailbox conversion');
+      } else {
+        executed += 1;
+        await finish(run, 'succeeded', null);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'sweep failed';
+      logger.error({ err, runId: run.id }, 'offboarding sweep failed');
+      // Never leave a claimed run stuck in 'running': the next sweep would skip it and nobody
+      // would know the termination had not completed.
+      await finish(run, 'failed', message);
+    }
+  }
+
+  return { claimed: due.length, executed, needsReview, stranded };
+}
+
+async function finish(run: ClaimedRun, status: string, error: string | null): Promise<void> {
+  await withSystemContext(async (sql: Sql) => {
+    // organization_id in the predicate: RLS is not inherited, and a status write must not be
+    // able to land on another tenant's run.
+    await sql.query(
+      `UPDATE provisioning_runs
+          SET status = $2, error = $3, finished_at = now()
+        WHERE id = $1 AND organization_id = $4`,
+      [run.id, status, error, run.organization_id],
+    );
+  });
+}
+
+/**
+ * Starts the sweep loop. One minute by default: a termination is time-sensitive, and this is a
+ * cheap indexed query against a partial index that only contains runs actually waiting to fire.
+ *
+ * A throw inside a tick must never take the process down — an offboarding that fails is a
+ * problem, an API that dies with it is a bigger one.
+ */
+export function startOffboardingSweeper(intervalMs = 60_000): NodeJS.Timeout {
+  const tick = async () => {
+    try {
+      const out = await sweepDueOffboardings(new Date());
+      if (out.claimed > 0) {
+        logger.info(out, 'offboarding sweep completed');
+      }
+    } catch (err) {
+      logger.error({ err }, 'offboarding sweep tick failed');
+    }
+  };
+  return setInterval(tick, intervalMs);
+}

@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How to Create a Ticket in Anchor — Walkthrough</title>
+<style>
+  :root{ --bg:#0a0f1e; --panel:#111a30; --panel2:#16213d; --border:#26324d; --fg:#e8edf7; --muted:#93a0bd; --brand:#4f6bff; --brand2:#6d83ff; --danger:#ef4444; --ok:#22c55e; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; background:radial-gradient(1200px 600px at 50% -10%, #16224a 0%, var(--bg) 60%); color:var(--fg); font-family:"Segoe UI",Inter,system-ui,Arial,sans-serif; min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:24px; }
+  .wrap{ width:100%; max-width:920px; }
+  .titlebar{ display:flex; align-items:center; gap:12px; margin-bottom:14px; }
+  .mark{ width:34px; height:34px; }
+  .titlebar h1{ font-size:18px; margin:0; font-weight:700; letter-spacing:-.2px; }
+  .titlebar .sub{ color:var(--muted); font-size:12px; }
+  /* video stage */
+  .stage{ position:relative; aspect-ratio:16/9; background:var(--panel); border:1px solid var(--border); border-radius:14px; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,.5); }
+  .scene{ position:absolute; inset:0; padding:34px 40px; opacity:0; transform:scale(1.02); transition:opacity .5s ease, transform .5s ease; pointer-events:none; }
+  .scene.active{ opacity:1; transform:scale(1); }
+  /* browser chrome mock */
+  .browser{ height:100%; display:flex; flex-direction:column; background:var(--panel2); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+  .chrome{ display:flex; align-items:center; gap:6px; padding:8px 12px; background:#0e1730; border-bottom:1px solid var(--border); }
+  .dot{ width:10px; height:10px; border-radius:50%; }
+  .chrome .url{ margin-left:10px; font-size:11px; color:var(--muted); background:#0a1226; padding:3px 10px; border-radius:6px; }
+  .view{ flex:1; display:flex; min-height:0; }
+  .side{ width:150px; border-right:1px solid var(--border); padding:10px 8px; display:flex; flex-direction:column; gap:4px; background:#0d1630; }
+  .nav{ font-size:11px; color:var(--muted); padding:6px 8px; border-radius:6px; }
+  .nav.on{ background:rgba(79,107,255,.18); color:#cdd6ff; }
+  .main{ flex:1; padding:18px 22px; overflow:hidden; }
+  .h{ font-size:18px; font-weight:700; margin:0 0 4px; }
+  .p{ font-size:12.5px; color:var(--muted); margin:0 0 14px; }
+  .field{ margin-bottom:10px; }
+  .label{ font-size:10px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); margin-bottom:4px; }
+  .input{ background:#0c1430; border:1px solid var(--border); border-radius:7px; padding:8px 10px; font-size:12.5px; color:var(--fg); min-height:16px; }
+  .input.area{ min-height:46px; }
+  .btn{ display:inline-block; background:var(--brand); color:#fff; font-size:12.5px; font-weight:600; padding:8px 16px; border-radius:8px; }
+  .btn.ghost{ background:transparent; border:1px solid var(--border); color:var(--muted); }
+  .row{ display:flex; gap:10px; }
+  .row > *{ flex:1; }
+  .pill{ display:inline-block; font-size:11px; font-weight:600; padding:3px 10px; border-radius:999px; }
+  .pill.p2{ background:rgba(245,158,11,.2); color:#fbbf24; }
+  .pill.type{ background:rgba(79,107,255,.18); color:#bcc7ff; margin:3px 4px 0 0; }
+  .warn{ margin-top:10px; font-size:11.5px; color:#fecaca; background:rgba(239,68,68,.12); border:1px solid rgba(239,68,68,.4); border-left:3px solid var(--danger); border-radius:7px; padding:8px 10px; }
+  .ok{ color:var(--ok); }
+  .hl{ outline:2px solid var(--brand2); outline-offset:2px; border-radius:8px; animation:pulse 1.3s ease-in-out infinite; }
+  @keyframes pulse{ 0%,100%{ outline-color:rgba(109,131,255,.35);} 50%{ outline-color:rgba(109,131,255,1);} }
+  /* cursor */
+  .cursor{ position:absolute; width:20px; height:20px; z-index:5; transition:left .8s cubic-bezier(.5,0,.2,1), top .8s cubic-bezier(.5,0,.2,1); filter:drop-shadow(0 2px 3px rgba(0,0,0,.6)); }
+  .scene .cursor{ opacity:0; }
+  .scene.active .cursor{ opacity:1; }
+  /* title scene */
+  .title-scene{ height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; gap:10px; }
+  .title-scene .big{ font-size:30px; font-weight:800; letter-spacing:-.5px; }
+  .title-scene .tag{ color:var(--muted); font-size:14px; }
+  .anchor-big{ width:64px; height:64px; margin-bottom:6px; }
+  .num{ position:absolute; top:18px; right:22px; font-size:11px; color:var(--muted); letter-spacing:.5px; }
+  /* caption + controls */
+  .caption{ margin-top:14px; min-height:48px; background:#0c1430; border:1px solid var(--border); border-radius:10px; padding:12px 16px; font-size:14.5px; line-height:1.5; }
+  .progress{ height:4px; background:#0c1430; border-radius:999px; overflow:hidden; margin-top:10px; }
+  .progress > i{ display:block; height:100%; width:0; background:linear-gradient(90deg,var(--brand),var(--brand2)); }
+  .controls{ display:flex; align-items:center; gap:10px; margin-top:12px; }
+  .controls button{ background:var(--panel); border:1px solid var(--border); color:var(--fg); border-radius:8px; padding:7px 12px; font-size:13px; cursor:pointer; }
+  .controls button:hover{ border-color:var(--brand2); }
+  .dots{ display:flex; gap:6px; margin-left:auto; }
+  .dots b{ width:9px; height:9px; border-radius:50%; background:#26324d; cursor:pointer; }
+  .dots b.on{ background:var(--brand2); }
+  details{ margin-top:18px; background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:10px 16px; font-size:13px; color:var(--muted); }
+  summary{ cursor:pointer; color:var(--fg); font-weight:600; }
+  details ol{ margin:10px 0; padding-left:20px; } details li{ margin-bottom:8px; line-height:1.5; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="titlebar">
+    <svg class="mark" viewBox="0 0 24 24" fill="none" stroke="#6d83ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2"/><path d="M12 22V8"/><path d="M5 12H2a10 10 0 0 0 20 0h-3"/></svg>
+    <div>
+      <h1>How to Create a Ticket in Anchor</h1>
+      <div class="sub">A 60-second walkthrough for end users</div>
+    </div>
+  </div>
+
+  <div class="stage" id="stage">
+    <!-- 0: title -->
+    <div class="scene" data-cap="In this short walkthrough, you'll learn how to create a support ticket in Anchor — and how to get help even faster.">
+      <span class="num">Intro</span>
+      <div class="title-scene">
+        <svg class="anchor-big" viewBox="0 0 24 24" fill="none" stroke="#6d83ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2"/><path d="M12 22V8"/><path d="M5 12H2a10 10 0 0 0 20 0h-3"/></svg>
+        <div class="big">Creating a Support Ticket</div>
+        <div class="tag">Anchor Service Desk · anchor.azurewebsites.us</div>
+      </div>
+    </div>
+
+    <!-- 1: open portal -->
+    <div class="scene" data-cap="From the left sidebar, open “Get help” to reach the support portal.">
+      <span class="num">Step 1 of 6</span>
+      <div class="browser">
+        <div class="chrome"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#22c55e"></span><span class="url">anchor.azurewebsites.us/portal</span></div>
+        <div class="view">
+          <div class="side">
+            <div class="nav on" id="t1">🛟 Get help</div>
+            <div class="nav">📚 Knowledge base</div>
+            <div class="nav">🎫 My requests</div>
+            <div class="nav">🗂 Service catalog</div>
+          </div>
+          <div class="main">
+            <div class="h">How can we help, Jordan?</div>
+            <div class="p">Submit a request and our support team takes it from here.</div>
+          </div>
+        </div>
+      </div>
+      <svg class="cursor" id="c1" style="left:60px;top:150px" viewBox="0 0 24 24" fill="#fff" stroke="#0a0f1e" stroke-width="1.5"><path d="M5 3l14 8-6 1 3 6-3 1-3-6-5 4z"/></svg>
+    </div>
+
+    <!-- 2: ask anchor -->
+    <div class="scene" data-cap="First, try “Ask Anchor.” It can answer your question instantly from the knowledge base — if it resolves your issue, you're done, no ticket needed.">
+      <span class="num">Step 2 of 6</span>
+      <div class="browser">
+        <div class="chrome"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#22c55e"></span><span class="url">anchor.azurewebsites.us/portal</span></div>
+        <div class="view"><div class="main" style="flex:1">
+          <div class="h">Ask Anchor <span class="pill type">self-service</span></div>
+          <div class="p">Describe your issue in your own words.</div>
+          <div class="row"><div class="input hl" id="t2">how do I reset my password in GovCloud?</div><div class="btn" style="flex:0 0 auto">Ask</div></div>
+          <div style="margin-top:12px; font-size:11.5px; color:var(--muted)">↳ Didn't resolve it? Open a ticket below.</div>
+        </div></div>
+      </div>
+      <svg class="cursor" id="c2" style="left:380px;top:150px" viewBox="0 0 24 24" fill="#fff" stroke="#0a0f1e" stroke-width="1.5"><path d="M5 3l14 8-6 1 3 6-3 1-3-6-5 4z"/></svg>
+    </div>
+
+    <!-- 3: submit a request / type -->
+    <div class="scene" data-cap="If you still need help, click “Submit a request” and choose the type that fits: something's broken, you need something, access help, or a question.">
+      <span class="num">Step 3 of 6</span>
+      <div class="browser">
+        <div class="chrome"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#22c55e"></span><span class="url">anchor.azurewebsites.us/tickets/new</span></div>
+        <div class="view"><div class="main">
+          <div class="h">Submit a ticket</div>
+          <div class="p">We'll route it, apply the right SLA, and keep you updated.</div>
+          <div class="field"><div class="label">What do you need?</div>
+            <div class="hl" id="t3" style="display:flex;flex-wrap:wrap"><span class="pill type">Something's broken</span><span class="pill type">I need something</span><span class="pill type">Access / account help</span><span class="pill type">A question</span></div>
+          </div>
+        </div></div>
+      </div>
+      <svg class="cursor" id="c3" style="left:120px;top:170px" viewBox="0 0 24 24" fill="#fff" stroke="#0a0f1e" stroke-width="1.5"><path d="M5 3l14 8-6 1 3 6-3 1-3-6-5 4z"/></svg>
+    </div>
+
+    <!-- 4: subject + description -->
+    <div class="scene" data-cap="Give a clear subject, then describe what happened, what you expected, and any error messages. Important: never attach sensitive data — no CUI, passwords, or raw log files. Redact first.">
+      <span class="num">Step 4 of 6</span>
+      <div class="browser">
+        <div class="chrome"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#22c55e"></span><span class="url">anchor.azurewebsites.us/tickets/new</span></div>
+        <div class="view"><div class="main">
+          <div class="field"><div class="label">Subject</div><div class="input" id="t4">VPN won't connect from home</div></div>
+          <div class="field"><div class="label">Description</div><div class="input area">Since this morning the VPN client fails at “authenticating.” I expected it to connect as usual. Error: 0x80070040.</div></div>
+          <div class="warn">⚠ Do NOT attach CUI, passwords, or raw log files. Sanitize/redact attachments first (FedRAMP &amp; CUI handling).</div>
+        </div></div>
+      </div>
+    </div>
+
+    <!-- 5: impact/urgency -->
+    <div class="scene" data-cap="Set the impact and urgency. Anchor derives the priority automatically — here, a single user with a high-urgency issue lands at P2.">
+      <span class="num">Step 5 of 6</span>
+      <div class="browser">
+        <div class="chrome"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#22c55e"></span><span class="url">anchor.azurewebsites.us/tickets/new</span></div>
+        <div class="view"><div class="main">
+          <div class="row">
+            <div class="field"><div class="label">Impact</div><div class="input">4 — Single user</div></div>
+            <div class="field"><div class="label">Urgency</div><div class="input">2 — High</div></div>
+          </div>
+          <div class="field hl" id="t5" style="display:flex;align-items:center;gap:10px"><span class="label" style="margin:0">Derived priority</span><span class="pill p2">P2</span><span style="font-size:11px;color:var(--muted);margin-left:auto">Impact × Urgency</span></div>
+        </div></div>
+      </div>
+    </div>
+
+    <!-- 6: submit / confirmation -->
+    <div class="scene" data-cap="Submit. You'll get a ticket number, email updates as it progresses, and you can track it any time under “My requests.”">
+      <span class="num">Step 6 of 6</span>
+      <div class="browser">
+        <div class="chrome"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#22c55e"></span><span class="url">anchor.azurewebsites.us/tickets/INC-1042</span></div>
+        <div class="view"><div class="main" style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:8px">
+          <div style="font-size:40px">✅</div>
+          <div class="h ok">Ticket created — INC-1042</div>
+          <div class="p">We've acknowledged your request and emailed you a copy. Track progress under <b style="color:#cdd6ff">My requests</b>.</div>
+          <span class="pill p2">P2 · Response in 4 business hours</span>
+        </div></div>
+      </div>
+    </div>
+
+    <!-- 7: outro -->
+    <div class="scene" data-cap="That's it. For a P1 emergency after hours, call the NexusCyber Hotline at (800) 265-6446.">
+      <span class="num">Done</span>
+      <div class="title-scene">
+        <div style="font-size:34px">🎉</div>
+        <div class="big">You're all set</div>
+        <div class="tag">Need it now? P1 after-hours hotline — (800) 265-6446</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="caption" id="caption"></div>
+  <div class="progress"><i id="bar"></i></div>
+  <div class="controls">
+    <button id="restart">⟲ Restart</button>
+    <button id="prev">◀ Prev</button>
+    <button id="play">⏸ Pause</button>
+    <button id="next">Next ▶</button>
+    <div class="dots" id="dots"></div>
+  </div>
+
+  <details>
+    <summary>Narration script (for recording a voiceover / real screencast)</summary>
+    <ol>
+      <li><b>Intro:</b> “In this short walkthrough, you'll learn how to create a support ticket in Anchor — and how to get help even faster.”</li>
+      <li><b>Open the portal:</b> “From the left sidebar, open ‘Get help’ to reach the support portal.”</li>
+      <li><b>Ask Anchor first:</b> “Before filing a ticket, try ‘Ask Anchor.’ It answers your question instantly from the knowledge base. If that resolves your issue, you're done — no ticket needed.”</li>
+      <li><b>Submit a request:</b> “If you still need help, click ‘Submit a request’ and choose the type that fits: something's broken, you need something, access or account help, or a question.”</li>
+      <li><b>Describe it:</b> “Give a clear subject, then describe what happened, what you expected, and any error messages. Important — never attach sensitive data: no CUI, passwords, or raw log files. Redact first.”</li>
+      <li><b>Set priority:</b> “Set the impact and urgency. Anchor derives the priority automatically.”</li>
+      <li><b>Submit &amp; track:</b> “Submit. You'll get a ticket number, email updates, and can track progress under ‘My requests.’”</li>
+      <li><b>Outro:</b> “That's it. For a P1 emergency after hours, call the NexusCyber Hotline at (800) 265-6446.”</li>
+    </ol>
+    <p>Tip: to produce a real video, screen-record the live portal at anchor.azurewebsites.us following these beats, and read this script as the voiceover.</p>
+  </details>
+</div>
+
+<script>
+  const scenes = Array.from(document.querySelectorAll('.scene'));
+  const caption = document.getElementById('caption');
+  const bar = document.getElementById('bar');
+  const dotsWrap = document.getElementById('dots');
+  const DURATIONS = [4500,6000,8000,7500,9000,6500,6500,5500]; // ms per scene
+  let i = 0, playing = true, timer = null, barAnim = null;
+
+  scenes.forEach((_, n) => { const b = document.createElement('b'); b.onclick = () => { go(n); }; dotsWrap.appendChild(b); });
+  const dots = Array.from(dotsWrap.children);
+
+  function clearTimers(){ clearTimeout(timer); if (barAnim) cancelAnimationFrame(barAnim); }
+  function runBar(ms){
+    const start = performance.now();
+    function frame(now){
+      const pct = Math.min((now - start) / ms, 1);
+      bar.style.width = (pct * 100) + '%';
+      if (pct < 1 && playing) barAnim = requestAnimationFrame(frame);
+    }
+    barAnim = requestAnimationFrame(frame);
+  }
+  function render(){
+    scenes.forEach((s, n) => s.classList.toggle('active', n === i));
+    dots.forEach((d, n) => d.classList.toggle('on', n === i));
+    caption.textContent = scenes[i].dataset.cap;
+    bar.style.width = '0%';
+    clearTimers();
+    if (playing){
+      runBar(DURATIONS[i]);
+      timer = setTimeout(() => {
+        if (i < scenes.length - 1) { i++; render(); }
+        else { playing = false; document.getElementById('play').textContent = '▶ Replay'; }
+      }, DURATIONS[i]);
+    }
+  }
+  function go(n){ i = (n + scenes.length) % scenes.length; if (!playing){ playing = true; document.getElementById('play').textContent = '⏸ Pause'; } render(); }
+
+  document.getElementById('next').onclick = () => go(i + 1);
+  document.getElementById('prev').onclick = () => go(i - 1);
+  document.getElementById('restart').onclick = () => go(0);
+  document.getElementById('play').onclick = () => {
+    if (!playing && i === scenes.length - 1) { i = 0; }
+    playing = !playing;
+    document.getElementById('play').textContent = playing ? '⏸ Pause' : '▶ Play';
+    render();
+  };
+
+  render();
+</script>
+</body>
+</html>

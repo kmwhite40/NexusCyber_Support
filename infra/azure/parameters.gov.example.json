@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "_comment": "Copy to parameters.gov.json and fill secrets (or pass --parameters on the CLI / use Key Vault references). Do NOT commit real secrets.",
+  "parameters": {
+    "name": { "value": "anchor" },
+    "location": { "value": "usgovvirginia" },
+    "imageTag": { "value": "latest" },
+    "planSku": { "value": "P1v3" },
+    "pgAdminPassword": { "value": "REPLACE_WITH_STRONG_SECRET" },
+    "appDbPassword": { "value": "REPLACE_WITH_STRONG_SECRET" },
+    "sessionSigningKey": { "value": "REPLACE_WITH_STRONG_RANDOM_64B" }
+  }
+}

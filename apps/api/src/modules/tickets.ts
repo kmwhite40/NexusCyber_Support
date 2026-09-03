@@ -7,7 +7,9 @@ import { orgContextFor } from '../auth/principal.js';
 import { authorize, can } from '../authz/pdp.js';
 import { audit } from './audit.js';
 import { publish } from '../events/bus.js';
-import { startTicketSla } from './sla.js';
+import { startTicketSla, pauseTicketSlas, resumeTicketSlas, markResponseMet } from './sla.js';
+import { linksForTicket } from './links.js';
+import { resolveTransitions, isTransitionAllowed } from './workflows.js';
 import { Errors } from '../errors.js';
 import type { Principal } from '../types.js';
 
@@ -23,17 +25,83 @@ export function derivePriority(impact: number, urgency: number): string {
   return PRIORITY_MATRIX[impact]?.[urgency] ?? 'P3';
 }
 
-async function nextTicketNumber(sql: Sql, orgId: string): Promise<string> {
+// `customFields` on this path is caller-supplied (M2M / external-GRC integration, 0051) with
+// no form definition to validate against — unlike the catalog intake path (forms.ts /
+// sensitive-fields.ts), which knows which answer keys are `sensitive` and routes them to
+// ticket_sensitive_fields instead of tickets.custom_fields. There is no equivalent "form" here
+// to consult, so this borrows the same source of truth: any key name currently flagged
+// `sensitive` on ANY form field (global or this org's) is off-limits in customFields, on the
+// theory that an integration writing a key an admin already designated as PII-shaped is very
+// likely trying to smuggle PII into the wholesale-readable column. Refuse loudly (422) rather
+// than silently stripping — a caller that thinks it stored a value it didn't is its own bug.
+//
+// What this does NOT catch: PII stored under a key nobody has ever flagged sensitive (e.g. a
+// caller sends `contact_email` instead of `personal_email`), or the same PII smuggled as free
+// text inside an allowed key (e.g. baked into `description`). It is a deny-list on key *names*
+// sourced from admin-configured intent, not content inspection — it closes the one gap where
+// this path could re-introduce a name the platform has already promised to protect.
+export function rejectSensitiveCustomFields(
+  customFields: Record<string, unknown> | undefined,
+  sensitiveKeys: ReadonlySet<string>,
+): void {
+  if (!customFields) return;
+  const hits = Object.keys(customFields).filter((k) => sensitiveKeys.has(k));
+  if (hits.length) {
+    throw Errors.validation(
+      `customFields contains reserved sensitive field name(s): ${hits.join(', ')}. ` +
+        'These keys are reserved for PII and are never accepted in custom_fields.',
+    );
+  }
+}
+
+/** Every field key any form (global or this org's, per RLS on request_forms) currently
+ *  flags `sensitive`. Scoped by the caller's org context, same as every other query here. */
+async function knownSensitiveFieldKeys(sql: Sql): Promise<Set<string>> {
+  const { rows } = await sql.query(
+    `SELECT DISTINCT ff.key
+       FROM form_fields ff
+       JOIN request_forms rf ON rf.id = ff.form_id
+      WHERE ff.sensitive = true`,
+  );
+  return new Set(rows.map((r: { key: string }) => r.key));
+}
+
+/**
+ * Allocate the next `<PREFIX>-000123` ticket number for an org. Shared by every ticket
+ * creation path (agent/customer create here, service-catalog requests in catalog.ts,
+ * and mail-to-ticket ingest in integrations/m365/ingest.ts) so the advisory-lock key is
+ * derived identically everywhere — two call sites hashing the org id differently would
+ * each serialize against a different lock and protect nothing.
+ *
+ * Serializes per-org number allocation: MAX(number)+1 otherwise races under concurrent
+ * creates and collides on the (organization_id, ticket_number) unique key.
+ * `pg_advisory_xact_lock` is transaction-scoped — it releases at COMMIT/ROLLBACK — so
+ * EVERY caller must invoke this from inside an actual transaction (withOrgContext's, or
+ * an explicit BEGIN/COMMIT around a withSystemContext callback, which does not open one
+ * on its own). A caller that isn't in a transaction gets no protection: the lock is
+ * dropped the instant this function's own lock statement finishes.
+ */
+/**
+ * Derive the `<PREFIX>` half of a ticket number from an organization name: the first
+ * four letters/digits, uppercased. Punctuation and whitespace are skipped rather than
+ * sliced blindly — an org stored as " Strategic Business Systems (Federal)" (untrimmed
+ * at signup) otherwise yields " STR", which mails out as "[ STR-000001] ...".
+ */
+export function ticketNumberPrefix(orgName: string | null | undefined): string {
+  const letters = (orgName ?? '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+  return letters.slice(0, 4) || 'TCKT';
+}
+
+export async function nextTicketNumber(sql: Sql, orgId: string): Promise<string> {
+  await sql.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [orgId]);
   const { rows } = await sql.query(
     `SELECT COALESCE(MAX((regexp_replace(ticket_number, '\\D','','g'))::int), 0) + 1 AS n
        FROM tickets WHERE organization_id = $1`,
     [orgId],
   );
   const n = rows[0].n as number;
-  const prefix = (
-    await sql.query('SELECT left(upper(name),4) AS p FROM organizations WHERE id=$1', [orgId])
-  ).rows[0].p;
-  return `${prefix}-${String(n).padStart(6, '0')}`;
+  const orgRow = (await sql.query('SELECT name FROM organizations WHERE id=$1', [orgId])).rows[0];
+  return `${ticketNumberPrefix(orgRow?.name)}-${String(n).padStart(6, '0')}`;
 }
 
 export interface CreateTicketInput {
@@ -47,6 +115,10 @@ export interface CreateTicketInput {
   affectedUserId?: string;
   organizationId?: string; // required for nexus-plane agents creating on behalf
   tags?: string[];
+  severity?: string; // descriptive severity (priority is still derived from impact×urgency)
+  customFields?: Record<string, unknown>; // integration metadata (custom_fields jsonb)
+  externalRef?: string; // integration idempotency key (e.g. <tenantId>:<source>:<itemId>)
+  externalSource?: string; // originating system label (e.g. 'anchor')
 }
 
 export async function createTicket(actor: Principal, input: CreateTicketInput) {
@@ -61,12 +133,54 @@ export async function createTicket(actor: Principal, input: CreateTicketInput) {
   const priority = derivePriority(impact, urgency);
 
   return withOrgContext(orgContextFor(actor), async (sql) => {
+    // Guard both branches below (idempotent-upsert AND fresh insert) before either touches
+    // the database — a caller who gets refused here made zero writes, not a half-applied one.
+    if (input.customFields) {
+      rejectSensitiveCustomFields(input.customFields, await knownSensitiveFieldKeys(sql));
+    }
+
+    // Idempotent upsert: a repeated sync of the same source item (external_ref) returns
+    // the existing ticket — updated in place — instead of creating a duplicate.
+    if (input.externalRef) {
+      const existing = (
+        await sql.query('SELECT * FROM tickets WHERE organization_id=$1 AND external_ref=$2', [orgId, input.externalRef])
+      ).rows[0];
+      if (existing) {
+        const { rows: updated } = await sql.query(
+          `UPDATE tickets
+              SET subject=$2, description=$3, category=$4, impact=$5, urgency=$6, priority=$7, tags=$8,
+                  severity=$9, custom_fields=$10
+            WHERE id=$1 RETURNING *`,
+          [
+            existing.id,
+            input.subject,
+            input.description ?? existing.description,
+            input.category ?? existing.category,
+            impact,
+            urgency,
+            priority,
+            input.tags ?? existing.tags,
+            input.severity ?? existing.severity,
+            input.customFields ?? existing.custom_fields,
+          ],
+        );
+        await sql.query(
+          `INSERT INTO ticket_events (organization_id, ticket_id, actor_id, event_type, detail)
+           VALUES ($1,$2,$3,'synced',$4)`,
+          [orgId, existing.id, actor.id, { external_ref: input.externalRef, source: input.externalSource ?? existing.external_source }],
+        );
+        // matched=true → the route replies 200 (idempotent update), not 201.
+        return { ...updated[0], matched: true };
+      }
+    }
+
     const ticketNumber = await nextTicketNumber(sql, orgId);
     const { rows } = await sql.query(
       `INSERT INTO tickets
          (organization_id, ticket_number, type, requester_id, affected_user_id, source_channel,
-          subject, description, category, service_id, impact, urgency, priority, status, tags)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'new',$14)
+          subject, description, category, service_id, impact, urgency, priority, status, tags,
+          external_ref, external_source, severity, custom_fields)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'new',$14,$15,$16,$17,$18)
        RETURNING *`,
       [
         orgId,
@@ -83,6 +197,10 @@ export async function createTicket(actor: Principal, input: CreateTicketInput) {
         urgency,
         priority,
         input.tags ?? [],
+        input.externalRef ?? null,
+        input.externalSource ?? null,
+        input.severity ?? null,
+        input.customFields ?? {},
       ],
     );
     const ticket = rows[0];
@@ -112,8 +230,13 @@ export async function createTicket(actor: Principal, input: CreateTicketInput) {
       requester_id: ticket.requester_id,
       channel: ticket.source_channel,
     });
+    // Acknowledge the requester (any channel — portal/agent), mirroring the inbound
+    // email ack. The dispatcher fills number/subject/priority/name/time from the row.
+    if (ticket.requester_id) {
+      publish('ticket.acknowledged', orgId, { ticket_id: ticket.id, org_id: orgId }, { idempotencyKey: `ticket.acknowledged:${ticket.id}` });
+    }
 
-    return { ...ticket, response_due_at: due.response_due_at, resolution_due_at: due.resolution_due_at, status: 'triage' };
+    return { ...ticket, response_due_at: due.response_due_at, resolution_due_at: due.resolution_due_at, status: 'triage', matched: false };
   });
 }
 
@@ -122,6 +245,7 @@ export interface ListFilter {
   assignee?: string; // 'me' | userId
   priority?: string;
   limit?: number;
+  type?: string;
 }
 
 export async function listTickets(actor: Principal, filter: ListFilter) {
@@ -138,6 +262,10 @@ export async function listTickets(actor: Principal, filter: ListFilter) {
     if (filter.status) {
       params.push(filter.status);
       where.push(`status = $${params.length}`);
+    }
+    if (filter.type) {
+      params.push(filter.type);
+      where.push(`type = $${params.length}`);
     }
     if (filter.priority) {
       params.push(filter.priority);
@@ -177,7 +305,8 @@ export async function getTicket(actor: Principal, id: string) {
     const slas = (await sql.query('SELECT * FROM sla_instances WHERE ticket_id=$1', [id])).rows;
     const tasks = (await sql.query('SELECT * FROM service_request_tasks WHERE ticket_id=$1 ORDER BY position', [id])).rows;
     const approvals = (await sql.query('SELECT * FROM approvals WHERE subject_id=$1', [id])).rows;
-    return { ...ticket, comments, events, slas, tasks, approvals };
+    const links = await linksForTicket(sql, id);
+    return { ...ticket, comments, events, slas, tasks, approvals, links };
   });
 }
 
@@ -244,7 +373,14 @@ export async function addComment(
       [t.organization_id, id, actor.id, { visibility }],
     );
     await audit(actor, { action: 'ticket.comment', organizationId: t.organization_id, resourceType: 'ticket', resourceId: id, detail: { visibility } });
-    publish('ticket.commented', t.organization_id, { ticket_id: id, org_id: t.organization_id, visibility });
+    // A customer-visible reply from an agent is the "first response" — stop the response SLA.
+    if (visibility === 'customer' && actor.plane === 'nexus') await markResponseMet(sql, id);
+    publish('ticket.commented', t.organization_id, {
+      ticket_id: id,
+      org_id: t.organization_id,
+      visibility,
+      comment_excerpt: String(body).slice(0, 600),
+    });
     return rows[0];
   });
 }
@@ -270,31 +406,29 @@ export async function assignTicket(
       [t.organization_id, id, actor.id, { assignedAgentId, assignmentGroupId }],
     );
     await audit(actor, { action: 'ticket.assign', organizationId: t.organization_id, resourceType: 'ticket', resourceId: id });
+    // Picking up / assigning a ticket counts as the first response — stop the response SLA.
+    if (assignedAgentId) await markResponseMet(sql, id);
     publish('ticket.assigned', t.organization_id, { ticket_id: id, org_id: t.organization_id, agent_id: assignedAgentId, group_id: assignmentGroupId });
     return rows[0];
   });
 }
 
-const ALLOWED_TRANSITIONS: Record<string, string[]> = {
-  new: ['triage', 'assigned'],
-  triage: ['assigned', 'in_progress'],
-  assigned: ['in_progress', 'waiting_customer', 'on_hold'],
-  in_progress: ['waiting_customer', 'waiting_vendor', 'on_hold', 'resolved'],
-  waiting_customer: ['in_progress', 'resolved'],
-  waiting_vendor: ['in_progress'],
-  on_hold: ['in_progress'],
-  resolved: ['closed', 'reopened'],
-  reopened: ['in_progress'],
-  closed: [],
-};
+// Status-transition rules now live in the configurable workflow engine (workflows.ts);
+// DEFAULT_TRANSITIONS there is the built-in fallback. transition() resolves the effective
+// map per org + ticket type.
+
+/** States that carry a completion stamp. Leaving one is a reopen; moving between them is not. */
+const TERMINAL_STATUSES = new Set(['resolved', 'closed']);
 
 export async function transition(actor: Principal, id: string, to: string, opts: { resolutionCode?: string; closureNotes?: string } = {}) {
   authorize(actor, 'ticket.update');
   return withOrgContext(orgContextFor(actor), async (sql) => {
-    const t = (await sql.query('SELECT organization_id, status FROM tickets WHERE id=$1', [id])).rows[0];
+    const t = (await sql.query('SELECT organization_id, status, type FROM tickets WHERE id=$1', [id])).rows[0];
     if (!t) throw Errors.notFound('ticket not found');
-    const allowed = ALLOWED_TRANSITIONS[t.status] ?? [];
-    if (!allowed.includes(to)) throw Errors.conflict(`illegal transition ${t.status} -> ${to}`);
+    // Allowed transitions come from the configured workflow for this org+type, falling back
+    // to the built-in default map when none is configured.
+    const map = await resolveTransitions(sql, t.organization_id, t.type);
+    if (!isTransitionAllowed(map, t.status, to)) throw Errors.conflict(`illegal transition ${t.status} -> ${to}`);
 
     const sets: string[] = ['status=$2'];
     const params: unknown[] = [id, to];
@@ -307,7 +441,28 @@ export async function transition(actor: Principal, id: string, to: string, opts:
     }
     if (to === 'closed') sets.push('closed_at=now()');
 
+    // Leaving a terminal state must clear the terminal stamps. Without this a reopened ticket
+    // kept the resolved_at from its earlier resolve, so the row read as resolved AND open at the
+    // same time — an active status carrying a resolution timestamp. That is what "I resolved it
+    // and it still sits there as if it's open" actually looked like in the data.
+    //
+    // resolved -> closed is NOT a reopen and is deliberately excluded: that resolution really
+    // happened, and its timestamp is part of the record.
+    const LEAVING_TERMINAL = TERMINAL_STATUSES.has(t.status) && !TERMINAL_STATUSES.has(to);
+    if (LEAVING_TERMINAL) sets.push('resolved_at=NULL', 'closed_at=NULL');
+    // Leaving the intake states means work has started — that's the first response.
+    if ((t.status === 'new' || t.status === 'triage') && to !== 'new' && to !== 'triage') {
+      await markResponseMet(sql, id);
+    }
+
     const { rows } = await sql.query(`UPDATE tickets SET ${sets.join(', ')} WHERE id=$1 RETURNING *`, params);
+
+    // SLA clock follows on-hold states: pause when the ticket goes on hold (waiting on
+    // the customer/vendor), resume when work restarts. Resolution stop is handled above.
+    const ON_HOLD = new Set(['waiting_customer', 'waiting_vendor', 'on_hold']);
+    if (ON_HOLD.has(to) && !ON_HOLD.has(t.status)) await pauseTicketSlas(sql, id);
+    if (to === 'in_progress' && ON_HOLD.has(t.status)) await resumeTicketSlas(sql, id);
+
     await sql.query(
       `INSERT INTO ticket_events (organization_id, ticket_id, actor_id, event_type, detail)
        VALUES ($1,$2,$3,'status_changed',$4)`,
@@ -316,6 +471,35 @@ export async function transition(actor: Principal, id: string, to: string, opts:
     await audit(actor, { action: 'ticket.update', organizationId: t.organization_id, resourceType: 'ticket', resourceId: id, detail: { to } });
     publish('ticket.status_changed', t.organization_id, { ticket_id: id, org_id: t.organization_id, from: t.status, to });
     if (to === 'resolved') publish('ticket.resolved', t.organization_id, { ticket_id: id, org_id: t.organization_id, resolution_code: opts.resolutionCode });
+    if (to === 'closed') publish('ticket.closed', t.organization_id, { ticket_id: id, org_id: t.organization_id });
+    // Reopen = leaving a terminal state (resolved/closed) back into active work.
+    if (LEAVING_TERMINAL) {
+      publish('ticket.reopened', t.organization_id, { ticket_id: id, org_id: t.organization_id, from: t.status, to });
+    }
     return rows[0];
+  });
+}
+
+/** Manually pause a ticket's running SLA clocks (e.g. blocked on a third party). */
+export async function pauseSla(actor: Principal, id: string) {
+  authorize(actor, 'ticket.update');
+  return withOrgContext(orgContextFor(actor), async (sql) => {
+    const t = (await sql.query('SELECT organization_id FROM tickets WHERE id=$1', [id])).rows[0];
+    if (!t) throw Errors.notFound('ticket not found');
+    const paused = await pauseTicketSlas(sql, id);
+    await audit(actor, { action: 'ticket.sla.pause', organizationId: t.organization_id, resourceType: 'ticket', resourceId: id, detail: { paused } });
+    return { paused };
+  });
+}
+
+/** Resume a ticket's paused SLA clocks, shifting due dates by the paused duration. */
+export async function resumeSla(actor: Principal, id: string) {
+  authorize(actor, 'ticket.update');
+  return withOrgContext(orgContextFor(actor), async (sql) => {
+    const t = (await sql.query('SELECT organization_id FROM tickets WHERE id=$1', [id])).rows[0];
+    if (!t) throw Errors.notFound('ticket not found');
+    const resumed = await resumeTicketSlas(sql, id);
+    await audit(actor, { action: 'ticket.sla.resume', organizationId: t.organization_id, resourceType: 'ticket', resourceId: id, detail: { resumed } });
+    return { resumed };
   });
 }

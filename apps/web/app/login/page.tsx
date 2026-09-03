@@ -2,10 +2,24 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { auth, setToken, homePath, ApiError } from '@/lib/api';
+import { AtSign } from 'lucide-react';
+import { auth, setToken, homePath, ApiError, oidcStartUrl, oidcCustomerStartUrl } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
-import { Button, Card, Input, Field, Badge } from '@/components/ui/primitives';
+import { Button, Card, Input, Badge } from '@/components/ui/primitives';
 import { BrandMark } from '@/components/ui/brand';
+import { AuthLayout, AuthSeparator } from '@/components/ui/auth-page';
+
+/** Microsoft 4-square logo (official brand colors) for the SSO buttons. */
+function MicrosoftLogo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 21 21" width="16" height="16" className={className} aria-hidden="true">
+      <rect x="1" y="1" width="9" height="9" fill="#F25022" />
+      <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
+      <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
+      <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
+    </svg>
+  );
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -15,9 +29,26 @@ export default function LoginPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [demos, setDemos] = React.useState<Array<{ email: string; display_name: string; plane: string; org: string | null; roles: string[] }>>([]);
+  const [sso, setSso] = React.useState<{ enabled: boolean; label: string; customerEnabled: boolean; customerLabel: string }>({
+    enabled: false,
+    label: '',
+    customerEnabled: false,
+    customerLabel: '',
+  });
 
   React.useEffect(() => {
     auth.devUsers().then((r) => setDemos(r.users)).catch(() => {});
+    auth
+      .config()
+      .then((c) =>
+        setSso({
+          enabled: c.oidcEnabled,
+          label: c.oidcLabel,
+          customerEnabled: c.customerOidcEnabled,
+          customerLabel: c.customerOidcLabel,
+        }),
+      )
+      .catch(() => {});
   }, []);
 
   async function finish(p: Promise<{ token: string; principal: { plane: 'nexus' | 'customer' } }>) {
@@ -36,88 +67,103 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="grid min-h-screen lg:grid-cols-2">
-      {/* Brand panel */}
-      <div className="relative hidden flex-col justify-between overflow-hidden border-r border-border p-12 lg:flex">
-        <div className="pointer-events-none absolute -left-20 top-1/3 h-96 w-96 rounded-full bg-brand/20 blur-3xl" />
-        <div className="pointer-events-none absolute -right-10 bottom-0 h-80 w-80 rounded-full bg-accent/20 blur-3xl" />
-        <div className="flex items-center gap-2.5">
-          <BrandMark size={40} />
-          <span className="text-lg font-semibold">Nexus<span className="text-muted">Cyber</span></span>
-        </div>
-        <div className="relative max-w-md">
-          <h1 className="text-3xl font-semibold leading-tight tracking-tight">
-            One control plane for ITSM, on-call, and security posture.
-          </h1>
-          <p className="mt-4 text-sm text-muted">
-            Multi-tenant. Government-cloud aware. Built for MSPs operating across Commercial,
-            GCC, GCC High and Azure Government — with tenant isolation, RBAC + ABAC, and
-            compliance evidence by default.
-          </p>
-          <div className="mt-6 flex flex-wrap gap-2">
-            <Badge tone="brand">Tenant isolation (RLS)</Badge>
-            <Badge tone="accent">GCC High ready</Badge>
-            <Badge tone="success">Posture system-of-record</Badge>
-          </div>
-        </div>
-        <p className="text-xs text-muted">© Nexus — reference implementation</p>
+    <AuthLayout quote="This platform helps us serve our customers faster — across commercial and government clouds." quoteBy="Anchor Service Desk">
+      {/* mobile brand */}
+      <div className="flex items-center gap-2.5 lg:hidden">
+        <BrandMark size={30} />
+        <span className="text-xl font-semibold">Anchor</span>
       </div>
 
-      {/* Form panel */}
-      <div className="flex items-center justify-center p-6">
-        <div className="w-full max-w-sm">
-          <h2 className="text-xl font-semibold">Welcome back</h2>
-          <p className="mt-1 text-sm text-muted">Sign in to your Nexus workspace.</p>
+      <div className="flex flex-col space-y-1">
+        <h1 className="text-2xl font-bold tracking-tight">Welcome back</h1>
+        <p className="text-sm text-muted">Sign in to your Anchor workspace.</p>
+      </div>
 
-          <form
-            className="mt-6"
-            onSubmit={(e) => {
-              e.preventDefault();
-              finish(auth.login(email, password).then((r) => r));
-            }}
-          >
-            <Field label="Email">
-              <Input type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" required />
-            </Field>
-            <Field label="Password">
-              <Input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
-            </Field>
-            {error && <p className="mb-3 text-xs text-danger">{error}</p>}
-            <Button className="w-full" disabled={busy} type="submit">{busy ? 'Signing in…' : 'Sign in'}</Button>
-          </form>
+      <form
+        className="space-y-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          finish(auth.login(email, password));
+        }}
+      >
+        <div className="relative">
+          <Input type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" className="ps-9" required />
+          <AtSign className="pointer-events-none absolute inset-y-0 start-0 my-auto ms-3 size-4 text-muted" aria-hidden />
+        </div>
+        <Input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
+        {error && <p className="text-xs text-danger">{error}</p>}
+        <Button className="w-full" disabled={busy} type="submit">{busy ? 'Signing in…' : 'Sign in'}</Button>
+      </form>
 
-          <p className="mt-4 text-center text-sm text-muted">
-            No account?{' '}
-            <Link href="/signup" className="font-medium text-brand hover:underline">Create one</Link>
-          </p>
-
-          {demos.length > 0 && (
-            <Card className="mt-7 p-4">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-xs font-semibold text-fg">Demo identities</span>
-                <Badge tone="warning">dev only</Badge>
-              </div>
-              <p className="mb-3 text-[11px] text-muted">One-click sign-in to explore tenant isolation & RBAC.</p>
-              <div className="space-y-1.5">
-                {demos.map((u) => (
-                  <button
-                    key={u.email}
-                    onClick={() => finish(auth.devLogin(u.email).then((r) => r))}
-                    disabled={busy}
-                    className="flex w-full items-center justify-between rounded-md border border-border bg-surface-2/50 px-3 py-2 text-left transition hover:border-brand/40 hover:bg-surface-2"
-                  >
-                    <div>
-                      <div className="text-xs font-medium text-fg">{u.display_name}</div>
-                      <div className="text-[10px] text-muted">{u.email}</div>
-                    </div>
-                    <Badge tone={u.plane === 'nexus' ? 'brand' : 'neutral'}>{u.org ?? 'Nexus'}</Badge>
-                  </button>
-                ))}
-              </div>
-            </Card>
+      {(sso.enabled || sso.customerEnabled) && (
+        <>
+          <AuthSeparator label="OR" />
+          {sso.enabled && (
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              disabled={busy}
+              onClick={() => {
+                window.location.href = oidcStartUrl;
+              }}
+            >
+              <MicrosoftLogo className="size-4" />
+              {sso.label || 'Sign in as Admin'}
+            </Button>
           )}
-        </div>
-      </div>
-    </div>
+          {sso.customerEnabled && (
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              disabled={busy}
+              onClick={() => {
+                window.location.href = oidcCustomerStartUrl;
+              }}
+            >
+              <MicrosoftLogo className="size-4" />
+              {sso.customerLabel || 'Sign in with your organization'}
+            </Button>
+          )}
+        </>
+      )}
+
+
+      {demos.length > 0 && (
+        <>
+          <AuthSeparator label="OR EXPLORE THE DEMO" />
+          <Card className="p-4">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-semibold text-fg">Demo identities</span>
+              <Badge tone="warning">dev only</Badge>
+            </div>
+            <div className="space-y-1.5">
+              {demos.map((u) => (
+                <button
+                  key={u.email}
+                  type="button"
+                  onClick={() => finish(auth.devLogin(u.email))}
+                  disabled={busy}
+                  className="flex w-full items-center justify-between rounded-md border border-border bg-surface-2/50 px-3 py-2 text-left transition hover:border-brand/40 hover:bg-surface-2"
+                >
+                  <div>
+                    <div className="text-xs font-medium text-fg">{u.display_name}</div>
+                    <div className="text-[10px] text-muted">{u.email}</div>
+                  </div>
+                  <Badge tone={u.plane === 'nexus' ? 'brand' : 'neutral'}>{u.org ?? 'Anchor'}</Badge>
+                </button>
+              ))}
+            </div>
+          </Card>
+        </>
+      )}
+
+      <p className="text-xs text-muted">
+        By continuing, you agree to our{' '}
+        <Link href="/terms" className="underline underline-offset-4 hover:text-fg">Terms of Service</Link> and{' '}
+        <Link href="/privacy" className="underline underline-offset-4 hover:text-fg">Privacy Policy</Link>.
+      </p>
+    </AuthLayout>
   );
 }

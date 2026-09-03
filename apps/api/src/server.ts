@@ -2,17 +2,38 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
+import multipart from '@fastify/multipart';
 import { config } from './config.js';
 import { logger } from './logger.js';
+import { migrate } from './db/migrate.js';
 import { pool } from './db/pool.js';
 import { registerRoutes } from './http/routes.js';
+import { registerExtraRoutes } from './http/routes-extra.js';
 import { registerIdempotency, IdempotencyStore } from './http/idempotency.js';
 import { registerNotificationHandlers } from './modules/notifications.js';
 import { registerAutomationHandlers } from './modules/automation.js';
+import { registerCsatHandlers } from './modules/csat.js';
+import { registerWebhookHandlers } from './modules/webhooks.js';
 import { startSlaSweeper } from './jobs/sla-sweeper.js';
+import { startCabDeadlineSweeper } from './jobs/cab-deadline-sweeper.js';
 import { startConMonScheduler } from './modules/conmon.js';
+import { subscribe } from './events/bus.js';
+import { incCounter, renderMetrics, statusClass } from './metrics.js';
+import { startMailIngest } from './jobs/mail-ingest.js';
+import { startRetentionPurge } from './jobs/retention-purge.js';
+import { startCloudPcPoller } from './jobs/cloudpc-poller.js';
+import { startOffboardingSweeper } from './jobs/offboarding-sweeper.js';
+import { startRetentionSweeper } from './jobs/retention-sweeper.js';
+import { buildInfo } from './build-info.js';
 
 async function main() {
+  // Optional in-boundary migrations on boot (set RUN_MIGRATIONS_ON_BOOT=true). Runs
+  // against the container's own DB connection — no workstation/firewall path needed.
+  if (process.env.RUN_MIGRATIONS_ON_BOOT === 'true' || process.env.RUN_MIGRATIONS_ON_BOOT === '1') {
+    logger.info('RUN_MIGRATIONS_ON_BOOT set — applying pending migrations before listen');
+    await migrate();
+  }
+
   // Fastify gets a logger config (not a pino instance) to keep its FastifyBaseLogger
   // typing; modules use the standalone `logger` from ./logger for their own output.
   const app = Fastify({
@@ -22,6 +43,18 @@ async function main() {
     },
     bodyLimit: 1_048_576, // 1 MiB request body cap (DoS guard; attachments use presigned URLs)
     trustProxy: true,
+  });
+
+  // Tolerate empty-body requests that still carry Content-Type: application/json — browsers
+  // send this on DELETE and bodyless POSTs. Fastify would otherwise throw
+  // FST_ERR_CTP_EMPTY_JSON_BODY (a confusing 500). Strip the content-type when there is no
+  // body so Fastify skips body parsing entirely.
+  app.addHook('onRequest', async (req) => {
+    const len = req.headers['content-length'];
+    const ct = req.headers['content-type'];
+    if ((len === undefined || len === '0') && typeof ct === 'string' && ct.includes('application/json')) {
+      delete req.headers['content-type'];
+    }
   });
 
   // Security headers (HSTS, X-Content-Type-Options, frame-deny, etc.). CSP is owned by
@@ -35,13 +68,33 @@ async function main() {
     allowList: ['127.0.0.1'],
   });
 
+  // Multipart for attachment uploads (10 MiB per file; SSRF-safe streaming download).
+  await app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024, files: 1 } });
+
   await app.register(cors, {
     origin: config.webOrigin,
     credentials: true,
   });
 
+  // Observability: count every HTTP response by status class, and expose Prometheus metrics.
+  app.addHook('onResponse', async (req, reply) => {
+    incCounter('http_requests_total', { status: statusClass(reply.statusCode) }, 1, 'Total HTTP responses by status class');
+    if (reply.statusCode >= 500) incCounter('http_errors_total', {}, 1, 'Total HTTP 5xx responses');
+  });
+  // Count domain events flowing through the bus (sla.breached, oncall.page, change.*, etc.).
+  subscribe('*', (evt) => incCounter('domain_events_total', { type: evt.type }, 1, 'Domain events published'));
+  incCounter('nexus_build_info', { enclave: config.enclave }, 1, 'Build/enclave info (always 1)');
+
+  app.get('/metrics', async (_req, reply) => {
+    reply.type('text/plain; version=0.0.4').send(renderMetrics());
+  });
+
   // Liveness + readiness probes (Kubernetes/Front Door health checks).
-  app.get('/healthz', async () => ({ status: 'ok', enclave: config.enclave }));
+  // `build` is what makes a deploy verifiable: see build-info.ts and the poll in
+  // scripts/deploy-api.sh, which waits for THIS commit rather than for any 200.
+  app.get('/healthz', async () => ({
+    status: 'ok', enclave: config.enclave, ...buildInfo(process.env),
+  }));
   app.get('/readyz', async (_req, reply) => {
     try {
       const client = await pool.connect();
@@ -61,16 +114,56 @@ async function main() {
   registerIdempotency(app, new IdempotencyStore());
 
   await registerRoutes(app);
+  await registerExtraRoutes(app);
 
   // Wire event consumers (notification dispatcher + automation engine).
   registerNotificationHandlers();
   registerAutomationHandlers();
+  registerCsatHandlers();
+  // Outbound webhook dispatcher: forwards ticket.* events to per-org registered receivers.
+  registerWebhookHandlers();
 
   // Background SLA evaluation sweep (warning/breach), idempotent.
   startSlaSweeper();
 
+  // CAB deadline sweep: notifies the chair when a vote_deadline passes with quorum
+  // unmet (notify-only; never auto-decides a change). Idempotent via a durable marker.
+  startCabDeadlineSweeper();
+
   // Continuous Monitoring scheduler (NIST 800-137 / FedRAMP ConMon), idempotent findings.
   startConMonScheduler();
+
+  // Inbound M365 mail -> ticket polling (no-op unless configured + enabled).
+  startMailIngest();
+
+  // Data-retention purge: delete resolved incidents/problems/changes after the window.
+  if (config.retention.enabled) {
+    startRetentionPurge();
+    logger.info(`Retention purge enabled (${config.retention.days}d)`);
+  }
+
+  // Cloud PC provisioning poller: advances runs parked in awaiting_cloudpc (no-op unless
+  // provisioning is enabled — startCloudPcPoller itself guards on config.provisioning.enabled).
+  if (config.provisioning.enabled) {
+    startCloudPcPoller();
+    logger.info('Cloud PC poller enabled');
+
+    // Offboarding sweep: fires approved plans at the instant HR instructed. Gated SEPARATELY
+    // from provisioning on purpose — enabling onboarding must not arm account teardown — while
+    // still requiring the same tenant configuration underneath (see config.ts).
+    if (config.provisioning.offboardingEnabled) {
+      startOffboardingSweeper();
+      logger.info('Offboarding sweeper enabled');
+    }
+
+    // Retention holds outlive the offboarding flag by YEARS, so this sweeps whenever provisioning
+    // is configured at all — not only while offboarding is switched on. A hold recorded when the
+    // feature was live must keep being checked after it is switched off, or a breach during that
+    // window would go unnoticed forever. With no holds it costs one indexed query and no tenant
+    // round trip.
+    startRetentionSweeper();
+    logger.info('Retention sweeper enabled');
+  }
 
   await app.listen({ port: config.port, host: '0.0.0.0' });
   logger.info(`Nexus API listening on :${config.port} (enclave=${config.enclave})`);
