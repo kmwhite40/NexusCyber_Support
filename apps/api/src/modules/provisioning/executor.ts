@@ -163,6 +163,19 @@ export async function executePlan(
         }
         case 'issue_tap': {
           requireUserId(userId, step.key);
+          // The planner already read the tenant's TAP policy (readTenantState) and marked this
+          // step when it is off. Honour that WITHOUT calling Graph: the whole point of the
+          // up-front read is to stop depending on regex-matching an error whose exact wording in
+          // this cloud is unverified. The catch below stays as the backstop for the case the
+          // planner could not determine — an unreadable policy, or a tenant that changed since.
+          if (step.detail.willSkip === true) {
+            outcomes.push({
+              key: step.key,
+              status: 'skipped',
+              error: String(step.detail.skipReason ?? TAP_SKIPPED_NOTICE),
+            });
+            break;
+          }
           let pass: string | undefined;
           try {
             const tap = await ops.issueTap(userId);

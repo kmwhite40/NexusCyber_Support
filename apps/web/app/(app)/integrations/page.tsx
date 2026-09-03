@@ -28,6 +28,8 @@ export default function IntegrationsPage() {
   const [orgId, setOrgId] = React.useState('');
   const [integration, setIntegration] = React.useState<EntraIntegration | null>(null);
   const [runs, setRuns] = React.useState<EntraSyncRun[] | null>(null);
+  // Whether the PLATFORM scheduler is running at all — separate from the per-org enabled flag.
+  const [schedulerEnabled, setSchedulerEnabled] = React.useState<boolean | null>(null);
   const [tenantId, setTenantId] = React.useState('');
   const [clientId, setClientId] = React.useState('');
   const [clientSecret, setClientSecret] = React.useState('');
@@ -45,13 +47,14 @@ export default function IntegrationsPage() {
       .then((r) => {
         setIntegration(r.integration);
         setRuns(r.runs);
+        setSchedulerEnabled(r.schedulerEnabled ?? null);
         // Prefill the identifiers so an edit does not require retyping them. The secret is
         // deliberately blanked: an empty box is the honest depiction of a value we cannot read.
         setTenantId(r.integration?.tenant_id ?? '');
         setClientId(r.integration?.client_id ?? '');
         setClientSecret('');
       })
-      .catch(() => { setIntegration(null); setRuns([]); });
+      .catch(() => { setIntegration(null); setRuns([]); setSchedulerEnabled(null); });
   }, []);
 
   React.useEffect(() => { refresh(orgId); }, [orgId, refresh]);
@@ -127,8 +130,12 @@ export default function IntegrationsPage() {
           <CardTitle>Entra / Intune device sync</CardTitle>
           <div className="flex items-center gap-2">
             <Badge tone={statusTone}>{integration?.status ?? 'not configured'}</Badge>
-            <Badge tone={integration?.enabled ? 'success' : 'neutral'}>
-              {integration?.enabled ? 'scheduled sync on' : 'scheduled sync off'}
+            <Badge tone={integration?.enabled && schedulerEnabled !== false ? 'success' : 'neutral'}>
+              {!integration?.enabled
+                ? 'scheduled sync off'
+                : schedulerEnabled === false
+                  ? 'manual runs only'
+                  : 'scheduled sync on'}
             </Badge>
           </div>
         </CardHeader>
@@ -165,6 +172,14 @@ export default function IntegrationsPage() {
               Last sync {fmt(integration.last_sync_at)}
               {integration.last_error && <span className="text-danger"> — {integration.last_error}</span>}
             </div>
+          )}
+          {integration?.enabled && schedulerEnabled === false && (
+            <p className="text-xs text-muted">
+              This organization is enabled, but the platform scheduler is off
+              (ENTRA_SYNC_ENABLED is not set on the API), so no sync will run on its own — only
+              the Sync now button. The badge says &quot;manual runs only&quot; rather than
+              &quot;scheduled sync on&quot; so this is visible rather than assumed.
+            </p>
           )}
           {integration && !integration.enabled && (
             <p className="text-xs text-muted">

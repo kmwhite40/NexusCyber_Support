@@ -71,7 +71,12 @@ export async function getStatus(actor: Principal, organizationId: string) {
         ORDER BY started_at DESC LIMIT 10`,
       [organizationId],
     )).rows;
-    return { integration: rows[0] ?? null, runs };
+    // The per-org `enabled` flag is NOT the whole truth about whether anything will actually run
+    // on a schedule: the platform scheduler is separately gated by ENTRA_SYNC_ENABLED (and the
+    // encryption key). Prod had an org enabled while the scheduler was off, and the UI cheerfully
+    // reported "scheduled sync on" for a sync that could never fire. Return both, so the page can
+    // say what is true instead of what was configured.
+    return { integration: rows[0] ?? null, runs, schedulerEnabled: config.entraSync.enabled };
   });
 }
 

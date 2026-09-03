@@ -13,7 +13,28 @@ import { logger } from '../../logger.js';
 
 export interface SubscribedSku { skuId: string; skuPartNumber: string; enabled: number; consumed: number }
 export interface CloudPcPolicy { id: string; displayName: string; groupIds: string[] }
-export interface TenantState { skus: SubscribedSku[]; policies: CloudPcPolicy[] }
+export interface TenantState {
+  skus: SubscribedSku[];
+  policies: CloudPcPolicy[];
+  /**
+   * Is the Temporary Access Pass authentication method enabled in this tenant?
+   *
+   * `undefined` means UNKNOWN — the policy could not be read (no Policy.Read.All, or the object
+   * is not reachable in this cloud). Unknown is deliberately not the same as `false`: pre-skipping
+   * on a failed read would silently stop issuing credentials in a tenant where TAP works fine.
+   * Only an explicit `false` pre-skips; unknown falls through to the executor's error path.
+   */
+  tapEnabled?: boolean;
+}
+
+/** The TAP entry of /policies/authenticationMethodsPolicy, or undefined if unreadable. */
+export function normalizeTapEnabled(res: any): boolean | undefined {
+  const cfgs = res?.authenticationMethodConfigurations;
+  if (!Array.isArray(cfgs)) return undefined;
+  const tap = cfgs.find((c: any) => String(c?.id ?? '').toLowerCase() === 'temporaryaccesspass');
+  if (!tap || typeof tap.state !== 'string') return undefined;
+  return tap.state.toLowerCase() === 'enabled';
+}
 
 export function normalizeSkus(res: any): SubscribedSku[] {
   return (res?.value ?? []).map((s: any) => ({
@@ -42,11 +63,20 @@ export function normalizePolicies(res: any): CloudPcPolicy[] {
  * client from config, and this module stays a pure pass-through.
  */
 export async function readTenantState(g: GraphClient, policyBeta: GraphClient): Promise<TenantState> {
-  const [skus, policies] = await Promise.all([
+  const [skus, policies, tap] = await Promise.all([
     g.get('/subscribedSkus'),
     policyBeta.get('/deviceManagement/virtualEndpoint/provisioningPolicies?$expand=assignments'),
+    // Reading the TAP policy must never fail the whole tenant read: it needs Policy.Read.All,
+    // which is an ADDITION to the design's standing permission list, so a tenant that has not
+    // granted it should still be able to plan a run. An unreadable policy is UNKNOWN, and unknown
+    // falls through to the executor's existing error path rather than pre-skipping.
+    g.get('/policies/authenticationMethodsPolicy').catch(() => null),
   ]);
-  return { skus: normalizeSkus(skus), policies: normalizePolicies(policies) };
+  return {
+    skus: normalizeSkus(skus),
+    policies: normalizePolicies(policies),
+    tapEnabled: normalizeTapEnabled(tap),
+  };
 }
 
 /**

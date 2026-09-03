@@ -170,7 +170,26 @@ export function planRun(input: PlanInput): Plan {
   // Licenses (pushed above) must precede Cloud PC group assignment: an unlicensed user added to
   // the provisioning policy's group yields a Cloud PC that silently never builds.
   if (policyGroupId) steps.push({ key: 'assign_cloudpc', label: `Add to Cloud PC group for "${policyName}"`, detail: { policyName, groupId: policyGroupId } });
-  steps.push({ key: 'issue_tap', label: 'Issue Temporary Access Pass to supervisor', detail: { supervisor: str(answers.supervisor) } });
+  // TAP state is read up front (see readTenantState) rather than discovered by catching an error
+  // from issueTap — that discovery happens only AFTER the account, licences and group memberships
+  // are written, which is the worst place for a run to stop. Marking it here puts the fact in the
+  // PREVIEW, where an admin sees it before anything is created.
+  //
+  // Only an explicit `false` pre-skips. `undefined` means the policy could not be read, and
+  // pre-skipping on that would silently stop issuing credentials in a tenant where TAP works.
+  const tapDisabled = tenant.tapEnabled === false;
+  steps.push({
+    key: 'issue_tap',
+    label: tapDisabled
+      ? 'Issue Temporary Access Pass to supervisor (will be skipped)'
+      : 'Issue Temporary Access Pass to supervisor',
+    detail: {
+      supervisor: str(answers.supervisor),
+      ...(tapDisabled
+        ? { willSkip: true, skipReason: 'Temporary Access Pass is disabled in this tenant; no first-sign-in credential will be issued.' }
+        : {}),
+    },
+  });
   if (policyGroupId) steps.push({ key: 'await_cloudpc', label: 'Wait for the Cloud PC to finish building', detail: { policyName } });
 
   return { upn, displayName, steps, blockers };

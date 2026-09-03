@@ -548,7 +548,8 @@ export interface EntraSyncStats {
 
 export const entraApi = {
   status: (orgId: string) =>
-    api.get<{ integration: EntraIntegration | null; runs: EntraSyncRun[] }>(`/integrations/entra/${orgId}/status`),
+    api.get<{ integration: EntraIntegration | null; runs: EntraSyncRun[]; schedulerEnabled: boolean }>(
+      `/integrations/entra/${orgId}/status`),
   configure: (b: { organizationId: string; tenantId: string; clientId: string; clientSecret: string }) =>
     api.post<{ ok: true }>('/integrations/entra/config', b),
   test: (orgId: string) => api.post<{ ok: boolean; error?: string }>(`/integrations/entra/${orgId}/test`, {}),

@@ -321,3 +321,33 @@ describe('a tenant with no Temporary Access Pass policy', () => {
     expect(r.outcomes.find((o) => o.key === 'issue_tap')?.status).toBe('failed');
   });
 });
+
+// The planner can now know TAP is off BEFORE anything is written. The executor must honour that
+// without calling Graph at all — otherwise the pre-check is decoration and the run still depends
+// on regex-matching whatever error text GCC High happens to return.
+describe('issue_tap pre-skip', () => {
+  const skipPlan: Plan = {
+    ...plan,
+    steps: plan.steps.map((s) => s.key === 'issue_tap'
+      ? { ...s, detail: { supervisor: 'sup-1', willSkip: true, skipReason: 'Temporary Access Pass is disabled in this tenant.' } }
+      : s),
+  };
+
+  it('skips without ever calling issueTap', async () => {
+    let called = false;
+    const r = await executePlan(skipPlan, ops({
+      issueTap: async () => { called = true; return { temporaryAccessPass: 'TAP123' }; },
+    }));
+    expect(called).toBe(false);
+    const out = r.outcomes.find((o) => o.key === 'issue_tap')!;
+    expect(out.status).toBe('skipped');
+    expect(String(out.error)).toMatch(/Temporary Access Pass/i);
+  });
+
+  it('still runs every other step — a skipped TAP is not a failed run', async () => {
+    const r = await executePlan(skipPlan, ops());
+    expect(r.status).toBe('awaiting_cloudpc');
+    expect(r.outcomes.map((o) => o.key)).toEqual(
+      ['create_user', 'assign_licenses', 'assign_cloudpc', 'issue_tap', 'await_cloudpc']);
+  });
+});

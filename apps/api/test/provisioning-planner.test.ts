@@ -318,4 +318,31 @@ describe('planFingerprint', () => {
   it('changes when the steps are reordered — licences before the Cloud PC group is material', () => {
     expect(planFingerprint({ ...plan, steps: [...plan.steps].reverse() })).not.toBe(planFingerprint(plan));
   });
+
+  // The tenant really does have TAP disabled. Discovering that by catching an error means
+  // discovering it AFTER the account, licences and groups are written — the code's own comment
+  // calls that the worst place to stop. Reading the policy up front moves the fact into the
+  // preview, where an admin sees it before anything is created.
+  it('marks issue_tap as skipped up front when the tenant has TAP disabled', () => {
+    const p = planRun({ ...base, tenant: { ...tenant, tapEnabled: false } });
+    const step = p.steps.find((s) => s.key === 'issue_tap');
+    expect(step).toBeDefined();
+    expect(step!.detail.willSkip).toBe(true);
+    expect(String(step!.detail.skipReason)).toMatch(/Temporary Access Pass/i);
+  });
+
+  it('plans issue_tap normally when the tenant has TAP enabled', () => {
+    const p = planRun({ ...base, tenant: { ...tenant, tapEnabled: true } });
+    const step = p.steps.find((s) => s.key === 'issue_tap');
+    expect(step!.detail.willSkip).toBeFalsy();
+  });
+
+  // Unknown state must NOT pre-skip: that would silently stop issuing credentials in a tenant
+  // where TAP works fine. The executor's error path stays as the backstop for that case.
+  it('does not pre-skip when TAP state is unknown', () => {
+    const p = planRun({ ...base, tenant: { ...tenant, tapEnabled: undefined } });
+    const step = p.steps.find((s) => s.key === 'issue_tap');
+    expect(step!.detail.willSkip).toBeFalsy();
+  });
+
 });
