@@ -128,8 +128,11 @@ async function setState(hold: HoldRow, state: string | null, now: Date): Promise
  * principal — the same pattern as modules/posture.ts and integrations/m365/ingest.ts.
  */
 async function raiseTicket(hold: HoldRow, kind: 'breach' | 'eligible'): Promise<void> {
-  const until = String(hold.retain_until).slice(0, 10);
-  const offboarded = String(hold.offboarded_at).slice(0, 10);
+  // pg returns timestamptz as a Date, and String(date).slice(0,10) yields "Wed Sep 02" — a
+  // date nobody can reconcile against a record. Normalise through toISOString().
+  const isoDay = (v: string | Date) => new Date(v).toISOString().slice(0, 10);
+  const until = isoDay(hold.retain_until);
+  const offboarded = isoDay(hold.offboarded_at);
 
   const subject = kind === 'breach'
     ? `Retention breach: ${hold.upn} was deleted before ${until}`
@@ -145,14 +148,26 @@ async function raiseTicket(hold: HoldRow, kind: 'breach' | 'eligible'): Promise<
       + `disposition. Nothing has been deleted automatically.`;
 
   await withSystemContext(async (sql: Sql) => {
-    const number = await nextTicketNumber(sql, hold.organization_id);
-    await sql.query(
-      `INSERT INTO tickets
-         (organization_id, ticket_number, type, category, source_channel, subject, description,
-          priority, status)
-       VALUES ($1,$2,'service_request','security.retention_review','system',$3,$4,$5,'triage')`,
-      [hold.organization_id, number, subject, description, kind === 'breach' ? 'P2' : 'P3'],
-    );
+    // EXPLICIT TRANSACTION, and it is load-bearing. nextTicketNumber takes
+    // pg_advisory_xact_lock, which is released the moment its transaction ends — and
+    // withSystemContext opens no transaction of its own. Without this BEGIN the lock is dropped
+    // before the INSERT, reintroducing the duplicate ticket-number race that 708b7ff fixed in
+    // ingest.ts by adding exactly this.
+    await sql.query('BEGIN');
+    try {
+      const number = await nextTicketNumber(sql, hold.organization_id);
+      await sql.query(
+        `INSERT INTO tickets
+           (organization_id, ticket_number, type, category, source_channel, subject, description,
+            priority, status)
+         VALUES ($1,$2,'service_request','security.retention_review','system',$3,$4,$5,'triage')`,
+        [hold.organization_id, number, subject, description, kind === 'breach' ? 'P2' : 'P3'],
+      );
+      await sql.query('COMMIT');
+    } catch (err) {
+      await sql.query('ROLLBACK');
+      throw err;
+    }
   });
 }
 
@@ -171,5 +186,10 @@ export function startRetentionSweeper(intervalMs = 24 * 60 * 60 * 1000): NodeJS.
       logger.error({ err }, 'retention sweep tick failed');
     }
   };
+  // PRIME an early first run. setInterval alone means the first sweep is a full day after boot
+  // AND the timer restarts on every deploy — on a frequently redeployed API the daily sweep may
+  // never fire at all, while looking scheduled. retention-purge.ts and sla-sweeper.ts both prime
+  // for the same reason. A minute's delay keeps it clear of the boot storm.
+  setTimeout(tick, 60_000).unref?.();
   return setInterval(tick, intervalMs);
 }

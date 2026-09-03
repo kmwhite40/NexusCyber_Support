@@ -13,6 +13,16 @@ export const PRIVILEGED_NEXUS_PERMISSIONS = [
   'admin.superuser', 'cab.manage', 'provisioning.execute', 'admin.users.manage',
 ];
 
+/**
+ * Elevation grant statuses that mean the privilege was actually HELD at some point.
+ *
+ * 'rejected' and 'requested' are deliberately absent. Someone who asked for elevation and was
+ * refused never held it, and counting that as privilege produced a seven-year federal record for
+ * a person who was told no — the exact opposite of what the rule intends, and a contradiction of
+ * the rationale below.
+ */
+const HELD_GRANT_STATUSES = ['active', 'expired', 'revoked'];
+
 export interface PrivilegeEvidence {
   directoryRoleCount: number;
   nexusPermissions: string[];
@@ -30,20 +40,27 @@ export interface Classification {
  * Over-retention is the correct direction to err: keeping a record too long costs storage,
  * keeping it too short is a compliance failure that cannot be undone once the window has passed.
  *
- * NOTE WHAT IS DELIBERATELY NOT FILTERED: an elevation grant counts whatever its status. An
- * expired or revoked grant still means the privilege existed at some point, which is precisely
- * what the seven-year rule is about. Filtering to active grants would look tidier and would
- * silently downgrade exactly the people the rule targets — invisibly, because by the time anyone
- * is offboarded their elevation has almost always already lapsed. If you are reading this because
- * the `status` column looks unused: that is the point.
+ * ON ELEVATION GRANTS, precisely: a grant counts if the privilege was ever HELD — active,
+ * expired or revoked. It does NOT count if the request was refused or is still pending, because
+ * someone who asked and was told no never held anything.
+ *
+ * Do not "simplify" this to active grants only. By the time anyone is offboarded their elevation
+ * has almost always already lapsed, so filtering to active would silently downgrade exactly the
+ * people the seven-year rule targets — invisibly, since their access is by then already gone.
+ * Expired and revoked are the important cases here, not the edge ones.
  */
 export function classifyRetention(evidence: PrivilegeEvidence): Classification {
   const privilegedPerms = evidence.nexusPermissions
     .filter((p) => PRIVILEGED_NEXUS_PERMISSIONS.includes(p));
 
+  // Grants they actually HELD — see HELD_GRANT_STATUSES. Expired and revoked count; refused and
+  // still-pending do not.
+  const heldGrants = evidence.elevationGrants
+    .filter((g) => HELD_GRANT_STATUSES.includes(g.status));
+
   const privileged = evidence.directoryRoleCount > 0
     || privilegedPerms.length > 0
-    || evidence.elevationGrants.length > 0;
+    || heldGrants.length > 0;
 
   return {
     retentionClass: privileged ? 'privileged' : 'standard',
@@ -52,7 +69,7 @@ export function classifyRetention(evidence: PrivilegeEvidence): Classification {
     basis: {
       directoryRoleCount: evidence.directoryRoleCount,
       nexusPermissions: privilegedPerms,
-      elevationGrants: evidence.elevationGrants.map((g) => ({
+      elevationGrants: heldGrants.map((g) => ({
         status: g.status, breakGlass: g.break_glass, permissions: g.granted_permissions,
       })),
     },

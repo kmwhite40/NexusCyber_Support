@@ -99,6 +99,39 @@ export async function sweepDueOffboardings(
         fresh, state.user.id, ops, { onlySecuritySteps: drifted },
       );
 
+      // THE RETENTION OBLIGATION ATTACHES TO A DISABLED ACCOUNT, not to a completed run.
+      //
+      // This used to sit on the 'succeeded' branch only — but any licensed user's run halts at
+      // the manual mailbox conversion and finishes 'needs_review', and nothing transitions
+      // needs_review -> succeeded. So for the COMMON departure no hold was ever recorded and the
+      // whole compliance feature silently did nothing. The trigger is block_signin succeeding:
+      // from that moment the account is disabled and the 1yr/7yr clock is running, whatever else
+      // remains to be done.
+      //
+      // A failure here NEVER fails the run: the teardown genuinely happened, and losing that fact
+      // is worse than losing a hold, which can be reconstructed from the run. The failure is
+      // logged at error level so a missing hold is loud rather than silent.
+      if (outcomes.some((o) => o.key === 'block_signin' && o.status === 'succeeded')) {
+        try {
+          await recordHold({
+            organizationId: run.organization_id,
+            runId: run.id,
+            ticketId: run.ticket_id,
+            upn: state.user.userPrincipalName,
+            entraObjectId: state.user.id,
+            displayName: state.user.displayName,
+            offboardedAt: now,
+            directoryRoleCount: state.directoryRoleCount,
+            departingUserId: typeof state.answers.departing_user === 'string'
+              ? state.answers.departing_user
+              : null,
+          });
+        } catch (err) {
+          logger.error({ err, runId: run.id, ticketId: run.ticket_id },
+            'account was disabled but the retention hold was NOT recorded');
+        }
+      }
+
       if (drifted) {
         // Read the outcomes before claiming anything. Reporting "sign-in blocked and sessions
         // revoked" while the account is still enabled is worse than reporting a failure: it
@@ -127,28 +160,6 @@ export async function sweepDueOffboardings(
         await finish(run, 'needs_review', 'waiting on the manual mailbox conversion');
       } else {
         executed += 1;
-        // Record the retention obligation, but NEVER let a failure here fail the run. The
-        // teardown genuinely happened; losing that fact is worse than losing a hold, which can
-        // be reconstructed from the run. A missing hold is also loud — the sweep reports it —
-        // whereas a run wrongly marked failed would send someone to re-tear-down a done account.
-        try {
-          await recordHold({
-            organizationId: run.organization_id,
-            runId: run.id,
-            ticketId: run.ticket_id,
-            upn: state.user.userPrincipalName,
-            entraObjectId: state.user.id,
-            displayName: state.user.displayName,
-            offboardedAt: now,
-            directoryRoleCount: state.directoryRoleCount,
-            departingUserId: typeof state.answers.departing_user === 'string'
-              ? state.answers.departing_user
-              : null,
-          });
-        } catch (err) {
-          logger.error({ err, runId: run.id, ticketId: run.ticket_id },
-            'offboarding succeeded but the retention hold was NOT recorded');
-        }
         await finish(run, 'succeeded', null);
       }
     } catch (err) {

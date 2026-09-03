@@ -52,3 +52,33 @@ describeDb('retention_holds schema', () => {
     expect(row?.ticket_type).toBe('service_request');
   });
 });
+
+// Two defects in 0069 that could only be fixed forward: it is already applied in production.
+describeDb('retention_holds follow-up fixes', () => {
+  it('has the app-role grants it needs (via 0001 default privileges, verified not assumed)', async () => {
+    // A review flagged this as a missing GRANT. It is not: 0001's ALTER DEFAULT PRIVILEGES IN
+    // SCHEMA public covers tables created later, so retention_holds picked them up on creation.
+    // Kept as a regression test because the claim was plausible enough to be worth pinning.
+    const grants = await withSystemContext(async (sql) =>
+      (await sql.query(
+        `SELECT privilege_type FROM information_schema.role_table_grants
+          WHERE table_name = 'retention_holds' AND grantee = 'nexus_app'`,
+      )).rows.map((r: { privilege_type: string }) => r.privilege_type));
+    for (const p of ['SELECT', 'INSERT', 'UPDATE']) expect(grants).toContain(p);
+  });
+
+  it('keys fulfillment steps on role, the way catalog steps are actually read', async () => {
+    // seed's step() emits { key, label, role, automatable }. 0069 wrote "tier", and prod does
+    // NOT run seed — so there the migration is the only source and every step lands with a null
+    // assignee role. NOTE this test is weak LOCALLY, where seed runs after migrate and masks the
+    // bug; migration 0070 is what actually repairs the databases where it is real.
+    const keys = await withSystemContext(async (sql) =>
+      (await sql.query(
+        `SELECT jsonb_object_keys(s) AS k
+           FROM service_catalog_items sci, jsonb_array_elements(sci.fulfillment_steps) s
+          WHERE sci.key = 'security.retention_review'`,
+      )).rows.map((r: { k: string }) => r.k));
+    expect(keys).toContain('role');
+    expect(keys).not.toContain('tier');
+  });
+});
