@@ -4,6 +4,7 @@
 // enumeration and a complete set of upserts, because planRetirements cannot tell "this device is
 // gone" from "we never saw this device". Anything that throws earlier propagates and no
 // retirement happens at all — that is deliberate, not incidental.
+import { randomUUID } from 'node:crypto';
 import { withSystemContext, type Sql } from '../../db/pool.js';
 import { logger } from '../../logger.js';
 import { buildOrgGraphClient, enumerateManagedDevices } from './graph.js';
@@ -14,9 +15,22 @@ export interface SyncStats {
   created: number;
   updated: number;
   retired: number;
-  /** True when retirement was deliberately skipped — see the zero-device guard below. */
+  /** True when retirement was deliberately skipped — see the guards in applyDeviceSync. */
   skippedRetirement: boolean;
+  /** Why it was skipped, in words an operator can act on. Absent when nothing was skipped. */
+  skipReason?: string;
 }
+
+/**
+ * Retirement circuit-breaker.
+ *
+ * Below this many active synced CIs, proportion means nothing — one of two devices leaving is an
+ * ordinary Tuesday, and a percentage test would refuse it forever. At or above it, retiring more
+ * than RETIRE_MAX_FRACTION of the inventory in a single pass is treated as a signal about the
+ * ENUMERATION rather than about the devices.
+ */
+const RETIRE_GUARD_FLOOR = 10;
+const RETIRE_MAX_FRACTION = 0.5;
 
 export interface OrgIntegrationRow {
   organization_id: string;
@@ -68,23 +82,23 @@ export async function applyDeviceSync(
 
   const activeExisting = existing.filter((c) => c.status === 'active');
 
-  // THE ZERO-DEVICE GUARD.
+  // THE RETIREMENT GUARDS.
   //
-  // An enumeration that returns nothing, for an org that already has active synced CIs, would
-  // retire that customer's entire device inventory in one sweep. Sometimes that is genuinely
-  // correct — every device really was unenrolled — but it is indistinguishable here from a
-  // scoped-down app registration, a changed licence, or a tenant-side policy quietly returning
-  // an empty set. Mass-retiring a CMDB on an ambiguous signal is not a trade worth making
-  // automatically, so it stops and says so, and a human decides.
-  if (devices.length === 0 && activeExisting.length > 0) {
-    logger.warn(
-      { org: orgId, wouldRetire: activeExisting.length },
-      'entra sync: enumeration returned NO devices while active synced CIs exist — retirement skipped, review the tenant',
-    );
-    return { created, updated, retired: 0, skippedRetirement: true };
+  // planRetirements cannot tell "this device is gone" from "we never saw this device", so a
+  // degraded enumeration and a genuinely emptied tenant look identical here. Retiring a
+  // customer's device inventory on that ambiguity is the worst outcome this feature can produce,
+  // so two shapes of collapse stop and ask for a human instead.
+  //
+  // Neither guard blocks the upserts: the devices that DID come back are real and current, and
+  // recording them is never the risky half.
+  const toRetire = planRetirements(seen, existing);
+  const skip = retirementSkipReason(devices.length, activeExisting.length, toRetire.length);
+  if (skip) {
+    logger.warn({ org: orgId, activeCis: activeExisting.length, returned: devices.length, skip },
+      'entra sync: retirement skipped — review the tenant and the app registration');
+    return { created, updated, retired: 0, skippedRetirement: true, skipReason: skip };
   }
 
-  const toRetire = planRetirements(seen, existing);
   for (const id of toRetire) {
     // Retired, never deleted: a device that left the tenant is still part of what was once true.
     await sql.query(
@@ -93,6 +107,32 @@ export async function applyDeviceSync(
     );
   }
   return { created, updated, retired: toRetire.length, skippedRetirement: false };
+}
+
+/**
+ * Pure, so the thresholds are testable without a database.
+ *
+ * Returns the reason retirement must not run this pass, or null to proceed.
+ */
+export function retirementSkipReason(
+  returned: number,
+  activeCis: number,
+  wouldRetire: number,
+): string | null {
+  if (activeCis === 0) return null; // nothing to lose
+
+  // Total collapse. Sometimes genuinely correct, but indistinguishable from a scoped-down app
+  // registration, a changed licence, or a tenant policy quietly returning an empty set.
+  if (returned === 0) {
+    return `the tenant returned no devices at all while ${activeCis} synced device(s) are still active`;
+  }
+
+  // Partial collapse. Five of five hundred sails past a zero check and retires the other 495 as
+  // a normal, successful run — the narrowed-scope case, which is likelier than a fleet vanishing.
+  if (activeCis >= RETIRE_GUARD_FLOOR && wouldRetire > activeCis * RETIRE_MAX_FRACTION) {
+    return `this run would retire ${wouldRetire} of ${activeCis} active devices in one pass`;
+  }
+  return null;
 }
 
 /**
@@ -139,9 +179,57 @@ async function recordRun(
   );
 }
 
+/** How long a claim survives without being released. Comfortably longer than a large tenant's
+ *  enumeration, short enough that a crashed process does not wedge an org for a working day. */
+const LEASE_MINUTES = 30;
+
+/**
+ * Claim the right to sync this org, returning false if someone already holds it.
+ *
+ * One UPDATE does the whole thing, and that is the point: the WHERE clause tests the lease and
+ * the SET takes it in the same statement, so two racing claims cannot both see it free. Splitting
+ * this into a SELECT then an UPDATE would reintroduce exactly the race it exists to close.
+ */
+export async function claimSyncLease(sql: Sql, orgId: string, owner: string): Promise<boolean> {
+  const { rowCount } = await sql.query(
+    `UPDATE org_integrations
+        SET sync_lease_owner = $2,
+            sync_lease_until = now() + ($3 || ' minutes')::interval
+      WHERE organization_id = $1 AND provider = 'entra_graph'
+        AND (sync_lease_until IS NULL OR sync_lease_until < now())`,
+    [orgId, owner, String(LEASE_MINUTES)],
+  );
+  return rowCount === 1;
+}
+
+/** Release a lease we hold. The owner check means a late finisher cannot free someone else's. */
+export async function releaseSyncLease(sql: Sql, orgId: string, owner: string): Promise<void> {
+  await sql.query(
+    `UPDATE org_integrations SET sync_lease_owner = NULL, sync_lease_until = NULL
+      WHERE organization_id = $1 AND provider = 'entra_graph' AND sync_lease_owner = $2`,
+    [orgId, owner],
+  );
+}
+
+/** Raised when another run holds the org. Not a failure — a reason to do nothing. */
+export class SyncBusyError extends Error {
+  constructor(orgId: string) {
+    super(`a device sync is already running for organization ${orgId}`);
+    this.name = 'SyncBusyError';
+  }
+}
+
 /** Enumerate then apply, recording the run either way. Shared by the manual trigger and the job. */
 async function syncOne(row: OrgIntegrationRow): Promise<SyncStats> {
   const orgId = row.organization_id;
+  const owner = `${process.pid}:${randomUUID()}`;
+
+  // The lease is taken BEFORE enumeration, not just around the writes: the race is between one
+  // run's stale device list and another run's fresh upserts, so the window that has to be
+  // exclusive is enumerate-through-retire, not the retire alone.
+  const claimed = await withSystemContext((sql) => claimSyncLease(sql, orgId, owner));
+  if (!claimed) throw new SyncBusyError(orgId);
+
   const startedAt = new Date().toISOString();
   try {
     const devices = await fetchOrgDevices(row);
@@ -151,6 +239,14 @@ async function syncOne(row: OrgIntegrationRow): Promise<SyncStats> {
   } catch (err) {
     await withSystemContext((sql) => recordRun(sql, orgId, startedAt, { error: (err as Error).message }));
     throw err;
+  } finally {
+    // Releasing must not be able to fail the run: the lease expires on its own, and a release
+    // error would replace a real sync result with a bookkeeping error.
+    try {
+      await withSystemContext((sql) => releaseSyncLease(sql, orgId, owner));
+    } catch (err) {
+      logger.error({ org: orgId, err }, 'failed to release entra sync lease; it will expire');
+    }
   }
 }
 
@@ -176,6 +272,11 @@ export async function runEnabledIntegrations(): Promise<void> {
       const stats = await syncOne(row);
       logger.info({ org: row.organization_id, ...stats }, 'entra sync ok');
     } catch (err) {
+      if (err instanceof SyncBusyError) {
+        // Someone triggered this org by hand. Not a failure, and not worth an error row.
+        logger.info({ org: row.organization_id }, 'entra sync skipped; org already syncing');
+        continue;
+      }
       // syncOne already recorded the failed run; a single misconfigured tenant must not
       // stop every other customer's sync.
       logger.error({ org: row.organization_id, err }, 'entra sync failed');

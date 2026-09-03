@@ -520,7 +520,7 @@ export interface EntraIntegration {
   status: 'unconfigured' | 'ok' | 'error';
   last_sync_at: string | null;
   last_error: string | null;
-  last_sync_stats: { created: number; updated: number; retired: number; skippedRetirement?: boolean } | null;
+  last_sync_stats: { created: number; updated: number; retired: number; skippedRetirement?: boolean; skipReason?: string } | null;
   updated_at: string;
 }
 
@@ -540,6 +540,8 @@ export interface EntraSyncStats {
   updated: number;
   retired: number;
   skippedRetirement: boolean;
+  /** Why retirement was skipped, when it was. Shown verbatim — it names what to check. */
+  skipReason?: string;
 }
 
 export const entraApi = {

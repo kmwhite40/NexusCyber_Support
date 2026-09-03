@@ -7,7 +7,7 @@ import { withSystemContext } from '../db/pool.js';
 import { config } from '../config.js';
 import { sealSecret, loadMasterKey, type SealedSecret } from '../integrations/entra/crypto.js';
 import { buildOrgGraphClient, type OrgEntraCreds } from '../integrations/entra/graph.js';
-import { runOneOrg } from '../integrations/entra/sync.js';
+import { runOneOrg, SyncBusyError } from '../integrations/entra/sync.js';
 import { authorize } from '../authz/pdp.js';
 import { audit } from './audit.js';
 import { Errors } from '../errors.js';
@@ -148,6 +148,8 @@ export async function triggerSync(actor: Principal, organizationId: string) {
   try {
     stats = await runOneOrg(organizationId);
   } catch (err) {
+    // Already syncing is a wait-a-moment, not a failure — 409, so a double-click reads as one.
+    if (err instanceof SyncBusyError) throw Errors.conflict((err as Error).message);
     // The failed run is already recorded, but the admin who clicked Sync deserves the reason on
     // screen. A bare 500 says "something broke here" when what actually happened is that the
     // customer's tenant said no — a different problem with a different fix.

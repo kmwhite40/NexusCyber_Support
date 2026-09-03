@@ -96,7 +96,7 @@ export default function IntegrationsPage() {
     // A skipped retirement is the whole point of the guard — reporting it as a clean sync would
     // hide exactly the situation an admin needs to look at.
     setMsg(s.skippedRetirement
-      ? { tone: 'bad', text: `Synced ${s.created} new / ${s.updated} updated, but the tenant returned NO devices while this org still has active synced CIs. Nothing was retired — check the app registration's permissions before assuming the devices are really gone.` }
+      ? { tone: 'bad', text: `Synced ${s.created} new / ${s.updated} updated, but retirement was skipped: ${s.skipReason ?? 'the enumeration looked incomplete'}. Nothing was retired — check the app registration's permissions and scope before assuming those devices are really gone.` }
       : { tone: 'ok', text: `Sync complete: ${s.created} created, ${s.updated} updated, ${s.retired} retired.` });
   });
 
