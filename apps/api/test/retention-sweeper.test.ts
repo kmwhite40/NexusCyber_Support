@@ -45,6 +45,9 @@ function armHold(opts: { present: boolean | 'error'; retain_until: string }) {
         offboarded_at: '2026-09-02T00:00:00.000Z',
       }];
     }
+    // The INSERT returns the new id — without it there is nothing to publish with, and the
+    // double would silently exercise a path the real database never takes.
+    if (/INSERT INTO tickets/.test(text)) return [{ id: 'ticket-1' }];
     return [];
   });
   h.graphGet.mockImplementation(async () => {
@@ -101,7 +104,10 @@ describe('sweepRetentionHolds', () => {
     armHold({ present: 'error', retain_until: '2099-01-01T00:00:00Z' });
     const out = await sweepRetentionHolds(new Date('2026-09-05T00:00:00Z'));
     expect(out.unchecked).toBe(1);
-    expect(h.queries.some((q) => /last_checked_at/.test(q.text))).toBe(false);
+    // Specifically: no WRITE of last_checked_at. It appears in the SELECT's ORDER BY (rotation),
+    // so matching the bare column name across all queries would pass for the wrong reason.
+    expect(h.queries.some((q) => /UPDATE retention_holds/.test(q.text) && /last_checked_at/.test(q.text)))
+      .toBe(false);
   });
 
   it('reports how many holds it could not check, so a failing sweeper is visible', async () => {
@@ -183,5 +189,72 @@ describe('startRetentionSweeper', () => {
     expect(h.queries.length).toBeGreaterThan(before);
     clearInterval(timer);
     vi.useRealTimers();
+  });
+});
+
+describe('sweep robustness', () => {
+  it('rotates on last_checked_at so a large backlog cannot starve the newest holds', async () => {
+    // ORDER BY retain_until alone meant that past the batch limit, the furthest-dated holds —
+    // i.e. the newest PRIVILEGED seven-year ones — were never reached, while the sweep happily
+    // reported zero unchecked.
+    armHold({ present: true, retain_until: '2099-01-01T00:00:00Z' });
+    await sweepRetentionHolds(new Date('2026-09-05T00:00:00Z'));
+    const sel = h.queries.find((q) => /FROM retention_holds/.test(q.text))!;
+    expect(sel.text).toMatch(/last_checked_at/);
+  });
+
+  it('records the state BEFORE raising the ticket, so a failure cannot duplicate it', async () => {
+    // raiseTicket ran first across a separate connection: a ticket raised but not recorded would
+    // be raised again the next day, and every day after.
+    armHold({ present: false, retain_until: '2099-01-01T00:00:00Z' });
+    await sweepRetentionHolds(new Date('2026-09-05T00:00:00Z'));
+    const texts = h.queries.map((q) => q.text);
+    const state = texts.findIndex((t) => /UPDATE retention_holds/.test(t));
+    const ticket = texts.findIndex((t) => /INSERT INTO tickets/.test(t));
+    expect(state).toBeLessThan(ticket);
+  });
+
+  it('one failing hold does not abort the rest of the sweep', async () => {
+    let call = 0;
+    h.setDbRows((text: string) => {
+      if (/FROM retention_holds/.test(text)) {
+        return [
+          { id: 'hold-1', organization_id: ORG, upn: 'a@x.gov', entra_object_id: 'o-1',
+            display_name_at_offboard: 'A', retention_class: 'standard',
+            retain_until: '2099-01-01T00:00:00Z', offboarded_at: '2026-09-02T00:00:00Z' },
+          { id: 'hold-2', organization_id: ORG, upn: 'b@x.gov', entra_object_id: 'o-2',
+            display_name_at_offboard: 'B', retention_class: 'standard',
+            retain_until: '2099-01-01T00:00:00Z', offboarded_at: '2026-09-02T00:00:00Z' },
+        ];
+      }
+      return [];
+    });
+    h.graphGet.mockImplementation(async () => {
+      call += 1;
+      if (call === 1) throw new GraphError(500, 'boom');   // first hold blows up
+      return { id: 'o-2' };
+    });
+    const out = await sweepRetentionHolds(new Date('2026-09-05T00:00:00Z'));
+    expect(out.checked).toBe(2);   // the second hold was still reached
+  });
+});
+
+describe('the ticket actually reaches someone', () => {
+  it('sets a resolution due date so it can breach rather than sit forever', async () => {
+    armHold({ present: false, retain_until: '2099-01-01T00:00:00Z' });
+    await sweepRetentionHolds(new Date('2026-09-05T00:00:00Z'));
+    const ins = h.queries.find((q) => /INSERT INTO tickets/.test(q.text))!;
+    expect(ins.text).toContain('resolution_due_at');
+  });
+
+  it('publishes ticket.created AFTER the commit, not inside it', async () => {
+    // Inside the transaction it would announce a ticket a rollback could erase.
+    armHold({ present: false, retain_until: '2099-01-01T00:00:00Z' });
+    const seen: string[] = [];
+    const { subscribe } = await import('../src/events/bus.js');
+    subscribe('ticket.created', () => { seen.push('ticket.created'); });
+    await sweepRetentionHolds(new Date('2026-09-05T00:00:00Z'));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(seen.length).toBe(1);
   });
 });
