@@ -174,7 +174,12 @@ Still in `seed.ts`, find the `ROLES` map. For **every** role whose `perms` array
 
 - [ ] **Step 3: Re-seed**
 
-Run: `cd apps/api && npm run seed -- --env-file ../../.env`
+Run: `cd apps/api && npx tsx --env-file ../../.env src/db/seed.ts`
+
+Same reason as the migrate command in Task 1: `npm run seed -- --env-file ...` passes the flag to
+the script, not to `tsx`, so the env file never loads. NEVER run seed against production — it
+DELETEs and rebuilds every role's permissions, overwrites catalog items, and creates demo
+identities unless SEED_DEMO=0.
 Expected: completes with no error; the new permission and grants are applied (seed is idempotent/upsert).
 
 - [ ] **Step 4: Commit**

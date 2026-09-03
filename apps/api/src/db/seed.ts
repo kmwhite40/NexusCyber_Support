@@ -69,6 +69,11 @@ const PERMISSIONS: Array<[string, string]> = [
   ['escalation.read', 'oncall'],
   ['escalation.manage', 'oncall'],
   ['integration.manage', 'integration'],
+  // Configuring a customer's Entra credentials is a PLATFORM action: the secret stored is used
+  // to read that customer's directory. Deliberately NOT 'integrations.manage' — one letter from
+  // the line above is how you get a 403 nobody can explain — and deliberately not folded INTO
+  // the line above, which OrgAdmin (customer plane) holds for API keys and webhooks.
+  ['integration.credentials.manage', 'integration'],
 ];
 
 // ---- Roles -> permission keys ----
@@ -96,7 +101,7 @@ const ROLES: Record<string, { plane: 'nexus' | 'customer'; perms: string[] }> = 
   // revokes it on existing deployments and cab.ts enforces the same rule at runtime.
   ServiceDeskManager: {
     plane: 'nexus',
-    perms: ['ticket.create', 'ticket.read.all_assigned_customers', 'ticket.assign', 'ticket.update', 'ticket.comment', 'ticket.escalate', 'report.read.operational', 'customer.admin.manage_users', 'admin.users.manage', 'oncall.manage', 'oncall.acknowledge', 'oncall.page', 'automation.author', 'automation.publish', 'audit.read', 'posture.request_exception', 'posture.approve_exception', 'compliance.read', 'compliance.manage', 'elevation.request', 'elevation.approve', 'kb.read', 'kb.author', 'kb.publish', 'change.approve', 'change.implement', 'change.vote', 'cab.manage', 'problem.manage', 'queue.manage', 'queue.read', 'service.read', 'service.manage', 'org.read', 'org.manage', 'notifications.read', 'alert.read', 'alert.ack', 'alert.manage', 'channel.read', 'channel.manage', 'dashboard.read', 'dashboard.manage', 'escalation.read', 'escalation.manage', 'integration.manage'],
+    perms: ['ticket.create', 'ticket.read.all_assigned_customers', 'ticket.assign', 'ticket.update', 'ticket.comment', 'ticket.escalate', 'report.read.operational', 'customer.admin.manage_users', 'admin.users.manage', 'oncall.manage', 'oncall.acknowledge', 'oncall.page', 'automation.author', 'automation.publish', 'audit.read', 'posture.request_exception', 'posture.approve_exception', 'compliance.read', 'compliance.manage', 'elevation.request', 'elevation.approve', 'kb.read', 'kb.author', 'kb.publish', 'change.approve', 'change.implement', 'change.vote', 'cab.manage', 'problem.manage', 'queue.manage', 'queue.read', 'service.read', 'service.manage', 'org.read', 'org.manage', 'notifications.read', 'alert.read', 'alert.ack', 'alert.manage', 'channel.read', 'channel.manage', 'dashboard.read', 'dashboard.manage', 'escalation.read', 'escalation.manage', 'integration.manage', 'integration.credentials.manage'],
   },
   // Customer plane
   OrgAdmin: { plane: 'customer', perms: ['ticket.create', 'ticket.read.organization', 'ticket.comment', 'posture.read', 'posture.request_exception', 'customer.admin.manage_users', 'report.read.customer', 'audit.read', 'compliance.read', 'kb.read', 'kb.author', 'kb.publish', 'integration.manage'] },

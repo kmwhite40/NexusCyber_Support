@@ -87,3 +87,39 @@ describe('parseProvisioningConfig — offboarding gate', () => {
     expect(c.offboardingEnabled).toBe(true);
   });
 });
+
+// Entra device-sync configuration. The encryption key is the sharp part: without it the stored
+// per-customer secrets cannot be decrypted, so the sync must refuse to start rather than fail
+// per-customer at runtime with something that looks like a credential problem.
+describe('entra sync config', () => {
+  it('is off unless explicitly enabled', async () => {
+    const { parseEntraSyncConfig } = await import('../src/config.js');
+    expect(parseEntraSyncConfig({}).enabled).toBe(false);
+    expect(parseEntraSyncConfig({ ENTRA_SYNC_ENABLED: 'false' }).enabled).toBe(false);
+  });
+
+  it('stays off when enabled but given no encryption key', async () => {
+    // Same shape as the provisioning gate: opting in is necessary, not sufficient. An enabled
+    // sync with no key would decrypt nothing and report every customer as broken.
+    const { parseEntraSyncConfig } = await import('../src/config.js');
+    expect(parseEntraSyncConfig({ ENTRA_SYNC_ENABLED: 'true' }).enabled).toBe(false);
+  });
+
+  it('is on with both the flag and a key', async () => {
+    const { parseEntraSyncConfig } = await import('../src/config.js');
+    const c = parseEntraSyncConfig({ ENTRA_SYNC_ENABLED: 'true', INTEGRATION_ENC_KEY: 'k'.repeat(64) });
+    expect(c.enabled).toBe(true);
+  });
+
+  it('defaults the interval to six hours', async () => {
+    const { parseEntraSyncConfig } = await import('../src/config.js');
+    expect(parseEntraSyncConfig({}).intervalMs).toBe(6 * 60 * 60 * 1000);
+  });
+
+  it('falls back to the default on a garbage interval rather than scheduling NaN', async () => {
+    // setInterval(fn, NaN) fires continuously — a config typo would hammer Graph.
+    const { parseEntraSyncConfig } = await import('../src/config.js');
+    expect(parseEntraSyncConfig({ ENTRA_SYNC_INTERVAL_MS: 'soon' }).intervalMs).toBe(6 * 60 * 60 * 1000);
+    expect(parseEntraSyncConfig({ ENTRA_SYNC_INTERVAL_MS: '-5' }).intervalMs).toBe(6 * 60 * 60 * 1000);
+  });
+});
