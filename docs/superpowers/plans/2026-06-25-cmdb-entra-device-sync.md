@@ -38,7 +38,7 @@ cheap question to answer and an expensive one to discover afterwards.
 - Audit: `audit(actor, { action, organizationId, resourceType, resourceId, detail })`.
 - Errors: `Errors.badRequest(msg)`, `Errors.notFound(msg)`.
 - Tests live in `apps/api/test/*.test.ts` and import source via `../src/...js`. Run with `npm test` (Vitest) from `apps/api`.
-- Migrations: sequential SQL files in `apps/api/src/db/migrations/`. **The next free number is `0070`** — this plan was written in June when it was `0049`, and the tree has since reached `0069`. Creating `0049` now would sort BEFORE two dozen migrations it depends on nothing of, and would never run on any existing database (they are all past it). Run with `npm run migrate` from `apps/api` (needs `--env-file ../../.env` in dev — the dev DB is on host port 5544).
+- Migrations: sequential SQL files in `apps/api/src/db/migrations/`. **Do NOT trust a number written in this plan — check it:** `ls apps/api/src/db/migrations | tail -1`, then use the next one. This plan said `0049` when written in June and `0070` after a correction; both went stale, the second within hours of being corrected, because migrations keep being added. A number lower than the tree's highest sorts before migrations it has no relationship to and, worse, **never runs on any existing database** — they are all already past it, so the feature looks built and its tables do not exist. Run with `npm run migrate` from `apps/api` (needs `--env-file ../../.env` in dev — the dev DB is on host port 5544).
 - Routes: register inside the route-builder in `apps/api/src/http/routes.ts`. Each handler does `const p = await requirePrincipal(req);` then validates `req.body`/`req.params` with `zod`.
 
 ---
@@ -46,7 +46,7 @@ cheap question to answer and an expensive one to discover afterwards.
 ## File Structure
 
 **Create:**
-- `apps/api/src/db/migrations/0070_org_integrations.sql` — `org_integrations`, `integration_sync_runs`, `configuration_items` columns, RLS, grants.
+- `apps/api/src/db/migrations/<NNNN>_org_integrations.sql` — `org_integrations`, `integration_sync_runs`, `configuration_items` columns, RLS, grants.
 - `apps/api/src/integrations/entra/crypto.ts` — AES-256-GCM envelope seal/open (pure).
 - `apps/api/src/integrations/entra/device-map.ts` — `mapManagedDevice`, `planRetirements` (pure).
 - `apps/api/src/integrations/entra/graph.ts` — per-org Graph client factory + `enumerateManagedDevices`.
@@ -67,7 +67,7 @@ cheap question to answer and an expensive one to discover afterwards.
 ## Task 1: Migration — schema for credentials, sync runs, and CI provenance
 
 **Files:**
-- Create: `apps/api/src/db/migrations/0070_org_integrations.sql`
+- Create: `apps/api/src/db/migrations/<NNNN>_org_integrations.sql`
 
 - [ ] **Step 1: Write the migration**
 
@@ -138,13 +138,17 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON integration_sync_runs TO nexus_app;
 
 - [ ] **Step 2: Run the migration**
 
-Run: `cd apps/api && npm run migrate -- --env-file ../../.env`
-Expected: applies `0070_org_integrations` with no error; re-running is a no-op (idempotent `IF NOT EXISTS`).
+Run: `cd apps/api && npx tsx --env-file ../../.env src/db/migrate.ts`
+
+NOT `npm run migrate -- --env-file ../../.env`: that passes `--env-file` to the SCRIPT as an
+argument rather than to `tsx`, so the env file is never loaded, `DATABASE_URL` stays unset and the
+migration silently targets the wrong Postgres (or none). The flag has to reach `tsx` itself.
+Expected: applies `<NNNN>_org_integrations` with no error; re-running is a no-op (idempotent `IF NOT EXISTS`).
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add apps/api/src/db/migrations/0070_org_integrations.sql
+git add apps/api/src/db/migrations/<NNNN>_org_integrations.sql
 git commit -m "feat(db): org_integrations, sync-run history, CI provenance columns"
 ```
 
@@ -170,7 +174,12 @@ Still in `seed.ts`, find the `ROLES` map. For **every** role whose `perms` array
 
 - [ ] **Step 3: Re-seed**
 
-Run: `cd apps/api && npm run seed -- --env-file ../../.env`
+Run: `cd apps/api && npx tsx --env-file ../../.env src/db/seed.ts`
+
+Same reason as the migrate command in Task 1: `npm run seed -- --env-file ...` passes the flag to
+the script, not to `tsx`, so the env file never loads. NEVER run seed against production — it
+DELETEs and rebuilds every role's permissions, overwrites catalog items, and creates demo
+identities unless SEED_DEMO=0.
 Expected: completes with no error; the new permission and grants are applied (seed is idempotent/upsert).
 
 - [ ] **Step 4: Commit**

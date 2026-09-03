@@ -19,6 +19,7 @@ export interface Config {
   notifications: NotificationsConfig;
   retention: RetentionConfig;
   provisioning: ProvisioningConfig;
+  entraSync: EntraSyncConfig;
 }
 
 export interface NotificationsConfig {
@@ -180,6 +181,39 @@ export function parseProvisioningConfig(env: NodeJS.ProcessEnv): ProvisioningCon
   };
 }
 
+export interface EntraSyncConfig {
+  /** True only when the flag is set AND an encryption key exists — see parseEntraSyncConfig. */
+  enabled: boolean;
+  intervalMs: number;
+  /** AES-256-GCM key for the per-customer client secrets in org_integrations. */
+  encryptionKey: string;
+}
+
+/** Six hours. Device inventory does not change fast enough to warrant more, and each tick is a
+ *  full enumeration per configured customer. */
+const ENTRA_SYNC_DEFAULT_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Entra/Intune device sync.
+ *
+ * Opting in is necessary but NOT sufficient, the same shape as the provisioning gate: without
+ * INTEGRATION_ENC_KEY the stored per-customer secrets cannot be decrypted, so an "enabled" sync
+ * would fail on every customer with an error that looks like a bad credential rather than a
+ * missing key. Staying off is the honest state.
+ */
+export function parseEntraSyncConfig(env: NodeJS.ProcessEnv): EntraSyncConfig {
+  const encryptionKey = env.INTEGRATION_ENC_KEY ?? '';
+  const raw = Number(env.ENTRA_SYNC_INTERVAL_MS);
+  // A garbage or negative value must not reach setInterval: setInterval(fn, NaN) fires
+  // continuously, which would hammer Graph on a config typo.
+  const intervalMs = Number.isFinite(raw) && raw > 0 ? raw : ENTRA_SYNC_DEFAULT_INTERVAL_MS;
+  return {
+    enabled: bool(env.ENTRA_SYNC_ENABLED) && Boolean(encryptionKey),
+    intervalMs,
+    encryptionKey,
+  };
+}
+
 export function parseOidcConfig(env: NodeJS.ProcessEnv): OidcConfig {
   const enabled = bool(env.OIDC_ENABLED);
   const tenantId = env.OIDC_TENANT_ID ?? env.M365_TENANT_ID ?? '';
@@ -258,4 +292,5 @@ export const config: Config = {
     days: Number(process.env.RETENTION_DAYS ?? 30),
   },
   provisioning: parseProvisioningConfig(process.env),
+  entraSync: parseEntraSyncConfig(process.env),
 };

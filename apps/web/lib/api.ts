@@ -509,6 +509,52 @@ export interface PlatformUser {
 }
 export type OrgScope = { mode: 'all' } | { mode: 'orgs'; orgIds: string[] };
 
+// ---- Per-customer Entra/Intune device sync ----
+// The client secret is write-only by design: it is POSTed on configure and never returned by
+// status, so nothing in this client can put it back on screen.
+export interface EntraIntegration {
+  organization_id: string;
+  tenant_id: string;
+  client_id: string;
+  enabled: boolean;
+  status: 'unconfigured' | 'ok' | 'error';
+  last_sync_at: string | null;
+  last_error: string | null;
+  last_sync_stats: { created: number; updated: number; retired: number; skippedRetirement?: boolean; skipReason?: string } | null;
+  updated_at: string;
+}
+
+export interface EntraSyncRun {
+  id: string;
+  started_at: string;
+  finished_at: string | null;
+  created_count: number;
+  updated_count: number;
+  retired_count: number;
+  status: 'ok' | 'error';
+  error: string | null;
+}
+
+export interface EntraSyncStats {
+  created: number;
+  updated: number;
+  retired: number;
+  skippedRetirement: boolean;
+  /** Why retirement was skipped, when it was. Shown verbatim — it names what to check. */
+  skipReason?: string;
+}
+
+export const entraApi = {
+  status: (orgId: string) =>
+    api.get<{ integration: EntraIntegration | null; runs: EntraSyncRun[] }>(`/integrations/entra/${orgId}/status`),
+  configure: (b: { organizationId: string; tenantId: string; clientId: string; clientSecret: string }) =>
+    api.post<{ ok: true }>('/integrations/entra/config', b),
+  test: (orgId: string) => api.post<{ ok: boolean; error?: string }>(`/integrations/entra/${orgId}/test`, {}),
+  setEnabled: (orgId: string, enabled: boolean) =>
+    api.post<{ ok: true }>(`/integrations/entra/${orgId}/enable`, { enabled }),
+  sync: (orgId: string) => api.post<EntraSyncStats>(`/integrations/entra/${orgId}/sync`, {}),
+};
+
 export const platformUsersApi = {
   list: () => api.get<{ data: PlatformUser[]; assignable_roles: string[] }>('/platform/users'),
   create: (b: { email: string; displayName?: string; roleKeys?: string[]; password?: string; scope?: OrgScope }) =>

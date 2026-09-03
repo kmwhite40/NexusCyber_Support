@@ -26,4 +26,8 @@ export const Errors = {
     new ApiError(412, 'Precondition Failed', detail, 'precondition_failed'),
   validation: (detail?: string) => new ApiError(422, 'Unprocessable Entity', detail, 'validation'),
   badRequest: (detail?: string) => new ApiError(400, 'Bad Request', detail, 'bad_request'),
+  // An upstream (Microsoft Graph, a customer tenant) refused or failed. Distinct from a 500:
+  // nothing here is broken, and the operator can usually fix it — but only if they can read
+  // what the upstream actually said, so this one is meant to carry the message through.
+  badGateway: (detail?: string) => new ApiError(502, 'Bad Gateway', detail, 'upstream_error'),
 };

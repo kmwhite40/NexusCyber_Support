@@ -29,6 +29,7 @@ import * as problems from '../modules/problems.js';
 import * as csat from '../modules/csat.js';
 import * as queues from '../modules/queues.js';
 import * as integrations from '../modules/integrations.js';
+import * as entra from '../modules/entra-integrations.js';
 import * as services from '../modules/services.js';
 import * as notifications from '../modules/notifications.js';
 import * as alerts from '../modules/alerts.js';
@@ -1525,6 +1526,47 @@ export async function registerRoutes(app: FastifyInstance) {
     authorize(p, 'integration.manage');
     const body = z.object({ sendTo: z.string().email().optional() }).parse(req.body ?? {});
     return integrations.runTest({ sendTo: body.sendTo });
+  });
+
+  // ---------------- Integrations (per-customer Entra/Intune device sync) ----------------
+  // Authorization lives in the module (integration.credentials.manage, org-scoped) rather than
+  // here, because triggerSync/testConnection are also reachable from the scheduler and must not
+  // depend on a route having checked first.
+  app.post('/api/v1/integrations/entra/config', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const body = z.object({
+      organizationId: z.string().uuid(),
+      tenantId: z.string().min(1),
+      clientId: z.string().min(1),
+      clientSecret: z.string().min(1),
+    }).parse(req.body);
+    reply.code(201);
+    return entra.configureIntegration(p, body);
+  });
+
+  app.get('/api/v1/integrations/entra/:orgId/status', async (req) => {
+    const p = await requirePrincipal(req);
+    const { orgId } = z.object({ orgId: z.string().uuid() }).parse(req.params);
+    return entra.getStatus(p, orgId);
+  });
+
+  app.post('/api/v1/integrations/entra/:orgId/test', async (req) => {
+    const p = await requirePrincipal(req);
+    const { orgId } = z.object({ orgId: z.string().uuid() }).parse(req.params);
+    return entra.testConnection(p, orgId);
+  });
+
+  app.post('/api/v1/integrations/entra/:orgId/enable', async (req) => {
+    const p = await requirePrincipal(req);
+    const { orgId } = z.object({ orgId: z.string().uuid() }).parse(req.params);
+    const body = z.object({ enabled: z.boolean() }).parse(req.body);
+    return entra.setEnabled(p, orgId, body.enabled);
+  });
+
+  app.post('/api/v1/integrations/entra/:orgId/sync', async (req) => {
+    const p = await requirePrincipal(req);
+    const { orgId } = z.object({ orgId: z.string().uuid() }).parse(req.params);
+    return entra.triggerSync(p, orgId);
   });
 
   // ---------------- Services & CMDB ----------------
