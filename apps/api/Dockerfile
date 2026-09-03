@@ -22,6 +22,11 @@ RUN npm install --omit=dev --no-audit --no-fund
 
 # ---------- runtime ----------
 FROM node:20-alpine AS runtime
+# The commit this image was built from. Surfaced on /healthz so a deploy can verify that the
+# container answering is the one it just pushed, rather than the previous one still serving
+# through the swap.
+ARG BUILD_SHA=unknown
+ENV BUILD_SHA=$BUILD_SHA
 WORKDIR /app/apps/api
 ENV NODE_ENV=production \
     API_PORT=4000
