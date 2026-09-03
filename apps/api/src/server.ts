@@ -23,6 +23,7 @@ import { startMailIngest } from './jobs/mail-ingest.js';
 import { startRetentionPurge } from './jobs/retention-purge.js';
 import { startCloudPcPoller } from './jobs/cloudpc-poller.js';
 import { startOffboardingSweeper } from './jobs/offboarding-sweeper.js';
+import { startRetentionSweeper } from './jobs/retention-sweeper.js';
 
 async function main() {
   // Optional in-boundary migrations on boot (set RUN_MIGRATIONS_ON_BOOT=true). Runs
@@ -149,6 +150,14 @@ async function main() {
       startOffboardingSweeper();
       logger.info('Offboarding sweeper enabled');
     }
+
+    // Retention holds outlive the offboarding flag by YEARS, so this sweeps whenever provisioning
+    // is configured at all — not only while offboarding is switched on. A hold recorded when the
+    // feature was live must keep being checked after it is switched off, or a breach during that
+    // window would go unnoticed forever. With no holds it costs one indexed query and no tenant
+    // round trip.
+    startRetentionSweeper();
+    logger.info('Retention sweeper enabled');
   }
 
   await app.listen({ port: config.port, host: '0.0.0.0' });

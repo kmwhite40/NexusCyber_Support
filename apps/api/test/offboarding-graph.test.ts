@@ -82,3 +82,33 @@ describe('findUserByUpn selects what its callers actually read', () => {
     }
   });
 });
+
+// The retention sweeper must tell "confirmed gone" from "could not ask". Treating an outage as
+// gone would manufacture a false compliance breach; treating it as present would hide a real one.
+describe('accountExists', () => {
+  it('is true when the account is there', async () => {
+    const { accountExists } = await import('../src/integrations/m365/provisioning-graph.js');
+    const g = { get: async () => ({ id: 'obj-1' }) } as any;
+    expect(await accountExists(g, 'obj-1')).toBe(true);
+  });
+
+  it('is false on a 404 — the account is genuinely gone', async () => {
+    const { accountExists } = await import('../src/integrations/m365/provisioning-graph.js');
+    const { GraphError } = await import('../src/integrations/m365/graph-client.js');
+    const g = { get: async () => { throw new GraphError(404, 'not found'); } } as any;
+    expect(await accountExists(g, 'obj-1')).toBe(false);
+  });
+
+  it('is NULL on any other failure — unknown, not absent', async () => {
+    const { accountExists } = await import('../src/integrations/m365/provisioning-graph.js');
+    const { GraphError } = await import('../src/integrations/m365/graph-client.js');
+    const g = { get: async () => { throw new GraphError(503, 'service unavailable'); } } as any;
+    expect(await accountExists(g, 'obj-1')).toBeNull();
+  });
+
+  it('is NULL on a transport error too', async () => {
+    const { accountExists } = await import('../src/integrations/m365/provisioning-graph.js');
+    const g = { get: async () => { throw new Error('socket hang up'); } } as any;
+    expect(await accountExists(g, 'obj-1')).toBeNull();
+  });
+});

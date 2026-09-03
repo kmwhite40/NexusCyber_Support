@@ -15,6 +15,7 @@ import { logger } from '../logger.js';
 import { planOffboard, offboardFingerprint } from '../modules/offboarding/planner.js';
 import { executeOffboardPlan } from '../modules/offboarding/executor.js';
 import { readOffboardTenantState, buildOffboardOps } from '../modules/offboarding/index.js';
+import { recordHold } from '../modules/retention/index.js';
 
 /** Bounded so one sweep cannot monopolise Graph throttling budget or a database connection. */
 const CLAIM_BATCH = 25;
@@ -126,6 +127,28 @@ export async function sweepDueOffboardings(
         await finish(run, 'needs_review', 'waiting on the manual mailbox conversion');
       } else {
         executed += 1;
+        // Record the retention obligation, but NEVER let a failure here fail the run. The
+        // teardown genuinely happened; losing that fact is worse than losing a hold, which can
+        // be reconstructed from the run. A missing hold is also loud — the sweep reports it —
+        // whereas a run wrongly marked failed would send someone to re-tear-down a done account.
+        try {
+          await recordHold({
+            organizationId: run.organization_id,
+            runId: run.id,
+            ticketId: run.ticket_id,
+            upn: state.user.userPrincipalName,
+            entraObjectId: state.user.id,
+            displayName: state.user.displayName,
+            offboardedAt: now,
+            directoryRoleCount: state.directoryRoleCount,
+            departingUserId: typeof state.answers.departing_user === 'string'
+              ? state.answers.departing_user
+              : null,
+          });
+        } catch (err) {
+          logger.error({ err, runId: run.id, ticketId: run.ticket_id },
+            'offboarding succeeded but the retention hold was NOT recorded');
+        }
         await finish(run, 'succeeded', null);
       }
     } catch (err) {
