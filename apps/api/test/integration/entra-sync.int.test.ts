@@ -1,7 +1,7 @@
 import { it, expect, beforeAll, afterAll } from 'vitest';
 import { describeDb } from '../helpers/db.js';
 import { withSystemContext } from '../../src/db/pool.js';
-import { applyDeviceSync, claimSyncLease, releaseSyncLease } from '../../src/integrations/entra/sync.js';
+import { applyDeviceSync, claimSyncLease, releaseSyncLease, renewSyncLease } from '../../src/integrations/entra/sync.js';
 import type { ManagedDevice } from '../../src/integrations/entra/device-map.js';
 
 // The unit suite drives applyDeviceSync through a fake `sql`, which proves the ORDERING and the
@@ -164,6 +164,42 @@ describeDb('applyDeviceSync against real Postgres', () => {
     await withSystemContext((sql) => releaseSyncLease(sql, ORG, 'runner-a'));
     expect(await withSystemContext((sql) => claimSyncLease(sql, ORG, 'runner-d'))).toBe(true);
     await withSystemContext((sql) => releaseSyncLease(sql, ORG, 'runner-d'));
+  });
+
+
+  it('renews a lease we hold, and refuses to renew one we lost', async () => {
+    // Without renewal the lease is only a race gate for runs shorter than its expiry: a slow
+    // tenant enumerates past it, a second run legitimately claims the org, and the two interleave
+    // — the damage the lease was built to prevent, merely delayed by 30 minutes.
+    await withSystemContext((sql) => sql.query(
+      `INSERT INTO org_integrations
+         (organization_id, provider, tenant_id, client_id, secret_ciphertext, secret_iv, secret_tag)
+       VALUES ($1,'entra_graph','t','c','\\x00','\\x00','\\x00')
+       ON CONFLICT (organization_id, provider) DO NOTHING`, [ORG]));
+
+    expect(await withSystemContext((sql) => claimSyncLease(sql, ORG, 'runner-long'))).toBe(true);
+    expect(await withSystemContext((sql) => renewSyncLease(sql, ORG, 'runner-long'))).toBe(true);
+
+    // Renewal must push the expiry into the future, not merely report success.
+    const until = await withSystemContext(async (sql) => (await sql.query(
+      `SELECT sync_lease_until > now() + interval '20 minutes' AS extended
+         FROM org_integrations WHERE organization_id=$1 AND provider='entra_graph'`, [ORG])).rows[0].extended);
+    expect(until).toBe(true);
+
+    // Simulate losing it: the lease expires and another run takes the org.
+    await withSystemContext((sql) => sql.query(
+      `UPDATE org_integrations SET sync_lease_until = now() - interval '1 minute'
+        WHERE organization_id=$1 AND provider='entra_graph'`, [ORG]));
+    expect(await withSystemContext((sql) => claimSyncLease(sql, ORG, 'runner-new'))).toBe(true);
+
+    // The original run must now learn it no longer holds the org — this is what stops it
+    // retiring against a device list another run has already superseded.
+    expect(await withSystemContext((sql) => renewSyncLease(sql, ORG, 'runner-long'))).toBe(false);
+
+    // Leave the integration row in place: the following tests reuse it, and the last one
+    // deletes it. Tearing it down here made a later test claim a lease on a row that no longer
+    // existed — a fixture bug that reads exactly like a lease bug.
+    await withSystemContext((sql) => releaseSyncLease(sql, ORG, 'runner-new'));
   });
 
   it('reclaims a lease left behind by a process that died', async () => {

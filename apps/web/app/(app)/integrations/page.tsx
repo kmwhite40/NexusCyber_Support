@@ -175,10 +175,10 @@ export default function IntegrationsPage() {
           )}
           {integration?.enabled && schedulerEnabled === false && (
             <p className="text-xs text-muted">
-              This organization is enabled, but the platform scheduler is off
-              (ENTRA_SYNC_ENABLED is not set on the API), so no sync will run on its own — only
-              the Sync now button. The badge says &quot;manual runs only&quot; rather than
-              &quot;scheduled sync on&quot; so this is visible rather than assumed.
+              This organization is enabled, but the platform scheduler is off, so no sync will
+              run on its own — only the Sync now button. Two settings gate it: ENTRA_SYNC_ENABLED
+              and INTEGRATION_ENC_KEY. The API log names which one is missing on startup; naming
+              a guess here would send you checking the wrong variable.
             </p>
           )}
           {integration && !integration.enabled && (

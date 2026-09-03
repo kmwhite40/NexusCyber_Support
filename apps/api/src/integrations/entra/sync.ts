@@ -100,9 +100,15 @@ export async function applyDeviceSync(
   // Neither guard blocks the upserts: the devices that DID come back are real and current, and
   // recording them is never the risky half.
   const toRetire = planRetirements(seen, existing);
-  const skip = retirementSkipReason(devices.length, activeExisting.length, toRetire.length);
+  // The guard must reason about the SYNCABLE count, not the raw payload size. Excluding personal
+  // devices broke the equivalence the zero-check used to rest on: a tenant can now return rows
+  // while contributing nothing to `seen`, so `devices.length > 0` no longer means "we saw
+  // something we could act on". Counting them would let an all-personal enumeration read as a
+  // healthy run and retire every corporate CI beneath the proportion guard's floor.
+  const syncable = devices.length - excludedPersonal;
+  const skip = retirementSkipReason(syncable, activeExisting.length, toRetire.length);
   if (skip) {
-    logger.warn({ org: orgId, activeCis: activeExisting.length, returned: devices.length, skip },
+    logger.warn({ org: orgId, activeCis: activeExisting.length, returned: devices.length, syncable, skip },
       'entra sync: retirement skipped — review the tenant and the app registration');
     return { created, updated, retired: 0, skippedRetirement: true, skipReason: skip, excludedPersonal };
   }
@@ -123,6 +129,7 @@ export async function applyDeviceSync(
  * Returns the reason retirement must not run this pass, or null to proceed.
  */
 export function retirementSkipReason(
+  /** Devices that could actually be synced — NOT the raw enumeration size. See the call site. */
   returned: number,
   activeCis: number,
   wouldRetire: number,
@@ -132,7 +139,7 @@ export function retirementSkipReason(
   // Total collapse. Sometimes genuinely correct, but indistinguishable from a scoped-down app
   // registration, a changed licence, or a tenant policy quietly returning an empty set.
   if (returned === 0) {
-    return `the tenant returned no devices at all while ${activeCis} synced device(s) are still active`;
+    return `the tenant returned no syncable devices while ${activeCis} synced device(s) are still active`;
   }
 
   // Partial collapse. Five of five hundred sails past a zero check and retires the other 495 as
@@ -210,6 +217,25 @@ export async function claimSyncLease(sql: Sql, orgId: string, owner: string): Pr
   return rowCount === 1;
 }
 
+/**
+ * Extend a lease we still hold. Returns false if we no longer hold it — which means it expired
+ * and somebody else claimed the org while we were still working.
+ *
+ * A lease with no renewal is only a race gate for runs shorter than its expiry: a large or
+ * throttled tenant can enumerate for longer than LEASE_MINUTES, at which point a second run
+ * legitimately claims the org and the two proceed concurrently — exactly the interleaving the
+ * lease exists to prevent, just gated behind a duration instead of eliminated.
+ */
+export async function renewSyncLease(sql: Sql, orgId: string, owner: string): Promise<boolean> {
+  const { rowCount } = await sql.query(
+    `UPDATE org_integrations
+        SET sync_lease_until = now() + ($3 || ' minutes')::interval
+      WHERE organization_id = $1 AND provider = 'entra_graph' AND sync_lease_owner = $2`,
+    [orgId, owner, String(LEASE_MINUTES)],
+  );
+  return rowCount === 1;
+}
+
 /** Release a lease we hold. The owner check means a late finisher cannot free someone else's. */
 export async function releaseSyncLease(sql: Sql, orgId: string, owner: string): Promise<void> {
   await sql.query(
@@ -239,8 +265,24 @@ async function syncOne(row: OrgIntegrationRow): Promise<SyncStats> {
   if (!claimed) throw new SyncBusyError(orgId);
 
   const startedAt = new Date().toISOString();
+  // Renew well inside the expiry so a slow tenant cannot quietly lose the org mid-run.
+  const heartbeat = setInterval(() => {
+    void withSystemContext((sql) => renewSyncLease(sql, orgId, owner))
+      .then((held) => { if (!held) logger.error({ org: orgId }, 'entra sync lost its lease mid-run'); })
+      .catch((err) => logger.warn({ org: orgId, err }, 'entra sync lease renewal failed'));
+  }, (LEASE_MINUTES / 3) * 60_000);
+  if (typeof heartbeat.unref === 'function') heartbeat.unref();
+
   try {
     const devices = await fetchOrgDevices(row);
+
+    // Re-check ownership before the DESTRUCTIVE half. Enumeration is the long part, and if the
+    // lease lapsed during it another run may already have synced this org — retiring against our
+    // now-stale device list is precisely the interleaving damage the lease exists to prevent.
+    // The upserts are idempotent and safe; retirement is not, so this is where we stop.
+    const stillOurs = await withSystemContext((sql) => renewSyncLease(sql, orgId, owner));
+    if (!stillOurs) throw new SyncBusyError(orgId);
+
     const stats = await withSystemContext((sql) => applyDeviceSync(sql, orgId, devices));
     await withSystemContext((sql) => recordRun(sql, orgId, startedAt, { stats }));
     return stats;
@@ -248,6 +290,7 @@ async function syncOne(row: OrgIntegrationRow): Promise<SyncStats> {
     await withSystemContext((sql) => recordRun(sql, orgId, startedAt, { error: (err as Error).message }));
     throw err;
   } finally {
+    clearInterval(heartbeat);
     // Releasing must not be able to fail the run: the lease expires on its own, and a release
     // error would replace a real sync result with a bookkeeping error.
     try {

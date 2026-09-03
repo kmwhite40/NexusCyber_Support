@@ -14,6 +14,7 @@ import {
   listGroupsByDisplayName,
   isAlreadyMemberError,
   isTapPolicyDisabledError,
+  normalizeTapEnabled,
 } from '../src/integrations/m365/provisioning-graph.js';
 import { GraphError } from '../src/integrations/m365/graph-client.js';
 
@@ -365,5 +366,79 @@ describe('isTapPolicyDisabledError', () => {
     expect(isTapPolicyDisabledError(new GraphError(400, '{"error":{"message":"Temporary Access Pass length is invalid."}}'))).toBe(false);
     expect(isTapPolicyDisabledError(new GraphError(500, '{"error":{"message":"Temporary Access Pass is not enabled."}}'))).toBe(false);
     expect(isTapPolicyDisabledError(new Error('not enabled'))).toBe(false);
+  });
+});
+
+// The TAP pre-skip decides whether a run issues a first-sign-in credential, and every planner and
+// executor test builds `tenant.tapEnabled` by hand — so nothing anywhere proved this function can
+// read Graph's actual shape. That is precisely the pattern that shipped three defects behind a
+// green suite already (an ON CONFLICT that could never match, a permission that lived only in
+// seed, and a probe result that was an authorization artifact).
+describe('normalizeTapEnabled', () => {
+  const policy = (state: string) => ({
+    '@odata.context': 'https://graph.microsoft.us/v1.0/$metadata#policies/authenticationMethodsPolicy',
+    id: 'authenticationMethodsPolicy',
+    authenticationMethodConfigurations: [
+      { id: 'Fido2', state: 'enabled' },
+      { id: 'TemporaryAccessPass', state, isUsableOnce: false },
+      { id: 'Sms', state: 'disabled' },
+    ],
+  });
+
+  it('reads an enabled TAP policy', () => {
+    expect(normalizeTapEnabled(policy('enabled'))).toBe(true);
+  });
+
+  it('reads a disabled TAP policy — the state this tenant is actually in', () => {
+    expect(normalizeTapEnabled(policy('disabled'))).toBe(false);
+  });
+
+  it('matches the TAP entry case-insensitively', () => {
+    expect(normalizeTapEnabled({
+      authenticationMethodConfigurations: [{ id: 'temporaryAccessPass', state: 'Enabled' }],
+    })).toBe(true);
+  });
+
+  // UNKNOWN, not false. Returning false for an unreadable policy would pre-skip the credential
+  // step in a tenant where TAP works perfectly well.
+  it('returns undefined when the policy could not be read', () => {
+    expect(normalizeTapEnabled(null)).toBeUndefined();
+    expect(normalizeTapEnabled({})).toBeUndefined();
+    expect(normalizeTapEnabled({ authenticationMethodConfigurations: [] })).toBeUndefined();
+    expect(normalizeTapEnabled({ authenticationMethodConfigurations: [{ id: 'Fido2', state: 'enabled' }] }))
+      .toBeUndefined();
+    expect(normalizeTapEnabled({ authenticationMethodConfigurations: [{ id: 'TemporaryAccessPass' }] }))
+      .toBeUndefined();
+  });
+});
+
+describe('readTenantState reads the TAP policy', () => {
+  const skuRes = { value: [{ skuId: 'a', skuPartNumber: 'X', prepaidUnits: { enabled: 1 }, consumedUnits: 0 }] };
+  const tapRes = { authenticationMethodConfigurations: [{ id: 'TemporaryAccessPass', state: 'disabled' }] };
+
+  function clients(tapImpl: () => Promise<any>) {
+    const g = {
+      get: vi.fn(async (url: string) =>
+        (url.includes('authenticationMethodsPolicy') ? tapImpl() : skuRes)),
+      post: vi.fn(), patch: vi.fn(),
+    } as any;
+    const beta = { get: vi.fn(async () => ({ value: [] })), post: vi.fn(), patch: vi.fn() } as any;
+    return { g, beta };
+  }
+
+  it('calls the policy endpoint and wires the result through', async () => {
+    const { g, beta } = clients(async () => tapRes);
+    const state = await readTenantState(g, beta);
+    expect(g.get).toHaveBeenCalledWith('/policies/authenticationMethodsPolicy');
+    expect(state.tapEnabled).toBe(false);
+  });
+
+  // Policy.Read.All is an ADDITION to the design's standing permission list. A tenant that has
+  // not granted it must still be able to plan a run — the read failing is UNKNOWN, not fatal.
+  it('survives the policy read failing, leaving TAP state unknown', async () => {
+    const { g, beta } = clients(async () => { throw new Error('Authorization_RequestDenied'); });
+    const state = await readTenantState(g, beta);
+    expect(state.tapEnabled).toBeUndefined();
+    expect(state.skus).toHaveLength(1);
   });
 });

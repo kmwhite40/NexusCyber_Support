@@ -174,6 +174,31 @@ describe('applyDeviceSync', () => {
     expect(stats.skippedRetirement).toBe(false);
   });
 
+
+  // THE REGRESSION THE BYOD EXCLUSION INTRODUCED.
+  //
+  // Before the exclusion, `devices.length === 0` was a sound proxy for "we saw nothing", because
+  // every returned device landed in `seen`. Excluding personal devices broke that equivalence:
+  // a tenant can now return rows while contributing NOTHING to `seen`.
+  //
+  // An org with 8 corporate CIs — below the proportion guard's floor of 10 — whose app
+  // registration narrows so Graph stops returning company devices but keeps returning personal
+  // ones has returned > 0, so the zero-check does not fire, and activeCis < 10, so the
+  // proportion check never runs. All 8 retire, reported as a clean sync.
+  it('treats an enumeration of ONLY personal devices as a collapse, even below the floor', async () => {
+    const existing = Array.from({ length: 8 }, (_, i) => ({
+      id: `ci-${i}`, external_id: `aad-${i}`, status: 'active',
+    }));
+    const { sql, retired } = fakeSql(existing);
+    const stats = await applyDeviceSync(sql, 'org-1', [
+      { azureADDeviceId: 'p1', deviceName: 'phone1', managedDeviceOwnerType: 'personal' },
+      { azureADDeviceId: 'p2', deviceName: 'phone2', managedDeviceOwnerType: 'personal' },
+    ]);
+    expect(stats.skippedRetirement).toBe(true);
+    expect(stats.retired).toBe(0);
+    expect(retired).toEqual([]);
+  });
+
   it('retires nothing if an upsert throws — a partial sync must not look complete', async () => {
     const { sql, retired } = fakeSql(
       [{ id: 'ci-old', external_id: 'aad-old', status: 'active' }], { insertFails: true },
