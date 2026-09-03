@@ -31,8 +31,23 @@ import type { Principal } from '../../types.js';
 /** The catalog item this engine offboards for. Nothing else may drive a directory teardown. */
 const OFFBOARDING_CATALOG_KEY = 'user.offboarding';
 
-/** Statuses that mean a run still owns this ticket's identity — a second must not be armed. */
+/**
+ * Statuses that mean a run still owns this ticket's identity — a second must not be armed.
+ *
+ * MUST match the predicate of `provisioning_runs_one_inflight_per_ticket` (migration 0071). The
+ * two disagreeing is what allowed duplicate arming: the conditional INSERT below is layer 1 and
+ * only statistical under READ COMMITTED; the index is layer 2 and structural.
+ */
 const IN_FLIGHT_OFFBOARD_STATUSES = ['scheduled', 'running'];
+
+/** The index name from 0071, so its violation can be told from any other unique conflict. */
+const IN_FLIGHT_INDEX = 'provisioning_runs_one_inflight_per_ticket';
+
+function isInFlightUniqueViolation(err: unknown): boolean {
+  const e = err as { code?: string; constraint?: string; message?: string } | null;
+  if (e?.code !== '23505') return false;
+  return e.constraint === IN_FLIGHT_INDEX || Boolean(e.message?.includes(IN_FLIGHT_INDEX));
+}
 
 interface TicketRow {
   id: string;
@@ -306,7 +321,8 @@ export async function schedule(
   // teardown fires twice, the second against an account the first already renamed and stripped.
   // A finished run never blocks a new one — only one still scheduled or running does.
   const runId = await withOrgContext(orgContextFor(actor), async (sql: Sql) => {
-    const { rows } = await sql.query(
+    try {
+      const { rows } = await sql.query(
       `INSERT INTO provisioning_runs
          (ticket_id, organization_id, kind, status, scheduled_for, plan, started_by)
        SELECT $1,$2,'offboarding','scheduled',$3,$4::jsonb,$5
@@ -316,10 +332,16 @@ export async function schedule(
              AND status = ANY($6)
         )
        RETURNING id`,
-      [ticket.id, ticket.organization_id, when.toISOString(),
-        JSON.stringify({ ...plan, fingerprint }), actor.id, IN_FLIGHT_OFFBOARD_STATUSES],
-    );
-    return rows[0]?.id as string | undefined;
+        [ticket.id, ticket.organization_id, when.toISOString(),
+          JSON.stringify({ ...plan, fingerprint }), actor.id, IN_FLIGHT_OFFBOARD_STATUSES],
+      );
+      return rows[0]?.id as string | undefined;
+    } catch (err) {
+      // Layer 2 fired. Indistinguishable to the caller from layer 1 — and crucially, no raw
+      // database error reaches the client.
+      if (isInFlightUniqueViolation(err)) return undefined;
+      throw err;
+    }
   });
 
   if (!runId) {

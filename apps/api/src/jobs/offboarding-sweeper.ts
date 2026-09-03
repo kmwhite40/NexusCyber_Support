@@ -31,7 +31,13 @@ interface ClaimedRun {
  * How long a run may sit in 'running' before it is presumed abandoned. Generous: a real run is
  * a handful of Graph calls, so anything past this is a process that died mid-execution.
  */
-const STRANDED_AFTER = "interval '30 minutes'";
+// 30 minutes was too tight. A real run does sequential removeFromGroup calls, and Graph
+// throttling retries with backoff, so a legitimate teardown of an account with many memberships
+// can exceed it — at which point this would flip a LIVE run to needs_review, the live process
+// would then overwrite that, and in the gap a second run could be armed against an account
+// mid-teardown. Two hours is comfortably past any real run and still catches a dead process
+// within one sweep.
+const STRANDED_AFTER = "interval '2 hours'";
 
 export async function sweepDueOffboardings(
   now: Date = new Date(),
@@ -138,9 +144,14 @@ export async function sweepDueOffboardings(
         // tells the desk the dangerous half is handled when it is not.
         const failedSecurity = outcomes.find((o) => o.status === 'failed');
         if (failedSecurity) {
+          // Say which half held. Reporting "the account could not be secured" when block_signin
+          // SUCCEEDED and only revoke_sessions failed tells the desk the account is still enabled
+          // when it is in fact disabled — and a retention hold has already been recorded against
+          // it. Wrong in the opposite direction, and just as misleading.
+          const disabled = outcomes.some((o) => o.key === 'block_signin' && o.status === 'succeeded');
           await finish(run, 'failed',
-            `plan changed since approval AND the account could not be secured — `
-            + `${failedSecurity.key}: ${failedSecurity.error ?? 'step failed'}`);
+            `plan changed since approval; ${disabled ? 'sign-in was blocked' : 'sign-in was NOT blocked'}`
+            + ` and ${failedSecurity.key} failed — ${failedSecurity.error ?? 'step failed'}`);
         } else {
           needsReview += 1;
           logger.warn(

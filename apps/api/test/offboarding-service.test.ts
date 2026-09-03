@@ -378,3 +378,23 @@ describe('(i) an armed run can be cancelled', () => {
     expect(JSON.stringify(upd.params)).toContain('start date moved to October');
   });
 });
+
+describe('(j) the arming guard has both layers', () => {
+  it('turns the index unique-violation into the same 409 as the conditional insert', async () => {
+    // Layer 1 (WHERE NOT EXISTS) is statistical under READ COMMITTED; layer 2 (the partial
+    // unique index, 0071) is structural. The caller must not be able to tell them apart, and no
+    // raw database error may reach the client.
+    h.setDbRows(rowsExcept((text) => {
+      if (/INSERT INTO provisioning_runs/.test(text)) {
+        const e: any = new Error('duplicate key value violates unique constraint');
+        e.code = '23505';
+        e.constraint = 'provisioning_runs_one_inflight_per_ticket';
+        throw e;
+      }
+      return null;
+    }));
+    const { fingerprint } = await offboarding.preview(actor, TICKET);
+    await expect(offboarding.schedule(actor, TICKET, fingerprint, '2099-01-01T00:00:00Z'))
+      .rejects.toThrow(/already/i);
+  });
+});
