@@ -16,6 +16,11 @@ export function startEntraSync(intervalMs = config.entraSync.intervalMs): NodeJS
     return null;
   }
 
+  // Say so on the way up. The off-paths above each explain themselves, and a feature that is
+  // silent when it works and loud when it doesn't leaves an operator unable to tell "running" from
+  // "never started" — which is the exact confusion this session began with.
+  logger.info({ intervalMs }, 'entra device sync scheduled');
+
   let running = false;
   const tick = async () => {
     // A sweep across several tenants can outlast the interval. Overlapping sweeps would
