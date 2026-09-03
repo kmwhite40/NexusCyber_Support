@@ -144,7 +144,15 @@ export async function triggerSync(actor: Principal, organizationId: string) {
   )).rows[0]?.enabled as boolean | undefined);
   if (enabled === undefined) throw Errors.notFound('integration not configured');
   if (!enabled) throw Errors.badRequest('sync is disabled for this organization; enable it first');
-  const stats = await runOneOrg(organizationId);
+  let stats;
+  try {
+    stats = await runOneOrg(organizationId);
+  } catch (err) {
+    // The failed run is already recorded, but the admin who clicked Sync deserves the reason on
+    // screen. A bare 500 says "something broke here" when what actually happened is that the
+    // customer's tenant said no — a different problem with a different fix.
+    throw Errors.badGateway(`Entra sync failed: ${(err as Error).message}`);
+  }
   await audit(actor, {
     action: 'integration.entra.sync', organizationId,
     resourceType: 'org_integration', resourceId: organizationId, detail: { ...stats },
