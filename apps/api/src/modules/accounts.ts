@@ -125,7 +125,7 @@ export async function loginLocal(email: string, password: string): Promise<AuthR
   const e = email.trim().toLowerCase();
   const row = await withSystemContext(async (sql) => {
     const { rows } = await sql.query(
-      `SELECT u.id, u.plane, u.organization_id, u.email, u.display_name, u.password_hash,
+      `SELECT u.id, u.plane, u.organization_id, u.email, u.display_name, u.password_hash, u.status,
               COALESCE(array_agg(r.key) FILTER (WHERE r.key IS NOT NULL), '{}') AS roles
          FROM users u
          LEFT JOIN role_assignments ra ON ra.user_id = u.id
@@ -139,6 +139,10 @@ export async function loginLocal(email: string, password: string): Promise<AuthR
   if (!row || !row.password_hash) throw Errors.unauthorized('invalid credentials');
   const ok = await verifyPassword(password, row.password_hash);
   if (!ok) throw Errors.unauthorized('invalid credentials');
+  // Deliberately the SAME message as a bad password: telling an unauthenticated caller that an
+  // account exists but is suspended is an account-enumeration oracle. loadPrincipal enforces the
+  // same rule on every request, so this is the friendly door rather than the lock.
+  if (row.status !== 'active') throw Errors.unauthorized('invalid credentials');
 
   const claims: Omit<SessionClaims, 'iat' | 'exp'> = {
     sub: row.id,
