@@ -35,6 +35,28 @@ PERMS=(
   "CloudPC.ReadWrite.All"
 )
 
+# PERMS_OVERRIDE replaces the list entirely, so this script can serve any app registration, not
+# just Anchor-Provisioning — set APP_ID too. That is how a per-customer device-sync app gets its
+# single DeviceManagementManagedDevices.Read.All consented, without a second near-identical
+# script that would drift out of step with this one.
+if [ -n "${PERMS_OVERRIDE:-}" ]; then
+  PERMS=()
+  for e in $PERMS_OVERRIDE; do PERMS+=("$e"); done
+  echo "! PERMS_OVERRIDE in effect — granting only: $PERMS_OVERRIDE"
+  echo
+fi
+
+# EXTRA_PERMS lets you consent a permission that is NOT part of the design's standing list —
+# space-separated, e.g. EXTRA_PERMS="Policy.Read.All" to let probe 4 read the Temporary Access
+# Pass policy. Kept separate from PERMS on purpose: the standing list is what this app is
+# designed to hold, and something granted for a one-off probe should not quietly join it. If you
+# grant one this way, decide afterwards whether to revoke it or add it to the design doc.
+if [ -n "${EXTRA_PERMS:-}" ]; then
+  for e in $EXTRA_PERMS; do PERMS+=("$e"); done
+  echo "! EXTRA_PERMS requested beyond the design's standing list: $EXTRA_PERMS"
+  echo
+fi
+
 az account show >/dev/null 2>&1 || { echo "✗ az not logged in" >&2; exit 1; }
 
 SP_ID="$(az ad sp show --id "$APP_ID" --query id -o tsv)"
