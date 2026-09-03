@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { withSystemContext, type Sql } from '../../db/pool.js';
 import { logger } from '../../logger.js';
 import { buildOrgGraphClient, enumerateManagedDevices } from './graph.js';
-import { mapManagedDevice, planRetirements, type ExistingCi, type ManagedDevice } from './device-map.js';
+import { mapManagedDevice, planRetirements, isPersonalDevice, type ExistingCi, type ManagedDevice } from './device-map.js';
 import type { SealedSecret } from './crypto.js';
 
 export interface SyncStats {
@@ -19,6 +19,8 @@ export interface SyncStats {
   skippedRetirement: boolean;
   /** Why it was skipped, in words an operator can act on. Absent when nothing was skipped. */
   skipReason?: string;
+  /** BYOD devices the tenant returned and this sync deliberately did not record. */
+  excludedPersonal: number;
 }
 
 /**
@@ -50,9 +52,15 @@ export async function applyDeviceSync(
 ): Promise<SyncStats> {
   let created = 0;
   let updated = 0;
+  let excludedPersonal = 0;
   const seen = new Set<string>();
 
   for (const d of devices) {
+    // An employee's own phone is not the organisation's asset, and recording it here would put
+    // personal hardware in the CMDB with its owner's UPN attached. Excluded devices are also
+    // left OUT of `seen`, which is what makes a personal CI created by an earlier sync retire on
+    // the next run rather than linger forever as a row nothing will touch again.
+    if (isPersonalDevice(d)) { excludedPersonal += 1; continue; }
     const m = mapManagedDevice(d);
     if (!m) continue; // no usable id — cannot be keyed, so it cannot be synced
     seen.add(m.externalId);
@@ -96,7 +104,7 @@ export async function applyDeviceSync(
   if (skip) {
     logger.warn({ org: orgId, activeCis: activeExisting.length, returned: devices.length, skip },
       'entra sync: retirement skipped — review the tenant and the app registration');
-    return { created, updated, retired: 0, skippedRetirement: true, skipReason: skip };
+    return { created, updated, retired: 0, skippedRetirement: true, skipReason: skip, excludedPersonal };
   }
 
   for (const id of toRetire) {
@@ -106,7 +114,7 @@ export async function applyDeviceSync(
       [id],
     );
   }
-  return { created, updated, retired: toRetire.length, skippedRetirement: false };
+  return { created, updated, retired: toRetire.length, skippedRetirement: false, excludedPersonal };
 }
 
 /**

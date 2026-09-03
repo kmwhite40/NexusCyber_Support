@@ -97,7 +97,8 @@ export default function IntegrationsPage() {
     // hide exactly the situation an admin needs to look at.
     setMsg(s.skippedRetirement
       ? { tone: 'bad', text: `Synced ${s.created} new / ${s.updated} updated, but retirement was skipped: ${s.skipReason ?? 'the enumeration looked incomplete'}. Nothing was retired — check the app registration's permissions and scope before assuming those devices are really gone.` }
-      : { tone: 'ok', text: `Sync complete: ${s.created} created, ${s.updated} updated, ${s.retired} retired.` });
+      : { tone: 'ok', text: `Sync complete: ${s.created} created, ${s.updated} updated, ${s.retired} retired.`
+            + (s.excludedPersonal ? ` ${s.excludedPersonal} personal (BYOD) device(s) were excluded.` : '') });
   });
 
   const statusTone = integration?.status === 'ok' ? 'success' : integration?.status === 'error' ? 'danger' : 'neutral';

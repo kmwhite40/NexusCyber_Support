@@ -120,6 +120,60 @@ describe('applyDeviceSync', () => {
     expect(stats.retired).toBe(20);
   });
 
+
+  // SBS's tenant carries 11 personal (BYOD) devices among 84. Syncing them would put employees'
+  // own phones in the CMDB with their UPN attached — a privacy call nobody had made, and easier
+  // to make before the first sync than to explain afterwards.
+  it('does not create CIs for personal (BYOD) devices', async () => {
+    const { sql } = fakeSql([]);
+    const stats = await applyDeviceSync(sql, 'org-1', [
+      { azureADDeviceId: 'aad-corp', deviceName: 'LAPTOP', managedDeviceOwnerType: 'company' },
+      { azureADDeviceId: 'aad-byod', deviceName: 'Ajay iPhone', managedDeviceOwnerType: 'personal' },
+    ]);
+    expect(stats.created).toBe(1);
+    expect(stats.excludedPersonal).toBe(1);
+  });
+
+  // The transition case, and the one that could do damage: an org synced BEFORE the exclusion
+  // existed has personal CIs already. They must be RETIRED (they no longer belong in the CMDB),
+  // never left behind as permanently-stale rows that no future sync will ever touch again.
+  it('retires personal CIs that a previous sync created', async () => {
+    const { sql, retired } = fakeSql([
+      { id: 'ci-corp', external_id: 'aad-corp', status: 'active' },
+      { id: 'ci-byod', external_id: 'aad-byod', status: 'active' },
+    ]);
+    const stats = await applyDeviceSync(sql, 'org-1', [
+      { azureADDeviceId: 'aad-corp', deviceName: 'LAPTOP', managedDeviceOwnerType: 'company' },
+      { azureADDeviceId: 'aad-byod', deviceName: 'Ajay iPhone', managedDeviceOwnerType: 'personal' },
+    ]);
+    expect(retired).toEqual(['ci-byod']);
+    expect(stats.retired).toBe(1);
+  });
+
+  // An unknown/absent ownerType is NOT personal. Excluding on missing data would quietly drop
+  // corporate devices whose Intune record is incomplete — the tenant has one such device.
+  it('keeps devices whose ownerType is unknown or absent', async () => {
+    const { sql } = fakeSql([]);
+    const stats = await applyDeviceSync(sql, 'org-1', [
+      { azureADDeviceId: 'aad-1', deviceName: 'A', managedDeviceOwnerType: 'unknown' },
+      { azureADDeviceId: 'aad-2', deviceName: 'B' },
+    ]);
+    expect(stats.created).toBe(2);
+    expect(stats.excludedPersonal).toBe(0);
+  });
+
+  // The exclusion must not be able to trip the collapse guard into refusing a legitimate run:
+  // a mostly-BYOD tenant would otherwise look like a vanished fleet.
+  it('counts excluded personal devices as a real enumeration, not an empty one', async () => {
+    const { sql } = fakeSql([{ id: 'ci-1', external_id: 'aad-corp', status: 'active' }]);
+    const stats = await applyDeviceSync(sql, 'org-1', [
+      { azureADDeviceId: 'aad-corp', deviceName: 'LAPTOP', managedDeviceOwnerType: 'company' },
+      { azureADDeviceId: 'aad-b1', deviceName: 'phone1', managedDeviceOwnerType: 'personal' },
+      { azureADDeviceId: 'aad-b2', deviceName: 'phone2', managedDeviceOwnerType: 'personal' },
+    ]);
+    expect(stats.skippedRetirement).toBe(false);
+  });
+
   it('retires nothing if an upsert throws — a partial sync must not look complete', async () => {
     const { sql, retired } = fakeSql(
       [{ id: 'ci-old', external_id: 'aad-old', status: 'active' }], { insertFails: true },

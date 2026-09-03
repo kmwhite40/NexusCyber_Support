@@ -49,14 +49,14 @@ describeDb('applyDeviceSync against real Postgres', () => {
   it('creates, then updates without duplicating, then retires what is gone', async () => {
     const first = await withSystemContext((sql) =>
       applyDeviceSync(sql, ORG, [device('dev-a', 'LAPTOP-A'), device('dev-b', 'LAPTOP-B')]));
-    expect(first).toEqual({ created: 2, updated: 0, retired: 0, skippedRetirement: false });
+    expect(first).toEqual({ created: 2, updated: 0, retired: 0, skippedRetirement: false, excludedPersonal: 0 });
 
     // Same devices again: the upsert must recognise them, not insert a second copy. This is the
     // assertion that the ON CONFLICT target lines up with the partial index.
     const renamed = device('dev-a', 'LAPTOP-A-RENAMED');
     const second = await withSystemContext((sql) =>
       applyDeviceSync(sql, ORG, [renamed, device('dev-b', 'LAPTOP-B')]));
-    expect(second).toEqual({ created: 0, updated: 2, retired: 0, skippedRetirement: false });
+    expect(second).toEqual({ created: 0, updated: 2, retired: 0, skippedRetirement: false, excludedPersonal: 0 });
 
     const rows = await withSystemContext(async (sql) => (await sql.query(
       `SELECT external_id, name, status, source, attributes
@@ -69,7 +69,7 @@ describeDb('applyDeviceSync against real Postgres', () => {
 
     // dev-b disappears from the tenant.
     const third = await withSystemContext((sql) => applyDeviceSync(sql, ORG, [renamed]));
-    expect(third).toEqual({ created: 0, updated: 1, retired: 1, skippedRetirement: false });
+    expect(third).toEqual({ created: 0, updated: 1, retired: 1, skippedRetirement: false, excludedPersonal: 0 });
 
     const after = await withSystemContext(async (sql) => (await sql.query(
       `SELECT external_id, status FROM configuration_items
@@ -104,6 +104,40 @@ describeDb('applyDeviceSync against real Postgres', () => {
       `SELECT count(*)::int AS n FROM configuration_items
         WHERE organization_id=$1 AND source='entra' AND status='active'`, [ORG])).rows[0].n);
     expect(stillActive).toBe(1);
+  });
+
+
+  it('never writes a personal device to the CMDB, and retires one a prior sync left', async () => {
+    // The real tenant has 11 BYOD devices among 84. This is the same transition against real
+    // Postgres: a personal CI that already exists must be retired, not silently orphaned.
+    await withSystemContext((sql) => sql.query(
+      'DELETE FROM configuration_items WHERE organization_id=$1', [ORG]));
+
+    const byod = { ...device('byod-1', 'Someones-iPhone'), managedDeviceOwnerType: 'personal' } as ManagedDevice;
+    const corp = device('corp-1', 'LAPTOP-CORP');
+
+    // First sync WITHOUT the exclusion in force: write the personal CI by hand, exactly as an
+    // earlier build would have.
+    await withSystemContext((sql) => sql.query(
+      `INSERT INTO configuration_items
+         (organization_id, ci_class, name, status, source, external_id)
+       VALUES ($1,'device','Someones-iPhone','active','entra','byod-1')`, [ORG]));
+
+    const stats = await withSystemContext((sql) => applyDeviceSync(sql, ORG, [corp, byod]));
+    expect(stats.created).toBe(1);
+    expect(stats.excludedPersonal).toBe(1);
+    expect(stats.retired).toBe(1);
+
+    const rows = await withSystemContext(async (sql) => (await sql.query(
+      `SELECT external_id, status FROM configuration_items
+        WHERE organization_id=$1 ORDER BY external_id`, [ORG])).rows);
+    expect(rows).toEqual([
+      { external_id: 'byod-1', status: 'retired' },
+      { external_id: 'corp-1', status: 'active' },
+    ]);
+
+    await withSystemContext((sql) => sql.query(
+      'DELETE FROM configuration_items WHERE organization_id=$1', [ORG]));
   });
 
   it('lets only one run hold an org at a time, and releases it afterwards', async () => {

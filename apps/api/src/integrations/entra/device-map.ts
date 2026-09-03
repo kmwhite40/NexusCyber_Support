@@ -27,6 +27,18 @@ export interface MappedCi {
 /** Intune-managed but not Entra-joined devices report all zeros here, not null. */
 const ZERO_GUID = '00000000-0000-0000-0000-000000000000';
 
+/**
+ * Is this an employee's own device rather than the organisation's?
+ *
+ * Deliberately an allow-by-default test: ONLY an explicit 'personal' excludes. Intune reports
+ * 'unknown' (and sometimes nothing at all) for records it cannot classify, and treating missing
+ * data as personal would quietly drop corporate devices whose Intune record is incomplete —
+ * silently shrinking a CMDB is the failure that is hardest to notice.
+ */
+export function isPersonalDevice(d: ManagedDevice): boolean {
+  return (d.managedDeviceOwnerType ?? '').trim().toLowerCase() === 'personal';
+}
+
 export function mapManagedDevice(d: ManagedDevice): MappedCi | null {
   // Prefer the Entra device id; fall back to the Intune id. Treating the zero GUID as a real
   // value would collapse every non-Entra-joined device onto a single CI.

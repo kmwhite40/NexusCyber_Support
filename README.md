@@ -237,6 +237,13 @@ Design decisions worth knowing before changing this code:
   if a single pass would retire more than half an org's active devices (above a floor of 10, below
   which proportion means nothing). Both report a reason the UI shows verbatim; a skip that does
   not say what to check is not actionable.
+- **Personal (BYOD) devices are excluded.** An employee's own phone is not the organisation's
+  asset, and recording it would put personal hardware in the CMDB with its owner's UPN attached.
+  The test is allow-by-default — only an explicit `personal` ownerType excludes, because Intune
+  reports `unknown` for records it cannot classify and treating missing data as personal would
+  quietly shrink the CMDB. Excluded devices are also left out of the seen-set, so a personal CI
+  created before this rule existed retires on the next sync rather than lingering as a row
+  nothing will ever touch again.
 - **CIs are retired, never deleted.** A device that left the tenant is still part of what was once
   true. Hand-created CIs stay `source='manual'` and are never touched by a sync.
 - **One sync per organization at a time**, via a leased row rather than an advisory lock: the
