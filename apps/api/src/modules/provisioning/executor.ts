@@ -61,6 +61,7 @@ export interface ProvisioningOps {
   assignLicenses: (userId: string, skuIds: string[]) => Promise<unknown>;
   addToGroup: (groupId: string, userId: string) => Promise<unknown>;
   issueTap: (userId: string) => Promise<{ temporaryAccessPass: string }>;
+  setUsageLocation?: (userId: string, usageLocation: string) => Promise<unknown>;
   deliverTap: (supervisorId: string, upn: string, pass: string) => Promise<void>;
 }
 
@@ -87,8 +88,17 @@ export async function executePlan(
           // actually succeeded server-side must adopt the object Graph already created, never
           // call createUser a second time and mint a duplicate identity.
           const existing = await ops.findUser(plan.upn);
+          const usageLocation = String(step.detail.usageLocation ?? '');
           if (existing) {
             userId = existing.id;
+            // Back-fill on adoption. Graph refuses assignLicense for a user with no
+            // usageLocation, and adoption skips createUser entirely — so without this a retry of
+            // a run that already created the account fails at assign_licenses exactly as the
+            // first attempt did, permanently.
+            const current = (existing as { usageLocation?: string | null }).usageLocation ?? null;
+            if (usageLocation && current !== usageLocation && ops.setUsageLocation) {
+              await ops.setUsageLocation(userId, usageLocation);
+            }
           } else {
             const password = generateInitialPassword();
             let created: { id: string };
@@ -98,6 +108,8 @@ export async function executePlan(
                 displayName: plan.displayName,
                 userPrincipalName: plan.upn,
                 mailNickname: plan.upn.split('@')[0],
+                // Without this, assign_licenses fails 400 for every user this engine creates.
+                ...(usageLocation ? { usageLocation } : {}),
                 passwordProfile: {
                   forceChangePasswordNextSignIn: true,
                   // Never read back: assigned to Graph and immediately discarded. See

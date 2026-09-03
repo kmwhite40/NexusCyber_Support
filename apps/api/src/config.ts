@@ -104,6 +104,8 @@ export interface ProvisioningConfig {
    * licence spends a scarce seat on every hire and then blocks the next one with no_seats.
    */
   cloudPcSku: string;
+  /** Two-letter country code stamped on created users; Graph refuses licences without one. */
+  usageLocation: string;
   /**
    * Graph API version for the `/deviceManagement/virtualEndpoint/*` family (Cloud PC status
    * lookups). Whether GCC High specifically requires `beta` there vs `v1.0` is an open item in
@@ -183,6 +185,7 @@ export function parseProvisioningConfig(env: NodeJS.ProcessEnv): ProvisioningCon
     upnDomain, baselineSkus,
     cloudPcPolicy: env.M365_PROV_CLOUDPC_POLICY ?? 'SBSFederal Cloud PC',
     cloudPcSku: env.M365_PROV_CLOUDPC_SKU ?? '',
+    usageLocation: (env.M365_PROV_USAGE_LOCATION ?? 'US').trim().toUpperCase(),
     cloudPcApiVersion,
     offboardingEnabled,
   };

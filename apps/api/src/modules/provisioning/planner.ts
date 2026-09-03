@@ -26,6 +26,8 @@ export interface PlanInput {
    * the next one with no_seats for a licence they were never meant to receive.
    */
   cloudPcSku?: string;
+  /** Two-letter country for licence eligibility. Graph rejects assignLicense without it. */
+  usageLocation?: string;
   existingUser: { id: string; userPrincipalName: string } | null;
   existingRoleCount: number;
 }
@@ -86,7 +88,7 @@ export function deriveUpn(answers: Record<string, unknown>, upnDomain: string): 
 }
 
 export function planRun(input: PlanInput): Plan {
-  const { answers, tenant, upnDomain, baselineSkus, cloudPcSku, existingUser, existingRoleCount } = input;
+  const { answers, tenant, upnDomain, baselineSkus, cloudPcSku, usageLocation, existingUser, existingRoleCount } = input;
   const blockers: Blocker[] = [];
   const upn = deriveUpn(answers, upnDomain);
   const first = str(answers.preferred_first_name) || str(answers.legal_first_name);
@@ -184,7 +186,7 @@ export function planRun(input: PlanInput): Plan {
   }
 
   const steps: PlanStep[] = [
-    { key: 'create_user', label: `Create ${upn}`, detail: { upn, displayName, adopting: Boolean(existingUser) } },
+    { key: 'create_user', label: `Create ${upn}`, detail: { upn, displayName, adopting: Boolean(existingUser), usageLocation } },
     // skuPartNumbers is copied (not aliased to input.baselineSkus): the returned Plan must stay
     // isolated from the caller's array — a preview taken now must not change if the caller later
     // mutates the array it passed in.

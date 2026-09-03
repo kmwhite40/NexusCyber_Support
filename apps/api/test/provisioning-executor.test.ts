@@ -351,3 +351,43 @@ describe('issue_tap pre-skip', () => {
       ['create_user', 'assign_licenses', 'assign_cloudpc', 'issue_tap', 'await_cloudpc']);
   });
 });
+
+// FOUND IN PRODUCTION, by the first real run. `create_user` succeeded and `assign_licenses` came
+// back 400: "License assignment cannot be done for user with invalid usage location." Graph
+// refuses assignLicense unless the user has a usageLocation, and nothing in this codebase ever
+// set one — so EVERY provisioning run would have died at step 2, leaving a live, unlicensed
+// account behind. The tenant's own convention is US (56 of 60 users).
+describe('usageLocation is set before licences are assigned', () => {
+  const planWithLoc: Plan = {
+    ...plan,
+    steps: plan.steps.map((s) => s.key === 'create_user'
+      ? { ...s, detail: { ...s.detail, usageLocation: 'US' } } : s),
+  };
+
+  it('sets usageLocation on a newly created user', async () => {
+    let body: any = null;
+    await executePlan(planWithLoc, ops({ createUser: async (b: any) => { body = b; return { id: 'u1' }; } }));
+    expect(body.usageLocation).toBe('US');
+  });
+
+  // THE RECOVERY PATH. The account created by the failed production run already exists with a
+  // null usageLocation, so a retry ADOPTS it — and adoption skips createUser entirely. Without
+  // this, the retry would fail at assign_licenses exactly as the first run did, forever.
+  it('back-fills usageLocation when adopting an existing user that has none', async () => {
+    const patched: Array<{ id: string; loc: string }> = [];
+    await executePlan(planWithLoc, ops({
+      findUser: async () => ({ id: 'existing', userPrincipalName: plan.upn, usageLocation: null }),
+      setUsageLocation: async (id: string, loc: string) => { patched.push({ id, loc }); },
+    } as any));
+    expect(patched).toEqual([{ id: 'existing', loc: 'US' }]);
+  });
+
+  it('does not re-patch a user that already has the right usageLocation', async () => {
+    let calls = 0;
+    await executePlan(planWithLoc, ops({
+      findUser: async () => ({ id: 'existing', userPrincipalName: plan.upn, usageLocation: 'US' }),
+      setUsageLocation: async () => { calls += 1; },
+    } as any));
+    expect(calls).toBe(0);
+  });
+});

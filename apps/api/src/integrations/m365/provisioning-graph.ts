@@ -98,7 +98,7 @@ function odataStringLiteral(value: string): string {
  */
 export async function findUserByUpn(g: GraphClient, upn: string) {
   const filter = `userPrincipalName eq ${odataStringLiteral(upn)}`;
-  const select = 'id,userPrincipalName,displayName,accountEnabled,givenName,surname';
+  const select = 'id,userPrincipalName,displayName,accountEnabled,givenName,surname,usageLocation';
   const res = await g.get(`/users?$filter=${encodeURIComponent(filter)}&$select=${select}`);
   return res?.value?.[0] ?? null;
 }
@@ -111,6 +111,16 @@ export async function directoryRoleCount(g: GraphClient, userId: string): Promis
 
 export async function createUser(g: GraphClient, body: Record<string, unknown>) {
   return g.post('/users', body);
+}
+
+/**
+ * Graph refuses assignLicense outright for a user with no usageLocation:
+ *   400 Request_BadRequest "License assignment cannot be done for user with invalid usage location."
+ * It is set at creation, but an account created before that fix (or by hand) needs back-filling,
+ * or every licence assignment against it fails forever.
+ */
+export async function setUsageLocation(g: GraphClient, userId: string, usageLocation: string) {
+  return g.patch(`/users/${userId}`, { usageLocation });
 }
 
 export async function assignLicenses(g: GraphClient, userId: string, skuIds: string[]) {
