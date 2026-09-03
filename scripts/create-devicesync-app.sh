@@ -20,6 +20,10 @@
 # ============================================================================
 set -euo pipefail
 
+# Absolute, so the follow-up command printed at the end works from any working directory —
+# the relative form failed for a real operator whose shell starts elsewhere.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 CUSTOMER="${1:-}"
 if [ "$CUSTOMER" = "--apply" ] || [ -z "$CUSTOMER" ]; then
   echo "usage: $0 <CustomerName> [--apply]" >&2
@@ -92,7 +96,7 @@ cat <<EOF
    \`az ad app permission admin-consent\` does not work on sovereign clouds, so:
 
    APP_ID=$APP_ID PERMS_OVERRIDE="$PERM" \\
-     scripts/grant-provisioning-consent.sh --apply
+     $SCRIPT_DIR/grant-provisioning-consent.sh --apply
 
    Until this is done the app authenticates fine and every device call returns 403.
 
