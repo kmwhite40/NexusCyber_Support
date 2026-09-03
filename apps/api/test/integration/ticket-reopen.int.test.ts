@@ -86,4 +86,20 @@ describeDb('reopening a ticket clears the terminal stamps', () => {
     expect(after.resolved_at).toEqual(before.resolved_at);
     expect(after.closed_at).not.toBeNull();
   });
+
+  // Migration 0075 cleared the rows written before transition() started clearing these stamps.
+  // This is the standing guard: a ticket that is not in a terminal status must not carry a terminal
+  // timestamp, whatever path put it there. Analytics and SLA reporting both read resolved_at, so a
+  // stamp on open work quietly skews resolution timing.
+  it('leaves no ticket carrying a terminal timestamp it has moved past', async () => {
+  const bad = await withSystemContext(async (sql) => (await sql.query(
+    `SELECT ticket_number, status,
+            resolved_at IS NOT NULL AS has_resolved_at,
+            closed_at IS NOT NULL AS has_closed_at
+       FROM tickets
+      WHERE (status NOT IN ('resolved','closed') AND resolved_at IS NOT NULL)
+         OR (status <> 'closed' AND closed_at IS NOT NULL)`,
+  )).rows);
+  expect(bad).toEqual([]);
+  });
 });
