@@ -91,8 +91,15 @@ export async function applyDeviceSync(
   return { created, updated, retired: toRetire.length, skippedRetirement: false };
 }
 
-/** Full sync for one tenant. Throws on Graph failure — so no retirement happens. */
-export async function syncOrg(sql: Sql, row: OrgIntegrationRow): Promise<SyncStats> {
+/**
+ * Enumerate one tenant's devices. Deliberately holds NO database connection: enumerating a large
+ * tenant is many sequential HTTPS round-trips, and pinning a pooled connection for their duration
+ * — across every configured customer in a sweep — is how a background job starves the request
+ * path. The only DB touch inside is buildOrgGraphClient's brief cloud-environment lookup.
+ *
+ * Throws on Graph failure, which is what stops any retirement happening for that org.
+ */
+export async function fetchOrgDevices(row: OrgIntegrationRow): Promise<ManagedDevice[]> {
   const secret: SealedSecret = {
     ciphertext: row.secret_ciphertext,
     iv: row.secret_iv,
@@ -102,8 +109,7 @@ export async function syncOrg(sql: Sql, row: OrgIntegrationRow): Promise<SyncSta
   const client = await buildOrgGraphClient({
     tenantId: row.tenant_id, clientId: row.client_id, secret, cloud: row.cloud,
   });
-  const devices = await enumerateManagedDevices(client);
-  return applyDeviceSync(sql, row.organization_id, devices);
+  return enumerateManagedDevices(client);
 }
 
 async function recordRun(
@@ -129,40 +135,45 @@ async function recordRun(
   );
 }
 
+/** Enumerate then apply, recording the run either way. Shared by the manual trigger and the job. */
+async function syncOne(row: OrgIntegrationRow): Promise<SyncStats> {
+  const orgId = row.organization_id;
+  const startedAt = new Date().toISOString();
+  try {
+    const devices = await fetchOrgDevices(row);
+    const stats = await withSystemContext((sql) => applyDeviceSync(sql, orgId, devices));
+    await withSystemContext((sql) => recordRun(sql, orgId, startedAt, { stats }));
+    return stats;
+  } catch (err) {
+    await withSystemContext((sql) => recordRun(sql, orgId, startedAt, { error: (err as Error).message }));
+    throw err;
+  }
+}
+
 /** Sync one org by id, recording the run. Used by the manual-trigger route. */
 export async function runOneOrg(orgId: string): Promise<SyncStats> {
-  return withSystemContext(async (sql) => {
-    const row = await loadEnabledRow(sql, orgId);
-    if (!row) throw new Error('no enabled entra_graph integration for org');
-    const startedAt = new Date().toISOString();
-    try {
-      const stats = await syncOrg(sql, row);
-      await recordRun(sql, orgId, startedAt, { stats });
-      return stats;
-    } catch (err) {
-      await recordRun(sql, orgId, startedAt, { error: (err as Error).message });
-      throw err;
-    }
-  });
+  const row = await withSystemContext((sql) => loadEnabledRow(sql, orgId));
+  if (!row) throw new Error('no enabled entra_graph integration for org');
+  return syncOne(row);
 }
 
 /** Every enabled integration, isolating per-org failures so one bad tenant cannot stop the rest. */
-export async function runEnabledIntegrations(sql: Sql): Promise<void> {
-  const { rows } = await sql.query(
+export async function runEnabledIntegrations(): Promise<void> {
+  const rows = await withSystemContext(async (sql) => (await sql.query(
     `SELECT oi.organization_id, oi.tenant_id, oi.client_id,
             oi.secret_ciphertext, oi.secret_iv, oi.secret_tag, oi.key_version, o.cloud
        FROM org_integrations oi
        JOIN organizations o ON o.id = oi.organization_id
       WHERE oi.provider='entra_graph' AND oi.enabled = true`,
-  );
-  for (const row of rows as OrgIntegrationRow[]) {
-    const startedAt = new Date().toISOString();
+  )).rows as OrgIntegrationRow[]);
+
+  for (const row of rows) {
     try {
-      const stats = await syncOrg(sql, row);
-      await recordRun(sql, row.organization_id, startedAt, { stats });
+      const stats = await syncOne(row);
       logger.info({ org: row.organization_id, ...stats }, 'entra sync ok');
     } catch (err) {
-      await recordRun(sql, row.organization_id, startedAt, { error: (err as Error).message });
+      // syncOne already recorded the failed run; a single misconfigured tenant must not
+      // stop every other customer's sync.
       logger.error({ org: row.organization_id, err }, 'entra sync failed');
     }
   }
