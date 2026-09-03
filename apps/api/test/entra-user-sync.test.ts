@@ -26,9 +26,9 @@ function fakeSql(existing: Array<{ id: string; email: string; plane: string; ext
   const suspended: string[] = [];
   const roles: any[] = [];
   const query = vi.fn(async (text: string, params: any[] = []) => {
-    if (/SELECT id, plane, status FROM users\s+WHERE external_id/.test(text)) {
-      const r = existing.find((e) => e.external_id === params[1]);
-      return { rows: r ? [r] : [] };
+    if (/SELECT id, plane, organization_id FROM users WHERE external_id/.test(text)) {
+      const r = existing.find((e) => e.external_id === params[0]);
+      return { rows: r ? [{ ...r, organization_id: (r as any).organization_id ?? 'org-1' }] : [] };
     }
     if (/SELECT id, plane, external_id FROM users\s+WHERE organization_id/.test(text)) {
       const r = existing.find((e) => e.email === params[1]);
@@ -75,6 +75,19 @@ describe('applyUserSync', () => {
     expect(stats.linked).toBe(1);
     expect(f.inserted).toEqual([]);
     expect(f.linked[0]).toEqual(['oid-1', 'u2']);
+  });
+
+
+  // FOUND AGAINST REAL DATA. users.external_id is globally UNIQUE, and several SBS staff are also
+  // Nexus operators who signed in via agent SSO — so their Entra oid was already taken. An
+  // org-scoped lookup missed those rows and the import died on a duplicate key halfway through.
+  it('leaves an operator account alone rather than duplicating the person', async () => {
+    const f = fakeSql([{ id: 'op1', email: 'ada.lovelace@sbsfederal.com', plane: 'nexus', external_id: 'oid-1', status: 'active' } as any]);
+    const stats = await applyUserSync(f.sql, ORG, [mapEntraUser(u())!], 'EndUser');
+    expect(stats.created).toBe(0);
+    expect(stats.skippedExisting).toBe(1);
+    expect(f.inserted).toEqual([]);
+    expect(f.linked).toEqual([]);
   });
 
   it('suspends a synced user who has left the tenant, never deletes them', async () => {

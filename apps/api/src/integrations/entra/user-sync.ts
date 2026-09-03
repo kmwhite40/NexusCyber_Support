@@ -29,6 +29,8 @@ export interface MappedUser {
 
 export interface UserSyncStats {
   created: number;
+  /** People whose Entra identity already exists elsewhere in the platform — see the oid lookup. */
+  skippedExisting: number;
   /** Existing accounts matched by email and stamped with their Entra oid. */
   linked: number;
   updated: number;
@@ -88,25 +90,37 @@ export async function applyUserSync(
   users: MappedUser[],
   roleKey: string,
 ): Promise<UserSyncStats> {
-  let created = 0; let linked = 0; let updated = 0;
+  let created = 0; let linked = 0; let updated = 0; let skippedExisting = 0;
   const seen = new Set<string>();
 
   for (const u of users) {
     seen.add(u.externalId);
 
-    // 1) Already linked by Entra oid — the SSO path stamps this too, so a person who has logged
-    //    in is found here and never doubled.
+    // 1) Already linked by Entra oid. The lookup is GLOBAL, not org-scoped, because
+    //    users.external_id carries a global UNIQUE constraint — one Entra identity can only ever
+    //    sit on one row. Scoping this to the org made the query miss operators who signed in via
+    //    agent SSO and produced a duplicate-key failure mid-import against real data.
+    //
+    //    It is also the right answer regardless of the constraint: several SBS staff are Nexus
+    //    operators, and a second customer-plane row for the same human would list them twice in
+    //    the offboarding picker with no way to tell which one is real.
     const byOid = (await sql.query(
-      `SELECT id, plane, status FROM users
-        WHERE organization_id = $1 AND external_id = $2`,
-      [orgId, u.externalId],
+      'SELECT id, plane, organization_id FROM users WHERE external_id = $1',
+      [u.externalId],
     )).rows[0];
     if (byOid) {
-      await sql.query(
-        `UPDATE users SET display_name = $2, updated_at = now() WHERE id = $1`,
-        [byOid.id, u.displayName],
-      );
-      updated += 1;
+      const sameOrgCustomer = byOid.plane === 'customer' && byOid.organization_id === orgId;
+      if (sameOrgCustomer) {
+        await sql.query(
+          'UPDATE users SET display_name = $2, updated_at = now() WHERE id = $1',
+          [byOid.id, u.displayName],
+        );
+        updated += 1;
+      } else {
+        // An operator account, or this person in another org. Leave it entirely alone: a tenant
+        // read has no business rewriting an operator's identity.
+        skippedExisting += 1;
+      }
       continue;
     }
 
@@ -161,12 +175,12 @@ export async function applyUserSync(
   if (skip) {
     logger.warn({ org: orgId, activeSynced: activeSynced.length, returned: users.length, skip },
       'entra user sync: suspension skipped — review the tenant and the app registration');
-    return { created, linked, updated, suspended: 0, skippedSuspension: true, skipReason: skip };
+    return { created, skippedExisting, linked, updated, suspended: 0, skippedSuspension: true, skipReason: skip };
   }
 
   for (const id of toSuspend) {
     // Suspended, never deleted: the account is the anchor for their ticket history.
     await sql.query("UPDATE users SET status='suspended', updated_at=now() WHERE id=$1", [id]);
   }
-  return { created, linked, updated, suspended: toSuspend.length, skippedSuspension: false };
+  return { created, skippedExisting, linked, updated, suspended: toSuspend.length, skippedSuspension: false };
 }
