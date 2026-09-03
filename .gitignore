@@ -8,3 +8,10 @@ dist/
 coverage/
 .claude/
 infra/azure/.secrets.gov.env
+
+# Finder/OneDrive conflict copies ("file 2.tsx"). These are byte-identical duplicates of tracked
+# files; one of them was committed by accident via `git add -A`, so they are ignored rather than
+# left to be swept up again.
+* 2.*
+*\ 2.*
+OneDeploy

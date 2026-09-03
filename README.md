@@ -207,6 +207,51 @@ Before switching it on, see the spec's open items and
 [docs/nexus/artifacts/deploy/anchor-provisioning-app-registration.md](docs/nexus/artifacts/deploy/anchor-provisioning-app-registration.md).
 `scripts/probe-provisioning-tenant.sh` answers most of them in one read-only run.
 
+## CMDB device sync from customer tenants (feature-flagged, currently OFF)
+
+Populates `configuration_items` device CIs from each customer's own Entra/Intune tenant, so the
+CMDB reflects the fleet rather than whatever someone last typed in. Configured per customer at
+`/integrations` (`integration.credentials.manage`), then synced on a 6-hour schedule or on demand.
+
+Each customer supplies their own app registration with `DeviceManagementManagedDevices.Read.All`
+admin-consented. Nexus never uses one shared credential across tenants — the isolation comes from
+the credentials, not from trusting the code to filter correctly.
+
+**The client secret is envelope-encrypted at the application layer** (AES-256-GCM, fresh IV per
+seal), because Key Vault is blocked by NIST policy in this enclave. The database holds only
+ciphertext, IV and tag; there is deliberately no `client_secret` text column, and nothing stored
+is decryptable from the database alone. `INTEGRATION_ENC_KEY` is that key:
+
+> **Losing `INTEGRATION_ENC_KEY` makes every stored customer secret unrecoverable.** Rotating it
+> without re-wrapping has the same effect. `key_version` exists on each row so a rotation can
+> re-wrap rather than guess.
+
+Design decisions worth knowing before changing this code:
+
+- **Retirement only runs after a complete enumeration.** `planRetirements` cannot distinguish
+  "this device is gone" from "we never saw this device", so anything that throws during
+  enumeration or upsert propagates and no retirement happens at all. That ordering *is* the
+  safety property, and a test pins it.
+- **Two guards on top of that**, because a degraded enumeration does not throw — it just returns
+  less. Retirement is skipped if the tenant returns zero devices while active synced CIs exist, or
+  if a single pass would retire more than half an org's active devices (above a floor of 10, below
+  which proportion means nothing). Both report a reason the UI shows verbatim; a skip that does
+  not say what to check is not actionable.
+- **CIs are retired, never deleted.** A device that left the tenant is still part of what was once
+  true. Hand-created CIs stay `source='manual'` and are never touched by a sync.
+- **One sync per organization at a time**, via a leased row rather than an advisory lock: the
+  window that must be exclusive is enumerate-through-retire — minutes of HTTP — and a lock would
+  mean holding a pooled connection for all of it. The lease expires, so a crashed process cannot
+  wedge an org forever.
+- **`integration.credentials.manage` is not `integration.manage`.** The latter covers M2M API keys
+  and outbound webhooks and is held by customer-plane OrgAdmins; configuring the credentials Nexus
+  uses to read a customer's own directory is a platform action.
+
+Everything stays dark until `ENTRA_SYNC_ENABLED=true` **and** `INTEGRATION_ENC_KEY` is set — a
+half-configured deploy would otherwise fail on every customer with an error that looks like a bad
+credential rather than a missing key. Enabling the flag with no configured customers is a no-op:
+the sweep iterates only enabled `org_integrations` rows.
+
 ## Change management + CAB voting
 
 Quorum-based Change Advisory Board approval: a board with configurable quorum, threshold and
