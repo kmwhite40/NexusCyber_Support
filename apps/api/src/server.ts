@@ -24,6 +24,7 @@ import { startRetentionPurge } from './jobs/retention-purge.js';
 import { startCloudPcPoller } from './jobs/cloudpc-poller.js';
 import { startOffboardingSweeper } from './jobs/offboarding-sweeper.js';
 import { startRetentionSweeper } from './jobs/retention-sweeper.js';
+import { buildInfo } from './build-info.js';
 
 async function main() {
   // Optional in-boundary migrations on boot (set RUN_MIGRATIONS_ON_BOOT=true). Runs
@@ -89,7 +90,11 @@ async function main() {
   });
 
   // Liveness + readiness probes (Kubernetes/Front Door health checks).
-  app.get('/healthz', async () => ({ status: 'ok', enclave: config.enclave }));
+  // `build` is what makes a deploy verifiable: see build-info.ts and the poll in
+  // scripts/deploy-api.sh, which waits for THIS commit rather than for any 200.
+  app.get('/healthz', async () => ({
+    status: 'ok', enclave: config.enclave, ...buildInfo(process.env),
+  }));
   app.get('/readyz', async (_req, reply) => {
     try {
       const client = await pool.connect();

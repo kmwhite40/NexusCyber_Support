@@ -32,7 +32,8 @@ cloud="$(az cloud show --query name -o tsv)"
 
 # 1) Build + push in ACR (no local Docker).
 echo "▶ Building image in ACR…"
-az acr build --registry "$ACR" --image "$IMAGE:$TAG" --image "$IMAGE:latest" --file apps/api/Dockerfile "$ROOT" >/tmp/deploy-api-build.log 2>&1 \
+az acr build --registry "$ACR" --image "$IMAGE:$TAG" --image "$IMAGE:latest" \
+  --build-arg "BUILD_SHA=$TAG" --file apps/api/Dockerfile "$ROOT" >/tmp/deploy-api-build.log 2>&1 \
   || { echo "✗ ACR build failed — see /tmp/deploy-api-build.log"; tail -20 /tmp/deploy-api-build.log; exit 1; }
 
 # 2) Resolve the immutable digest and pin the container to it.
@@ -45,13 +46,36 @@ az webapp config container set -g "$RG" -n "$APP" --container-image-name "$REF" 
 # 3) Restart and wait for readiness.
 az webapp restart -g "$RG" -n "$APP"
 host="$(az webapp show -g "$RG" -n "$APP" --query defaultHostName -o tsv)"
-echo "▶ Waiting for https://$host/readyz …"
-ready=""
-for _ in $(seq 1 40); do
-  code="$(curl -s -o /dev/null -w '%{http_code}' "https://$host/readyz" || true)"
-  if [ "$code" = "200" ]; then ready=1; break; fi
+# Wait for THIS BUILD to answer, not merely for something to return 200.
+#
+# During an App Service container swap the OLD container keeps serving, so polling /readyz until
+# it returns 200 proves nothing about the image just pushed. That is not theoretical: a deploy
+# printed its success line while the new container had not booted, and if its migrations had
+# failed it would have printed the same line against a healthy old container with a crash-looping
+# new one behind it. RUN_MIGRATIONS_ON_BOOT makes that failure mode entirely reachable — a
+# migration that cannot apply aborts startup.
+echo "▶ Waiting for https://$host/healthz to report build $TAG …"
+live=""
+last_seen=""
+for _ in $(seq 1 60); do
+  body="$(curl -s -m 10 "https://$host/healthz" || true)"
+  last_seen="$(printf '%s' "$body" | sed -n 's/.*"build"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+  if [ "$last_seen" = "$TAG" ]; then live=1; break; fi
   sleep 6
 done
-[ -n "$ready" ] || { echo "✗ $APP did not become ready" >&2; exit 1; }
+
+if [ -z "$live" ]; then
+  echo "✗ $APP is serving build '${last_seen:-<no build field>}', not '$TAG'." >&2
+  echo "  The old container may still be serving, or the new one failed to start." >&2
+  echo "  With RUN_MIGRATIONS_ON_BOOT=true a failing migration aborts startup — check:" >&2
+  echo "    az webapp log download -g $RG -n $APP --log-file /tmp/anchor-logs.zip" >&2
+  echo "  A '<no build field>' above means the running image predates build-stamping;" >&2
+  echo "  deploy once more and it will report properly." >&2
+  exit 1
+fi
+
+# Readiness (database reachable) — meaningful now that we know WHICH build answered.
+code="$(curl -s -m 20 -o /dev/null -w '%{http_code}' "https://$host/readyz" || true)"
+[ "$code" = "200" ] || { echo "✗ build $TAG is live but /readyz returned $code" >&2; exit 1; }
 echo "  healthz: $(curl -s "https://$host/healthz")"
 echo "✓ Deployed apps/api ($TAG / ${DIGEST:0:19}) to https://$host"
