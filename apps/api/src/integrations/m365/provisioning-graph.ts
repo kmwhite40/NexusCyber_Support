@@ -279,3 +279,21 @@ export async function removeLicenses(g: GraphClient, userId: string, skuIds: str
 export async function removeFromGroup(g: GraphClient, groupId: string, userId: string): Promise<void> {
   await g.del(`/groups/${groupId}/members/${userId}/$ref`);
 }
+
+/**
+ * Whether an account still exists, by object id.
+ *
+ * THREE-VALUED ON PURPOSE. `null` means the answer is UNKNOWN — a throttle, an outage, a
+ * permissions problem — and the retention sweeper must be able to tell that from "confirmed
+ * gone". Collapsing the two would either manufacture a compliance breach out of a network blip,
+ * or hide a real one behind an optimistic default. Only a 404 is treated as absent.
+ */
+export async function accountExists(g: GraphClient, objectId: string): Promise<boolean | null> {
+  try {
+    const res = await g.get(`/users/${objectId}?$select=id`);
+    return Boolean(res?.id);
+  } catch (err) {
+    if (err instanceof GraphError && err.status === 404) return false;
+    return null;
+  }
+}
