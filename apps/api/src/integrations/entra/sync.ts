@@ -46,7 +46,11 @@ export async function applyDeviceSync(
       `INSERT INTO configuration_items
          (organization_id, ci_class, name, status, owner, attributes, source, external_id)
        VALUES ($1,'device',$2,'active',$3,$4,'entra',$5)
-       ON CONFLICT (organization_id, source, external_id)
+       -- The WHERE clause is NOT optional: ux_ci_source_external is a PARTIAL index
+       -- (WHERE external_id IS NOT NULL), and Postgres refuses to infer a partial index unless
+       -- the ON CONFLICT specification repeats its predicate. Without it every upsert fails with
+       -- "no unique or exclusion constraint matching the ON CONFLICT specification".
+       ON CONFLICT (organization_id, source, external_id) WHERE external_id IS NOT NULL
        DO UPDATE SET name = EXCLUDED.name, owner = EXCLUDED.owner,
                      attributes = EXCLUDED.attributes, status = 'active', updated_at = now()
        RETURNING (xmax = 0) AS inserted`,
