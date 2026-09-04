@@ -11,7 +11,7 @@ export function Dialog({
   title,
   onClose,
   children,
-  wide,
+  size = 'md',
   dismissOnBackdrop = false,
   footer,
   describedBy,
@@ -20,7 +20,9 @@ export function Dialog({
   /** Called when the user asks to close. Guard it (dirty checks, confirms) in the caller. */
   onClose: () => void;
   children: React.ReactNode;
-  wide?: boolean;
+  /** Width. The call sites this replaced ranged from max-w-sm to max-w-2xl; a boolean could not
+   *  express that, and forcing them all to one width would have changed layouts silently. */
+  size?: 'sm' | 'md' | 'lg' | 'xl';
   /**
    * Off by default, on purpose. A stray click on the backdrop used to throw away a filled form
    * with no warning — and clicks from portalled dropdowns land there routinely. Opt in only for
@@ -87,7 +89,9 @@ export function Dialog({
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={onKeyDown}
-        className={`flex max-h-[90vh] w-full flex-col ${wide ? 'max-w-2xl' : 'max-w-md'}`}
+        className={`flex max-h-[90vh] w-full flex-col ${
+          { sm: 'max-w-sm', md: 'max-w-md', lg: 'max-w-lg', xl: 'max-w-2xl' }[size]
+        }`}
       >
         <div className="shrink-0 px-5 pt-5">
           <h2 id={titleId} className="text-lg font-semibold text-fg">{title}</h2>

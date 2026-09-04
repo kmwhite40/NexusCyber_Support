@@ -6,6 +6,7 @@ import {
 } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
 import { Card, CardBody, Badge, Button, Input, Select, Label, SegmentedControl } from '@/components/ui/primitives';
+import { Dialog } from '@/components/ui/dialog';
 import { DataTable, EmptyState, Skeleton, StatCard } from '@/components/ui/data';
 import { X } from 'lucide-react';
 
@@ -143,9 +144,7 @@ function CiDetailModal({ id, allCis, onClose, onChanged }: { id: string; allCis:
   );
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onClick={onClose}>
-      <Card className="w-full max-w-2xl max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-        <CardBody className="space-y-3">
+    <Dialog title={ci?.name ?? "Configuration item"} onClose={onClose} size="xl">
           {err && <p className="text-sm text-danger">{err}</p>}
           {!ci ? <Skeleton className="h-40" /> : (
             <>
@@ -215,8 +214,6 @@ function CiDetailModal({ id, allCis, onClose, onChanged }: { id: string; allCis:
               </div>
             </>
           )}
-        </CardBody>
-      </Card>
-    </div>
+    </Dialog>
   );
 }

@@ -122,7 +122,13 @@ export default function DashboardPage() {
       {/* Trend + findings preview */}
       <div className="grid gap-6 lg:grid-cols-3">
         <Card>
-          <CardHeader><CardTitle>Ticket volume (14d)</CardTitle></CardHeader>
+          <CardHeader className="flex items-center justify-between gap-2">
+            <CardTitle>Ticket volume (14d)</CardTitle>
+            {/* Says so at a glance, not only in the footnote. Sitting beside four cards of real
+                numbers, an unlabelled sample chart is read as real by everyone who does not
+                stop to read underneath it. */}
+            <Badge tone="warning">Sample data</Badge>
+          </CardHeader>
           <CardBody>
             <Sparkline data={[4, 6, 5, 8, 7, 9, 6, 10, 8, 12, 9, 11, 7, 10]} width={260} height={64} />
             <p className="mt-2 text-xs text-muted">Demonstration trend — wired to analytics ETL in Enterprise v1.</p>

@@ -146,7 +146,7 @@ function OrgDetailModal({ id, admin, onClose, onChanged }: { id: string; admin: 
 
   return (
     <>
-    <Dialog title={detail?.name ?? 'Organization'} onClose={onClose} wide>
+    <Dialog title={detail?.name ?? 'Organization'} onClose={onClose} size="xl">
       {err && <p className="text-sm text-danger">{err}</p>}
       {detail === null ? <Skeleton className="h-12" /> : (
         <>

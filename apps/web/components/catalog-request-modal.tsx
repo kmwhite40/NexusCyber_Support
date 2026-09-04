@@ -6,7 +6,8 @@ import * as React from 'react';
 import { api, catalog, users, attachmentsApi, type CatalogItem, type Ticket, type CatalogForm, type FormFieldDef, ApiError } from '@/lib/api';
 import { UserPicker } from '@/components/user-picker';
 import { DynamicFormField, isFieldVisible } from '@/components/dynamic-form-field';
-import { Card, CardBody, CardHeader, CardTitle, Button, Input, Textarea, Field, Select } from '@/components/ui/primitives';
+import { Button, Input, Textarea, Field, Select } from '@/components/ui/primitives';
+import { Dialog } from '@/components/ui/dialog';
 import { useAuth } from '@/components/auth-context';
 
 /** Form fields whose options come from a live endpoint rather than the form definition. */
@@ -112,24 +113,21 @@ export function RequestModal({
     onClose();
   }, [dirty, onClose]);
 
-  // Escape still closes — but through the same guard, so it cannot silently discard a filled form.
-  React.useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') attemptClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [attemptClose]);
-
   return (
-    // No onClick on the backdrop. It used to call onClose, which meant any click reaching it
-    // discarded the whole form without warning — including clicks from portalled dropdowns (the
-    // user picker, date fields) that bubble straight past the card's stopPropagation. Dismissal
-    // is deliberate now: Cancel or Escape, both guarded.
-    <div className="fixed inset-0 z-50 grid place-items-center bg-bg/70 p-4 backdrop-blur-sm">
-      {/* flex column so the body scrolls and the actions stay pinned; previously the buttons were
-          the last thing inside the scroll area and a long form pushed Submit out of reach. */}
-      <Card className="flex max-h-[90vh] w-full max-w-lg flex-col" onClick={(e) => e.stopPropagation()}>
-        <CardHeader className="shrink-0"><CardTitle>{item.name}</CardTitle></CardHeader>
-        <CardBody className="min-h-0 flex-1 overflow-auto">
+    // Everything this used to hand-roll — no backdrop dismissal, a pinned footer, a portal,
+    // focus handling — now lives in the shared Dialog. attemptClose stays here because only this
+    // component knows whether the form is worth protecting.
+    <Dialog
+      title={item.name}
+      onClose={attemptClose}
+      size="lg"
+      footer={(
+        <>
+          <Button type="submit" form={formId} disabled={busy}>{busy ? 'Sending…' : 'Send'}</Button>
+          <Button type="button" variant="ghost" onClick={attemptClose}>Cancel</Button>
+        </>
+      )}
+    >
           {form && <p className="mb-4 text-xs text-muted">Required fields are marked with an asterisk<span className="text-danger">*</span></p>}
           <form id={formId} onSubmit={submit}>
             {isAgent && (
@@ -168,13 +166,7 @@ export function RequestModal({
             )}
 
             {error && <p className="mb-3 text-xs text-danger">{error}</p>}
-          </form>
-        </CardBody>
-        <div className="flex shrink-0 items-center gap-3 border-t border-border px-5 py-4">
-          <Button type="submit" form={formId} disabled={busy}>{busy ? 'Sending…' : 'Send'}</Button>
-          <Button type="button" variant="ghost" onClick={attemptClose}>Cancel</Button>
-        </div>
-      </Card>
-    </div>
+      </form>
+    </Dialog>
   );
 }

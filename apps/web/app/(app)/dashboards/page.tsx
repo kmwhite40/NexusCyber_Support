@@ -8,6 +8,7 @@ import {
 } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
 import { Card, CardBody, CardHeader, CardTitle, Button, Input, Field, Select, Checkbox, SegmentedControl } from '@/components/ui/primitives';
+import { Dialog } from '@/components/ui/dialog';
 import { StatCard, EmptyState, Skeleton } from '@/components/ui/data';
 import { Donut, MiniBars, TrendChart } from '@/components/ui/charts';
 import { DashboardWidget } from '@/components/ui/dashboard-widgets';
@@ -445,10 +446,7 @@ function NewDashboardModal({ orgs, isAgent, onClose, onCreated }: { orgs: { id: 
     } catch (e) { setErr((e as Error).message); }
   }
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onClick={onClose}>
-      <Card className="w-full max-w-md" onClick={(e) => e.stopPropagation()}>
-        <CardBody className="space-y-3">
-          <CardTitle className="text-lg">New dashboard</CardTitle>
+    <Dialog title="New dashboard" onClose={onClose} size="md">
           <Field label="Name"><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
           {isAgent && <Field label="Organization"><Select title="Organization" value={organizationId} onChange={(e) => setOrganizationId(e.target.value)}><option value="">Select…</option>{orgs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</Select></Field>}
           <div><div className="mb-1 text-xs font-medium text-muted">Widgets</div>
@@ -458,8 +456,6 @@ function NewDashboardModal({ orgs, isAgent, onClose, onCreated }: { orgs: { id: 
           </div>
           {err && <p className="text-xs text-danger">{err}</p>}
           <div className="flex justify-end gap-2"><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={save} disabled={!name || picked.length === 0 || (isAgent && !organizationId)}>Create</Button></div>
-        </CardBody>
-      </Card>
-    </div>
+    </Dialog>
   );
 }

@@ -4,6 +4,7 @@ import { channelsApi, type Channel } from '@/lib/api';
 import { api } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
 import { Card, CardBody, Button, Badge, Select, Input, Field } from '@/components/ui/primitives';
+import { Dialog } from '@/components/ui/dialog';
 import { DataTable, EmptyState, Skeleton } from '@/components/ui/data';
 
 export default function ChannelsPage() {
@@ -56,17 +57,12 @@ function NewChannelModal({ orgs, isAgent, onClose, onCreated }: { orgs: { id: st
     } catch (e) { setErr((e as Error).message); }
   }
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onClick={onClose}>
-      <Card className="w-full max-w-md" onClick={(e) => e.stopPropagation()}>
-        <CardBody className="space-y-3">
-          <h2 className="text-lg font-semibold">New channel</h2>
+    <Dialog title="New channel" onClose={onClose} size="md">
           <Field label="Type"><Select value={type} onChange={(e) => setType(e.target.value as 'email' | 'portal' | 'widget')}><option value="email">Email</option><option value="portal">Portal</option><option value="widget">Widget</option></Select></Field>
           <Field label="Name"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="support@acme" /></Field>
           {isAgent && <Field label="Organization"><Select value={organizationId} onChange={(e) => setOrganizationId(e.target.value)}><option value="">Select…</option>{orgs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</Select></Field>}
           {err && <p className="text-xs text-danger">{err}</p>}
           <div className="flex justify-end gap-2"><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={save} disabled={!name || (isAgent && !organizationId)}>Create</Button></div>
-        </CardBody>
-      </Card>
-    </div>
+    </Dialog>
   );
 }

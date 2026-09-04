@@ -16,16 +16,18 @@ export function StatCard({
   icon?: React.ReactNode;
   tone?: 'brand' | 'success' | 'warning' | 'danger' | 'accent';
 }) {
-  const ring: Record<string, string> = {
-    brand: 'from-brand/20', success: 'from-success/20', warning: 'from-warning/20',
-    danger: 'from-danger/20', accent: 'from-accent/20',
+  // `tone` used to drive nothing but a blurred gradient orb behind the tile — 41 call sites
+  // declaring an intent that rendered as decoration. It now colours the icon, the one element
+  // that can carry a state signal without flooding a tile whose job is a number.
+  const toneClass: Record<string, string> = {
+    brand: 'text-brand', success: 'text-success', warning: 'text-warning',
+    danger: 'text-danger', accent: 'text-accent',
   };
   return (
-    <Card className="relative overflow-hidden p-5">
-      <div className={cn('pointer-events-none absolute -right-8 -top-8 h-28 w-28 rounded-full bg-gradient-to-br to-transparent blur-2xl', ring[tone])} />
+    <Card className="p-5">
       <div className="flex items-start justify-between">
         <span className="text-xs font-medium uppercase tracking-wider text-muted">{label}</span>
-        {icon && <span className="text-muted">{icon}</span>}
+        {icon && <span className={toneClass[tone] ?? 'text-muted'}>{icon}</span>}
       </div>
       <div className="mt-3 flex items-end gap-2">
         <span className="text-3xl font-semibold tracking-tight text-fg tabular-nums">{value}</span>

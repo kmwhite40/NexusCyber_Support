@@ -5,6 +5,7 @@ import * as React from 'react';
 import { oncall, type OnCallSchedule, type OnCallPage, type Responder, ApiError } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
 import { Card, CardHeader, CardTitle, CardBody, Button, Badge, Input, Select, Field } from '@/components/ui/primitives';
+import { Dialog as UIDialog } from '@/components/ui/dialog';
 import { DataTable, EmptyState, Skeleton, StatCard } from '@/components/ui/data';
 import { Pencil, X } from 'lucide-react';
 
@@ -17,10 +18,7 @@ type Dialog =
 function DialogHost({ dialog, onClose }: { dialog: Dialog; onClose: () => void }) {
   const [value, setValue] = React.useState(dialog.kind === 'prompt' ? dialog.initial : '');
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-bg/70 p-4 backdrop-blur-sm" onClick={onClose}>
-      <Card className="w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
-        <CardHeader><CardTitle>{dialog.title}</CardTitle></CardHeader>
-        <CardBody className="space-y-4">
+    <UIDialog title={dialog.title} onClose={onClose} size="sm">
           <p className="text-sm text-fg/80">{dialog.message}</p>
           {dialog.kind === 'prompt' && (
             <Input
@@ -39,9 +37,7 @@ function DialogHost({ dialog, onClose }: { dialog: Dialog; onClose: () => void }
             {dialog.kind === 'prompt' && <Button size="sm" onClick={() => { dialog.onSubmit(value); onClose(); }}>Save</Button>}
             {dialog.kind === 'alert' && <Button size="sm" onClick={onClose}>OK</Button>}
           </div>
-        </CardBody>
-      </Card>
-    </div>
+    </UIDialog>
   );
 }
 
@@ -317,10 +313,7 @@ function ConfigModal({
   const title = mode === 'create' ? 'New on-call rotation' : mode === 'edit' ? `Edit rotation — ${schedule?.team}` : `Add override — ${schedule?.team}`;
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onClick={onClose}>
-      <Card className="w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
-        <CardHeader><CardTitle>{title}</CardTitle></CardHeader>
-        <CardBody>
+    <UIDialog title={title} onClose={onClose} size="lg">
           <form onSubmit={save}>
             {mode === 'override' ? (
               <>
@@ -372,8 +365,6 @@ function ConfigModal({
               <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
             </div>
           </form>
-        </CardBody>
-      </Card>
-    </div>
+    </UIDialog>
   );
 }

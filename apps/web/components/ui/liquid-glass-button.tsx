@@ -212,7 +212,7 @@ const metalButtonVariants = (
       filter: isHovered && !isPressed && !isTouchDevice ? 'brightness(1.05)' : 'none',
     },
     button: cn(
-      'relative z-10 m-[1px] rounded-md inline-flex h-11 transform-gpu cursor-pointer items-center justify-center overflow-hidden rounded-md px-6 py-2 text-sm leading-none font-semibold will-change-transform outline-none',
+      'relative z-10 m-[1px] rounded-md inline-flex h-11 transform-gpu cursor-pointer items-center justify-center overflow-hidden rounded-md px-6 py-2 text-sm leading-none font-semibold will-change-transform outline-none focus-visible:ring-2 focus-visible:ring-brand/60',
       colors.button,
       colors.textColor,
       colors.textShadow,

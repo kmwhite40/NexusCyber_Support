@@ -148,7 +148,7 @@ function UserModal({
   }
 
   return (
-    <Dialog title={mode === 'create' ? 'New platform user' : (user?.display_name ?? user?.email ?? 'Edit user')} onClose={onClose} wide>
+    <Dialog title={mode === 'create' ? 'New platform user' : (user?.display_name ?? user?.email ?? 'Edit user')} onClose={onClose} size="xl">
       <div className="grid grid-cols-2 gap-2">
         <div>
           <label className="text-xs text-muted">Email</label>

@@ -4,6 +4,7 @@ import { escalationApi, type EscalationPolicy } from '@/lib/api';
 import { api } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
 import { Card, CardBody, Button, Select, Input, Field } from '@/components/ui/primitives';
+import { Dialog } from '@/components/ui/dialog';
 import { DataTable, EmptyState, Skeleton } from '@/components/ui/data';
 
 function stepSummary(steps: EscalationPolicy['steps']): string {
@@ -70,10 +71,7 @@ function NewPolicyModal({ orgs, isAgent, onClose, onCreated }: { orgs: { id: str
   }
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onClick={onClose}>
-      <Card className="w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
-        <CardBody className="space-y-3">
-          <h2 className="text-lg font-semibold">New escalation policy</h2>
+    <Dialog title="New escalation policy" onClose={onClose} size="lg">
           <Field label="Name"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Critical alert policy" /></Field>
           {isAgent && (
             <Field label="Organization">
@@ -104,8 +102,6 @@ function NewPolicyModal({ orgs, isAgent, onClose, onCreated }: { orgs: { id: str
             <Button variant="outline" onClick={onClose}>Cancel</Button>
             <Button onClick={save} disabled={!name || (isAgent && !organizationId) || steps.some((s) => !s.targetId)}>Create</Button>
           </div>
-        </CardBody>
-      </Card>
-    </div>
+    </Dialog>
   );
 }

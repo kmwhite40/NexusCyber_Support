@@ -173,7 +173,7 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
   };
 
   return (
-    <Dialog title="New automation flow" onClose={onClose} wide>
+    <Dialog title="New automation flow" onClose={onClose} size="xl">
       <form onSubmit={submit} className="space-y-4">
         <Field label="Name"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Tag & escalate P1 incidents" required minLength={3} /></Field>
 

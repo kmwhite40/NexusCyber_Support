@@ -185,7 +185,7 @@ const renderMenuItem = (item: MenuItem) => {
               {item.items.map((subItem) => (
                 <li key={subItem.title}>
                   <a
-                    className="flex select-none gap-4 rounded-md p-3 leading-none no-underline outline-none transition-colors hover:bg-muted hover:text-accent-foreground"
+                    className="flex select-none gap-4 rounded-md p-3 leading-none no-underline outline-none transition-colors hover:bg-muted hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-brand/60"
                     href={subItem.url}
                   >
                     {subItem.icon}
@@ -225,7 +225,7 @@ const renderMobileMenuItem = (item: MenuItem) => {
           {item.items.map((subItem) => (
             <a
               key={subItem.title}
-              className="flex select-none gap-4 rounded-md p-3 leading-none outline-none transition-colors hover:bg-muted hover:text-accent-foreground"
+              className="flex select-none gap-4 rounded-md p-3 leading-none outline-none transition-colors hover:bg-muted hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-brand/60"
               href={subItem.url}
             >
               {subItem.icon}
