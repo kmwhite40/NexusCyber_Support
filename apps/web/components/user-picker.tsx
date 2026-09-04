@@ -22,6 +22,32 @@ export function UserPicker({
   const [hits, setHits] = React.useState<UserHit[]>([]);
   const [open, setOpen] = React.useState(false);
   const [chosen, setChosen] = React.useState<Record<string, UserHit>>({});
+  const boxRef = React.useRef<HTMLDivElement>(null);
+
+  // The list had no way to close: no outside click, no Escape, and picking in multi-select mode
+  // left it open. With two people in an org that was survivable; with a full roster it covers the
+  // rest of the form and there is no way past it.
+  React.useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!boxRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    // CAPTURE phase, on purpose. A dialog containing this picker listens for Escape on window to
+    // close itself; without capturing first, one Escape would close the list AND discard the form
+    // behind it. Capturing lets the innermost thing win, which is what Escape should always do.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      e.preventDefault();
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey, true);
+    };
+  }, [open]);
 
   const selectedIds: string[] = Array.isArray(value) ? value : value ? [value] : [];
 
@@ -50,7 +76,7 @@ export function UserPicker({
   const label = (id: string) => chosen[id]?.display_name || chosen[id]?.email || id;
 
   return (
-    <div className="relative">
+    <div className="relative" ref={boxRef}>
       {selectedIds.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-2">
           {selectedIds.map((id) => (
