@@ -58,7 +58,15 @@ console.log(`role for new users   : ${ROLE}`);
 const existing = await withSystemContext(async (sql) => (await sql.query(
   `SELECT lower(email) AS email, external_id FROM users
     WHERE organization_id=$1 AND plane='customer'`, [ORG_ID])).rows as Array<{ email: string; external_id: string | null }>);
-const byOid = new Set(existing.filter((e) => e.external_id).map((e) => e.external_id as string));
+
+// Entra ids are matched GLOBALLY, because users.external_id is globally unique — several staff
+// are also operator accounts in the nexus plane. A preview that only looked at this org's
+// customer users over-reported creates by exactly that number, which is the one thing a dry run
+// must not do: it existed to tell you what will happen.
+const takenOids = await withSystemContext(async (sql) => new Set(
+  (await sql.query('SELECT external_id FROM users WHERE external_id IS NOT NULL')).rows
+    .map((r: { external_id: string }) => r.external_id)));
+const byOid = takenOids;
 const byEmail = new Set(existing.map((e) => e.email));
 const wouldCreate = mapped.filter((m) => !byOid.has(m.externalId) && !byEmail.has(m.email));
 const wouldLink = mapped.filter((m) => !byOid.has(m.externalId) && byEmail.has(m.email));
@@ -66,7 +74,10 @@ const seen = new Set(mapped.map((m) => m.externalId));
 const wouldSuspend = existing.filter((e) => e.external_id && !seen.has(e.external_id));
 
 console.log(`\nalready in Nexus     : ${existing.length}`);
+const wouldSkip = mapped.filter((m) => takenOids.has(m.externalId)
+  && !existing.some((e) => e.external_id === m.externalId));
 console.log(`would CREATE         : ${wouldCreate.length}`);
+console.log(`would SKIP (already an identity elsewhere): ${wouldSkip.length}`);
 console.log(`would LINK by email  : ${wouldLink.length}`);
 console.log(`would SUSPEND        : ${wouldSuspend.length}  ${wouldSuspend.map((e) => e.email).join(', ')}`);
 console.log('\nsample of new users:');
