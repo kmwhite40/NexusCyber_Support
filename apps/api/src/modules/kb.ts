@@ -177,19 +177,55 @@ export async function spaceTree(actor: Principal, spaceId: string) {
 }
 
 /** Full-text search over published pages (drafts are excluded from search). */
+
+/**
+ * Snippet highlighting, without trusting ts_headline to sanitize.
+ *
+ * The search snippet is rendered with dangerouslySetInnerHTML on three surfaces — the agent KB
+ * page and two customer-facing portal views. ts_headline's default StartSel/StopSel are literal
+ * `<b>` tags, which forces the renderer to accept HTML from page bodies. That looked safe because
+ * ts_headline drops WELL-FORMED tags. It does not drop everything: an unclosed `<img src=x
+ * onerror=...` and `<svg/onload=...>` both survive verbatim, so any kb.author could run script in
+ * a reader's session, including an admin's and including another tenant's portal.
+ *
+ * So matches are marked with control characters instead — they cannot appear in page text and
+ * carry no meaning in HTML — the whole string is escaped, and only then are the two <b> tags we
+ * are willing to emit put back.
+ */
+export const SNIPPET_START = '\u0001';
+export const SNIPPET_STOP = '\u0002';
+
+/** ts_headline options carrying the sentinels. Passed as a bound parameter, never interpolated. */
+export const SNIPPET_OPTS =
+  `MaxFragments=1,MaxWords=24,MinWords=8,StartSel=${SNIPPET_START},StopSel=${SNIPPET_STOP}`;
+
+export function renderSnippet(raw: string): string {
+  const escaped = String(raw ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+  // Split/join rather than a global regex: the sentinels are literal single characters, and this
+  // cannot be tricked by anything in the escaped text, which no longer contains them.
+  return escaped.split(SNIPPET_START).join('<b>').split(SNIPPET_STOP).join('</b>');
+}
+
 export async function search(actor: Principal, q: string, limit = 20) {
   authorize(actor, 'kb.read');
   if (!q.trim()) return [];
   return withOrgContext(orgContextFor(actor), async (sql) => {
     const { rows } = await sql.query(
       `SELECT id, space_id, title, status, ts_rank(tsv, websearch_to_tsquery('english', $1)) AS rank,
-              ts_headline('english', body, websearch_to_tsquery('english', $1), 'MaxFragments=1,MaxWords=24,MinWords=8') AS snippet
+              ts_headline('english', body, websearch_to_tsquery('english', $1), $3) AS snippet
          FROM kb_pages
         WHERE status='published' AND tsv @@ websearch_to_tsquery('english', $1)
         ORDER BY rank DESC LIMIT $2`,
-      [q, limit],
+      [q, limit, SNIPPET_OPTS],
     );
-    return rows;
+    // Escape here, at the single point every surface reads from, rather than in each of the
+    // three components that render it.
+    return rows.map((r: Record<string, unknown>) => ({ ...r, snippet: renderSnippet(String(r.snippet ?? '')) }));
   });
 }
 
