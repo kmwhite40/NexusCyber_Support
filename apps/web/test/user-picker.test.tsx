@@ -71,4 +71,32 @@ describe('user picker dismissal', () => {
     await userEvent.click(screen.getByText('Bragg, Coady'));
     expect(onChange).toHaveBeenCalledWith(['u1']);
   });
+
+  // Inside the service-catalog dialog the picker lives in a scrolling `overflow-auto` body. An
+  // absolutely-positioned list is clipped at that body's edge, so a picker low in a long form
+  // (the onboarding request has thirty fields) had its results cut off and hidden behind the
+  // pinned footer. Portalling to the body escapes the clip — which is only true if the list is
+  // genuinely not a descendant of the scrolling element.
+  it('renders the list outside a scrolling ancestor, not clipped inside it', async () => {
+    render(
+      <div data-testid="scroller" style={{ overflow: 'auto', height: 100 }}>
+        <UserPicker value={null} onChange={vi.fn()} organizationId="org-1" multiple />
+      </div>,
+    );
+    await userEvent.click(screen.getByPlaceholderText(/enter name or email/i));
+    const item = await screen.findByText('Bragg, Coady');
+    const scroller = screen.getByTestId('scroller');
+    expect(scroller.contains(item)).toBe(false);
+    expect(document.body.contains(item)).toBe(true);
+  });
+
+  // The portal puts the list outside the picker's own element, so the outside-click handler has
+  // to treat it as inside — otherwise the click that chooses someone closes the list first and
+  // the pick never lands.
+  it('still registers a pick even though the list is portalled', async () => {
+    const onChange = await openList();
+    await userEvent.click(screen.getByText('Hite, Connor'));
+    expect(onChange).toHaveBeenCalledWith(['u2']);
+  });
+
 });

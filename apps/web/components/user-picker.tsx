@@ -1,5 +1,6 @@
 'use client';
 import * as React from 'react';
+import { createPortal } from 'react-dom';
 import { users, type UserHit } from '@/lib/api';
 import { Input } from '@/components/ui/primitives';
 
@@ -23,6 +24,36 @@ export function UserPicker({
   const [open, setOpen] = React.useState(false);
   const [chosen, setChosen] = React.useState<Record<string, UserHit>>({});
   const boxRef = React.useRef<HTMLDivElement>(null);
+  const listRef = React.useRef<HTMLUListElement>(null);
+  const [rect, setRect] = React.useState<{ left: number; top: number; width: number; above: boolean } | null>(null);
+
+  // The list is PORTALLED to the body and positioned fixed, rather than absolutely positioned in
+  // place. Inside the service-catalog dialog it lives in a scrolling `overflow-auto` body: an
+  // absolute child is clipped at that body's edge, so a picker low in a long form (the onboarding
+  // request has thirty fields) had its list cut off and hidden behind the pinned footer. A portal
+  // escapes the clip; fixed positioning keeps it attached to the input.
+  const place = React.useCallback(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const below = window.innerHeight - r.bottom;
+    // Flip above when there is more room there — otherwise a picker near the bottom of the
+    // viewport opens into nothing.
+    const above = below < 240 && r.top > below;
+    setRect({ left: r.left, top: above ? r.top : r.bottom, width: r.width, above });
+  }, []);
+
+  React.useEffect(() => {
+    if (!open) return;
+    place();
+    // Recompute while the dialog body scrolls underneath, or the list drifts away from its input.
+    window.addEventListener('scroll', place, true);
+    window.addEventListener('resize', place);
+    return () => {
+      window.removeEventListener('scroll', place, true);
+      window.removeEventListener('resize', place);
+    };
+  }, [open, place, hits.length]);
 
   // The list had no way to close: no outside click, no Escape, and picking in multi-select mode
   // left it open. With two people in an org that was survivable; with a full roster it covers the
@@ -30,7 +61,11 @@ export function UserPicker({
   React.useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (!boxRef.current?.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      // The list is portalled, so it is NOT inside boxRef — without checking it too, clicking a
+      // result would register as an outside click and close the list before the pick landed.
+      if (boxRef.current?.contains(t) || listRef.current?.contains(t)) return;
+      setOpen(false);
     };
     // CAPTURE phase, on purpose. A dialog containing this picker listens for Escape on window to
     // close itself; without capturing first, one Escape would close the list AND discard the form
@@ -93,8 +128,15 @@ export function UserPicker({
         onFocus={() => setOpen(true)}
         onChange={(e) => { setQ(e.target.value); setOpen(true); }}
       />
-      {open && hits.length > 0 && (
-        <ul className="absolute z-10 mt-1 max-h-56 w-full overflow-auto rounded-md border border-border bg-surface shadow-lg">
+      {open && hits.length > 0 && rect && createPortal((
+        <ul
+          ref={listRef}
+          style={{
+            position: 'fixed', left: rect.left, width: rect.width,
+            ...(rect.above ? { bottom: window.innerHeight - rect.top + 4 } : { top: rect.top + 4 }),
+          }}
+          className="z-50 max-h-56 overflow-auto rounded-md border border-border bg-surface shadow-lg"
+        >
           {hits.map((u) => (
             <li key={u.id}>
               <button
@@ -108,7 +150,7 @@ export function UserPicker({
             </li>
           ))}
         </ul>
-      )}
+      ), document.body)}
     </div>
   );
 }
