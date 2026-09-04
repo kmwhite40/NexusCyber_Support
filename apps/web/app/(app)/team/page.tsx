@@ -5,6 +5,7 @@ import React from 'react';
 import { platformUsersApi, customersApi, type PlatformUser, type OrgSummary, type OrgScope, ApiError } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
 import { Button, Card, CardBody, Input, Badge } from '@/components/ui/primitives';
+import { Dialog } from '@/components/ui/dialog';
 import { DataTable, EmptyState, Skeleton } from '@/components/ui/data';
 
 export default function TeamPage() {
@@ -147,7 +148,7 @@ function UserModal({
   }
 
   return (
-    <Modal title={mode === 'create' ? 'New platform user' : (user?.display_name ?? user?.email ?? 'Edit user')} onClose={onClose} wide>
+    <Dialog title={mode === 'create' ? 'New platform user' : (user?.display_name ?? user?.email ?? 'Edit user')} onClose={onClose} wide>
       <div className="grid grid-cols-2 gap-2">
         <div>
           <label className="text-xs text-muted">Email</label>
@@ -220,19 +221,7 @@ function UserModal({
           {busy ? 'Saving…' : mode === 'create' ? 'Create' : 'Save'}
         </Button>
       </div>
-    </Modal>
+    </Dialog>
   );
 }
 
-function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onClick={onClose}>
-      <Card className={`w-full ${wide ? 'max-w-2xl' : 'max-w-md'} max-h-[90vh] overflow-auto`} onClick={(e) => e.stopPropagation()}>
-        <CardBody className="space-y-2.5">
-          <h2 className="text-lg font-semibold">{title}</h2>
-          {children}
-        </CardBody>
-      </Card>
-    </div>
-  );
-}

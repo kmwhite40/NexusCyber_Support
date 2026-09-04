@@ -41,17 +41,22 @@ export function Button({
   );
 }
 
-export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return (
-    <div
-      className={cn(
-        'rounded-lg border border-border glass shadow-card animate-fade-up',
-        className,
-      )}
-      {...props}
-    />
-  );
-}
+// forwardRef so callers can hold the element itself — Dialog needs it for focus management,
+// which cannot be done through props alone.
+export const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
+  function Card({ className, ...props }, ref) {
+    return (
+      <div
+        ref={ref}
+        className={cn(
+          'rounded-lg border border-border glass shadow-card animate-fade-up',
+          className,
+        )}
+        {...props}
+      />
+    );
+  },
+);
 export function CardHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return <div className={cn('p-5 pb-3', className)} {...props} />;
 }

@@ -14,6 +14,17 @@ const config: Config = {
       screens: { '2xl': '1280px' },
     },
     extend: {
+      // Named layers, so stacking is a decision rather than an escalating number. The review
+      // found z-0/10/20/30/50/[1]/[2]/[100] in use with no scale — which is how a dropdown ends
+      // up under the thing it belongs to.
+      zIndex: {
+        dropdown: '1000',
+        sticky: '1100',
+        backdrop: '1200',
+        modal: '1300',
+        toast: '1400',
+        tooltip: '1500',
+      },
       colors: {
         bg: 'hsl(var(--bg))',
         surface: 'hsl(var(--surface))',

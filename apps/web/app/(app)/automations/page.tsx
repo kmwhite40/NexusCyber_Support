@@ -6,6 +6,7 @@ import * as React from 'react';
 import { automation, type AutomationRule, type SimResult, ApiError } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
 import { Card, CardHeader, CardTitle, CardBody, Button, Badge, Input, Select, Field, Textarea } from '@/components/ui/primitives';
+import { Dialog } from '@/components/ui/dialog';
 import { DataTable, EmptyState, Skeleton } from '@/components/ui/data';
 import { X, ChevronUp, ChevronDown } from 'lucide-react';
 
@@ -172,7 +173,7 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
   };
 
   return (
-    <Modal title="New automation flow" onClose={onClose} wide>
+    <Dialog title="New automation flow" onClose={onClose} wide>
       <form onSubmit={submit} className="space-y-4">
         <Field label="Name"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Tag & escalate P1 incidents" required minLength={3} /></Field>
 
@@ -251,7 +252,7 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
           <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
         </div>
       </form>
-    </Modal>
+    </Dialog>
   );
 }
 
@@ -284,7 +285,7 @@ function SimulateModal({ rule, onClose }: { rule: AutomationRule; onClose: () =>
   }
 
   return (
-    <Modal title={`Simulate — ${rule.name}`} onClose={onClose}>
+    <Dialog title={`Simulate — ${rule.name}`} onClose={onClose}>
       <p className="mb-2 text-xs text-muted">Dry-run against a sample event. No side effects.</p>
       <Textarea value={event} onChange={(e) => setEvent(e.target.value)} className="font-mono text-xs" rows={7} />
       <div className="mt-3 flex items-center gap-3">
@@ -306,17 +307,7 @@ function SimulateModal({ rule, onClose }: { rule: AutomationRule; onClose: () =>
           ))}
         </div>
       )}
-    </Modal>
+    </Dialog>
   );
 }
 
-function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onClick={onClose}>
-      <Card className={`w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} max-h-[90vh] overflow-auto`} onClick={(e) => e.stopPropagation()}>
-        <CardHeader><CardTitle>{title}</CardTitle></CardHeader>
-        <CardBody>{children}</CardBody>
-      </Card>
-    </div>
-  );
-}

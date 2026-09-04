@@ -3,6 +3,7 @@ import React from 'react';
 import { customersApi, CUSTOMER_ROLES, type OrgSummary, type OrgDetail, type OrgUser, type Cloud, ApiError } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
 import { Button, Card, CardBody, Input, Badge } from '@/components/ui/primitives';
+import { Dialog } from '@/components/ui/dialog';
 import { DataTable, EmptyState, Skeleton } from '@/components/ui/data';
 
 const CLOUDS: Cloud[] = ['commercial', 'gcc', 'gcchigh', 'azgov'];
@@ -78,7 +79,7 @@ function CreateOrgModal({ onClose, onCreated, onError }: { onClose: () => void; 
     finally { setBusy(false); }
   }
   return (
-    <Modal title="New customer" onClose={onClose}>
+    <Dialog title="New customer" onClose={onClose}>
       <label className="text-xs text-muted">Organization name</label>
       <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Acme, Inc." />
       <label className="text-xs text-muted">Cloud</label>
@@ -91,7 +92,7 @@ function CreateOrgModal({ onClose, onCreated, onError }: { onClose: () => void; 
         <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
         <Button onClick={submit} disabled={busy || name.trim().length < 2}>{busy ? 'Creating…' : 'Create'}</Button>
       </div>
-    </Modal>
+    </Dialog>
   );
 }
 
@@ -114,6 +115,8 @@ function OrgDetailModal({ id, admin, onClose, onChanged }: { id: string; admin: 
     loadUsers();
   }, [id, loadUsers]);
 
+  const [confirmDelete, setConfirmDelete] = React.useState<{ cascade: boolean; message?: string } | null>(null);
+
   async function saveOrg() {
     setBusy(true); setErr(null);
     try {
@@ -123,29 +126,27 @@ function OrgDetailModal({ id, admin, onClose, onChanged }: { id: string; admin: 
     finally { setBusy(false); }
   }
   async function removeOrg(force = false) {
-    if (!force && !window.confirm(`Delete organization "${detail?.name}"? This cannot be undone.`)) return;
+    // The confirmation is a Dialog, not window.confirm(). Deleting a tenant and every user in it
+    // is the most destructive action in this app, and a native browser alert is the one place the
+    // product stops looking like itself — exactly where the user most needs to read carefully.
+    if (!force && !confirmDelete) { setConfirmDelete({ cascade: false }); return; }
     setBusy(true); setErr(null);
     try {
       await customersApi.remove(id, force);
       onChanged(); onClose();
     } catch (e) {
       const msg = e instanceof ApiError ? e.detail : 'Delete failed';
-      // Org still has users — offer to remove them too.
-      if (!force && /user\(s\)/i.test(msg)) {
-        if (window.confirm(`${msg}\n\nDelete "${detail?.name}" AND its ${detail?.user_count ?? ''} user(s)? This cannot be undone.`)) {
-          await removeOrg(true);
-          return;
-        }
-      } else {
-        setErr(msg);
-      }
+      // Org still has users — ask again, naming how many, before cascading.
+      if (!force && /user\(s\)/i.test(msg)) setConfirmDelete({ cascade: true, message: msg });
+      else setErr(msg);
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <Modal title={detail?.name ?? 'Organization'} onClose={onClose} wide>
+    <>
+    <Dialog title={detail?.name ?? 'Organization'} onClose={onClose} wide>
       {err && <p className="text-sm text-danger">{err}</p>}
       {detail === null ? <Skeleton className="h-12" /> : (
         <>
@@ -173,7 +174,33 @@ function OrgDetailModal({ id, admin, onClose, onChanged }: { id: string; admin: 
           <UserManager orgId={id} users={users} admin={admin} reload={() => { loadUsers(); onChanged(); }} onError={setErr} />
         </>
       )}
-    </Modal>
+    </Dialog>
+      {confirmDelete && (
+        <Dialog
+          title={confirmDelete.cascade ? 'Delete this organization and its users?' : 'Delete this organization?'}
+          onClose={() => setConfirmDelete(null)}
+          footer={(
+            <>
+              <Button
+                variant="danger"
+                disabled={busy}
+                onClick={() => { setConfirmDelete(null); removeOrg(true); }}
+              >
+                {busy ? 'Deleting…' : confirmDelete.cascade ? 'Delete org and users' : 'Delete organization'}
+              </Button>
+              <Button variant="ghost" onClick={() => setConfirmDelete(null)}>Cancel</Button>
+            </>
+          )}
+        >
+          <p className="text-sm text-fg">
+            <b>{detail?.name}</b> will be removed
+            {confirmDelete.cascade ? ` along with its ${detail?.user_count ?? ''} user account(s)` : ''}.
+          </p>
+          {confirmDelete.message && <p className="text-sm text-muted">{confirmDelete.message}</p>}
+          <p className="text-sm text-danger">This cannot be undone.</p>
+        </Dialog>
+      )}
+    </>
   );
 }
 
@@ -232,15 +259,3 @@ function UserManager({ orgId, users, admin, reload, onError }: { orgId: string; 
   );
 }
 
-function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onClick={onClose}>
-      <Card className={`w-full ${wide ? 'max-w-2xl' : 'max-w-md'}`} onClick={(e) => e.stopPropagation()}>
-        <CardBody className="space-y-2.5">
-          <h2 className="text-lg font-semibold">{title}</h2>
-          {children}
-        </CardBody>
-      </Card>
-    </div>
-  );
-}
