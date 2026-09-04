@@ -3,6 +3,7 @@ import * as React from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { api, oncall, ApiError, type Ticket, TIER_GROUPS, LINK_TYPES } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
+import { orderTransitions, REVERSING_STATES } from '@/lib/ticket-actions';
 import { Card, CardHeader, CardTitle, CardBody, Button, Input, Textarea, Badge, Select } from '@/components/ui/primitives';
 import { ArrowLeft, Check, Minus, Star } from 'lucide-react';
 import { Skeleton } from '@/components/ui/data';
@@ -38,11 +39,19 @@ export default function TicketDetailPage() {
     }
   }
 
+  const [justChanged, setJustChanged] = React.useState(false);
+
   async function transition(to: string) {
     setBusy(true);
     try {
       await api.post(`/tickets/${id}/transition`, { to, resolutionCode: to === 'resolved' ? 'fixed' : undefined });
       load();
+      // The action row re-renders with a DIFFERENT set of buttons in the same place. A second
+      // click — or one already travelling — would land on whatever now occupies that slot, which
+      // is how "resolved" became "reopened" became "in progress" inside two seconds. Hold the row
+      // briefly so the hand and the screen agree again.
+      setJustChanged(true);
+      window.setTimeout(() => setJustChanged(false), 800);
     } catch (e) {
       setError(e instanceof ApiError ? e.detail : 'Transition failed');
     } finally {
@@ -155,8 +164,16 @@ export default function TicketDetailPage() {
                 {paged ? <span className="inline-flex items-center gap-1.5"><Check className="h-4 w-4" strokeWidth={1.75} /> Paged</span> : 'Page on-call'}
               </Button>
             )}
-            {(nextStates[ticket.status] ?? []).map((s) => (
-              <Button key={s} size="sm" variant={s === 'resolved' ? 'default' : 'subtle'} onClick={() => transition(s)} disabled={busy}>
+            {orderTransitions(nextStates[ticket.status] ?? []).map((s) => (
+              <Button
+                key={s}
+                size="sm"
+                // Reversing actions get outline treatment as well as last position, so undoing
+                // finished work never looks like the obvious next step.
+                variant={s === 'resolved' ? 'default' : REVERSING_STATES.has(s) ? 'outline' : 'subtle'}
+                onClick={() => transition(s)}
+                disabled={busy || justChanged}
+              >
                 {s.replace(/_/g, ' ')}
               </Button>
             ))}
