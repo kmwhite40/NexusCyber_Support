@@ -67,7 +67,33 @@ export function CardBody({ className, ...props }: React.HTMLAttributes<HTMLDivEl
   return <div className={cn('p-5 pt-2', className)} {...props} />;
 }
 
+
+/**
+ * Field hands its generated ids down to whichever control it wraps.
+ *
+ * A review counted 23 labels in the app with ONE htmlFor, and 74 inputs with no id — so a screen
+ * reader announced nearly every control in the product as unnamed. Context rather than
+ * cloneElement, because controls are often wrapped (a picker, a conditional) and cloning only
+ * reaches a direct child.
+ */
+const FieldContext = React.createContext<{ id: string; describedBy?: string } | null>(null);
+
+/**
+ * Inside a Field, the FIELD's id wins — the label already points at it, and letting a caller's id
+ * through would silently break the association the label depends on. Outside a Field, an explicit
+ * id passes through untouched. No caller currently sets one inside a Field; if a case ever needs
+ * it, the fix is for Field to accept the id, not for the control to diverge from its label.
+ */
+function useFieldIds(explicitId?: string, explicitDescribedBy?: string) {
+  const ctx = React.useContext(FieldContext);
+  return {
+    id: ctx?.id ?? explicitId,
+    'aria-describedby': explicitDescribedBy ?? ctx?.describedBy,
+  };
+}
+
 export function Input({ className, ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
+  const ids = useFieldIds(props.id, props['aria-describedby']);
   return (
     <input
       className={cn(
@@ -76,10 +102,12 @@ export function Input({ className, ...props }: React.InputHTMLAttributes<HTMLInp
         className,
       )}
       {...props}
+      {...ids}
     />
   );
 }
 export function Textarea({ className, ...props }: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  const ids = useFieldIds(props.id, props['aria-describedby']);
   return (
     <textarea
       className={cn(
@@ -88,10 +116,12 @@ export function Textarea({ className, ...props }: React.TextareaHTMLAttributes<H
         className,
       )}
       {...props}
+      {...ids}
     />
   );
 }
 export function Select({ className, ...props }: React.SelectHTMLAttributes<HTMLSelectElement>) {
+  const ids = useFieldIds(props.id, props['aria-describedby']);
   return (
     <select
       className={cn(
@@ -100,6 +130,7 @@ export function Select({ className, ...props }: React.SelectHTMLAttributes<HTMLS
         className,
       )}
       {...props}
+      {...ids}
     />
   );
 }
@@ -107,12 +138,19 @@ export function Label({ className, ...props }: React.LabelHTMLAttributes<HTMLLab
   return <label className={cn('mb-1.5 block text-xs font-medium text-muted', className)} {...props} />;
 }
 export function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
+  const id = React.useId();
+  const hintId = `${id}-hint`;
+  // The hint is the only place some fields explain themselves ("Write-only. Never shown again.").
+  // Unassociated, a screen-reader user never hears it at all.
+  const value = React.useMemo(() => ({ id, describedBy: hint ? hintId : undefined }), [id, hintId, hint]);
   return (
-    <div className="mb-4">
-      <Label>{label}</Label>
-      {children}
-      {hint && <p className="mt-1 text-xs text-muted">{hint}</p>}
-    </div>
+    <FieldContext.Provider value={value}>
+      <div className="mb-4">
+        <Label htmlFor={id}>{label}</Label>
+        {children}
+        {hint && <p id={hintId} className="mt-1 text-xs text-muted">{hint}</p>}
+      </div>
+    </FieldContext.Provider>
   );
 }
 

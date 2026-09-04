@@ -114,3 +114,26 @@ body {
     letter-spacing: -0.01em;
   }
 }
+
+/*
+ * Reduced motion, honoured globally.
+ *
+ * A review found 71 transitions and 17 animations across the app and not one
+ * `prefers-reduced-motion` rule. For users who get migraines or vestibular symptoms from motion,
+ * an OS-level preference they have already set is the clearest instruction the product will ever
+ * receive; ignoring it site-wide is not a small omission.
+ *
+ * Motion is reduced to near-instant rather than removed, so transitions that carry meaning (a
+ * panel opening, a state settling) still read as a change rather than a jump-cut, and anything
+ * that waits on transitionend still fires.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
