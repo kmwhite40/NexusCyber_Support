@@ -107,6 +107,12 @@ export interface ProvisioningConfig {
   /** Two-letter country code stamped on created users; Graph refuses licences without one. */
   usageLocation: string;
   /**
+   * Temporary Access Pass lifetime, in minutes. Bounded by the TENANT's TAP policy
+   * (maximumLifetimeInMinutes) — Graph rejects a request above it, so raising this without
+   * raising the policy first fails every run at the last step.
+   */
+  tapLifetimeMinutes: number;
+  /**
    * Graph API version for the `/deviceManagement/virtualEndpoint/*` family (Cloud PC status
    * lookups). Whether GCC High specifically requires `beta` there vs `v1.0` is an open item in
    * the onboarding-provisioning spec — unverified against the real SBS tenant — so this is a
@@ -186,6 +192,12 @@ export function parseProvisioningConfig(env: NodeJS.ProcessEnv): ProvisioningCon
     cloudPcPolicy: env.M365_PROV_CLOUDPC_POLICY ?? 'SBSFederal Cloud PC',
     cloudPcSku: env.M365_PROV_CLOUDPC_SKU ?? '',
     usageLocation: (env.M365_PROV_USAGE_LOCATION ?? 'US').trim().toUpperCase(),
+    tapLifetimeMinutes: (() => {
+      const raw = Number(env.M365_PROV_TAP_LIFETIME_MINUTES);
+      // A garbage value must not reach Graph as NaN, and must not silently become something
+      // longer than intended for a credential that bypasses MFA.
+      return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 480;
+    })(),
     cloudPcApiVersion,
     offboardingEnabled,
   };

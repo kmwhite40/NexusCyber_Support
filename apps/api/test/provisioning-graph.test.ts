@@ -184,10 +184,12 @@ describe('addToGroup', () => {
 });
 
 describe('issueTap', () => {
-  it('requests a single-use 8-hour temporary access pass', async () => {
+  // Single-use regardless of lifetime: that is what keeps a longer pass from becoming a standing
+  // credential. The duration itself is now configuration, not a constant baked in here.
+  it('requests a single-use pass with the lifetime it is given', async () => {
     const post = vi.fn(async () => ({ id: 'tap1', temporaryAccessPass: 'abc' }));
     const g = { get: vi.fn(), post, patch: vi.fn() } as any;
-    const out = await issueTap(g, 'u1');
+    const out = await issueTap(g, 'u1', 480);
     expect(post).toHaveBeenCalledWith('/users/u1/authentication/temporaryAccessPassMethods', {
       isUsableOnce: true, lifetimeInMinutes: 480,
     });

@@ -175,6 +175,20 @@ function requireEnabled(): void {
  * THIS ticket can (right org, approved onboarding request, no blockers) is decided by
  * preview() against live tenant state, and stays there.
  */
+/**
+ * The pass lifetime in words, for the handover email.
+ *
+ * The lifetime and the sentence describing it used to be hardcoded in two different files, so
+ * changing one made the other lie — to the one person who has to explain the pass to a new
+ * starter. Only exact multiples are named; anything else stays in minutes rather than rounding
+ * into a claim that the pass lasts longer than it does.
+ */
+export function formatLifetime(minutes: number): string {
+  if (minutes % 1440 === 0) { const d = minutes / 1440; return `${d} day${d === 1 ? '' : 's'}`; }
+  if (minutes % 60 === 0) { const h = minutes / 60; return `${h} hour${h === 1 ? '' : 's'}`; }
+  return `${minutes} minutes`;
+}
+
 export function isEnabled(): boolean {
   return config.provisioning.enabled;
 }
@@ -435,18 +449,19 @@ async function deliverTapToSupervisor(
     );
   }
 
+  const life = formatLifetime(config.provisioning.tapLifetimeMinutes);
   const subject = `Temporary Access Pass for ${upn}`;
   const text = [
     `A Temporary Access Pass has been issued for the new account ${upn}.`,
     '',
     `Pass: ${pass}`,
     '',
-    'It is single-use and expires in 8 hours. Give it to the new user in person or by phone —',
+    `It is single-use and expires in ${life}. Give it to the new user in person or by phone —`,
     'do not forward this email. They will be asked to set up their own sign-in method with it.',
   ].join('\n');
   const html = `<p>A Temporary Access Pass has been issued for the new account <b>${escapeHtml(upn)}</b>.</p>`
     + `<p><b>Pass:</b> <code>${escapeHtml(pass)}</code></p>`
-    + '<p>It is single-use and expires in 8 hours. Give it to the new user in person or by phone —'
+    + `<p>It is single-use and expires in ${escapeHtml(life)}. Give it to the new user in person or by phone —`
     + ' do not forward this email. They will be asked to set up their own sign-in method with it.</p>';
 
   // Wrapped for the same reason issueTap's adapter wrapper is: a mail adapter that throws
@@ -504,7 +519,7 @@ function buildOps(g: ProvisioningGraph, organizationId: string): ProvisioningOps
       // executor needs before it is returned. Nothing else from that payload leaves this scope.
       let res: any;
       try {
-        res = await issueTap(g.graph, userId);
+        res = await issueTap(g.graph, userId, config.provisioning.tapLifetimeMinutes);
       } catch (err) {
         // Spec open item #4. The one Graph failure here that is a TENANT CONFIGURATION fact
         // rather than a run failure is "the Temporary Access Pass method is not enabled".

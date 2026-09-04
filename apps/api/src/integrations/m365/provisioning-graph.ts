@@ -221,9 +221,11 @@ export function isTapPolicyDisabledError(err: unknown): boolean {
   return namesTap && notEnabled;
 }
 
-export async function issueTap(g: GraphClient, userId: string) {
+export async function issueTap(g: GraphClient, userId: string, lifetimeInMinutes: number) {
+  // Single-use regardless of lifetime. A longer window widens the time a pass is live, so
+  // one-shot use is what keeps a 7-day pass from being a 7-day standing credential.
   return g.post(`/users/${userId}/authentication/temporaryAccessPassMethods`, {
-    isUsableOnce: true, lifetimeInMinutes: 480,
+    isUsableOnce: true, lifetimeInMinutes,
   });
 }
 
