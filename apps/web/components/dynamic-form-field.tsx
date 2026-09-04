@@ -59,6 +59,26 @@ export function isoInstantToLocalInput(iso: string): string {
     + `T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+
+/**
+ * Group fields into CONSECUTIVE runs by section.
+ *
+ * Runs, not buckets: merging every field with the same name would silently reorder someone's
+ * form. The onboarding intake is stored contiguously (migration 0077) so each section appears
+ * once; if a form is ever edited into an interleaved order, this renders it as it actually is
+ * rather than quietly rearranging it.
+ */
+export function groupFieldsBySection(fields: FormFieldDef[]): Array<{ section: string | null; fields: FormFieldDef[] }> {
+  const groups: Array<{ section: string | null; fields: FormFieldDef[] }> = [];
+  for (const f of fields) {
+    const section = f.section ?? null;
+    const last = groups[groups.length - 1];
+    if (last && last.section === section) last.fields.push(f);
+    else groups.push({ section, fields: [f] });
+  }
+  return groups;
+}
+
 export function DynamicFormField({
   field, value, answers, options, file, onChange, onFileChange, renderUserPicker,
 }: {

@@ -134,6 +134,9 @@ export interface FormFieldDef {
   visible_when: VisibleWhen | null;
   sensitive: boolean;
   options_source: string | null;
+  /** Heading this field groups under when rendered. Absent or null = ungrouped, which is the
+   *  normal case: only long forms earn headings. */
+  section?: string | null;
 }
 export interface CatalogForm {
   id: string;

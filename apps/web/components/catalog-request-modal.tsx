@@ -5,7 +5,7 @@
 import * as React from 'react';
 import { api, catalog, users, attachmentsApi, type CatalogItem, type Ticket, type CatalogForm, type FormFieldDef, ApiError } from '@/lib/api';
 import { UserPicker } from '@/components/user-picker';
-import { DynamicFormField, isFieldVisible } from '@/components/dynamic-form-field';
+import { DynamicFormField, isFieldVisible, groupFieldsBySection } from '@/components/dynamic-form-field';
 import { Button, Input, Textarea, Field, Select } from '@/components/ui/primitives';
 import { Dialog } from '@/components/ui/dialog';
 import { useAuth } from '@/components/auth-context';
@@ -140,18 +140,30 @@ export function RequestModal({
 
             {!loaded && <p className="text-xs text-muted">Loading…</p>}
 
-            {loaded && form && form.fields.map((f: FormFieldDef) => (
-              <DynamicFormField
-                key={f.key}
-                field={f}
-                value={answers[f.key]}
-                answers={answers}
-                options={dynamicOptions[f.key] ?? f.options}
-                file={file}
-                onChange={set}
-                onFileChange={setFile}
-                renderUserPicker={renderUserPicker}
-              />
+            {loaded && form && groupFieldsBySection(form.fields).map((group, gi) => (
+              <section key={group.section ?? `g${gi}`} className={group.section ? 'mb-2' : undefined}>
+                {group.section && (
+                  // A heading per run, so a 34-field intake reads as six short forms rather than
+                  // one wall. Ungrouped forms render exactly as before — a heading on a
+                  // three-field form is noise.
+                  <h3 className="mb-3 mt-1 border-b border-border pb-1.5 text-xs font-semibold uppercase tracking-wide text-muted">
+                    {group.section}
+                  </h3>
+                )}
+                {group.fields.map((f: FormFieldDef) => (
+                  <DynamicFormField
+                    key={f.key}
+                    field={f}
+                    value={answers[f.key]}
+                    answers={answers}
+                    options={dynamicOptions[f.key] ?? f.options}
+                    file={file}
+                    onChange={set}
+                    onFileChange={setFile}
+                    renderUserPicker={renderUserPicker}
+                  />
+                ))}
+              </section>
             ))}
 
             {loaded && !form && (

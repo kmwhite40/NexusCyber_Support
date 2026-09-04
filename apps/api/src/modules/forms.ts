@@ -102,7 +102,7 @@ export async function listForms(actor: Principal) {
 
 async function loadFields(sql: import('../db/pool.js').Sql, formId: string): Promise<FormField[]> {
   const { rows } = await sql.query(
-    'SELECT key, label, data_type, required, options, maps_to, visible_when, sensitive, options_source FROM form_fields WHERE form_id=$1 ORDER BY position',
+    'SELECT key, label, data_type, required, options, maps_to, visible_when, sensitive, options_source, section FROM form_fields WHERE form_id=$1 ORDER BY position',
     [formId],
   );
   return rows.map((r) => ({
