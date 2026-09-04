@@ -11,7 +11,7 @@ export function Button({
   size = 'md',
   ...props
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: 'default' | 'outline' | 'ghost' | 'danger' | 'subtle';
+  variant?: 'default' | 'outline' | 'ghost' | 'danger' | 'warning' | 'subtle';
   size?: 'sm' | 'md' | 'lg' | 'icon';
 }) {
   const variants: Record<string, string> = {
@@ -21,6 +21,11 @@ export function Button({
     ghost: 'hover:bg-surface-2 text-fg',
     subtle: 'bg-surface-2 hover:bg-border text-fg',
     danger: 'bg-danger text-white hover:brightness-110',
+    // URGENT, not destructive. Danger red had been carrying both jobs — it sat on "Page on-call",
+    // where nothing is lost, while the button that arms an account teardown looked like "Send".
+    // Red that means two things means neither. Dark ink on amber deliberately: white on this
+    // fill fails contrast at both theme values of --warning.
+    warning: 'bg-warning text-black hover:brightness-105 font-medium',
   };
   const sizes: Record<string, string> = {
     sm: 'h-8 px-3 text-xs',

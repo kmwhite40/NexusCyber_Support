@@ -279,6 +279,10 @@ export function OffboardingPanel({ ticketId, canOffboard }: { ticketId: string; 
               <div className="flex items-center gap-2">
                 <Button
                   size="sm"
+                  // Danger, because this ARMS an account teardown. It previously looked identical
+                  // to "Send" — the most irreversible control in the product styled as the most
+                  // ordinary one.
+                  variant="danger"
                   onClick={schedule}
                   // No instant means no schedule. Defaulting to "now" on a termination is not a
                   // default anyone should get by omission.

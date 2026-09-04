@@ -151,7 +151,7 @@ export default function TicketDetailPage() {
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" onClick={claim} disabled={busy}>Claim</Button>
             {can('oncall.page') && (
-              <Button size="sm" variant="danger" onClick={pageOnCall} disabled={busy || paged}>
+              <Button size="sm" variant="warning" onClick={pageOnCall} disabled={busy || paged}>
                 {paged ? <span className="inline-flex items-center gap-1.5"><Check className="h-4 w-4" strokeWidth={1.75} /> Paged</span> : 'Page on-call'}
               </Button>
             )}
