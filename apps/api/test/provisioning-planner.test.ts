@@ -457,3 +457,47 @@ describe('contractor UPNs', () => {
       .toBe('addy.lovelace.ctr@sbsfederal.com');
   });
 });
+
+// "Copy access from (mirror user)" was collected by the form and read by nothing. Wiring it up
+// means the approver must see WHAT is being copied — the request says "copy access from Mike",
+// and Mike holds 23 groups including one that can carry a directory role.
+describe('mirrored access', () => {
+  const withMirror = (mirror: Parameters<typeof planRun>[0]['mirror']) =>
+    planRun({ ...base, mirror });
+
+  it('adds the mirror user\'s ordinary groups to the plan', () => {
+    const p = withMirror({ upn: 'mike.rohan@sbsfederal.com', assignable: ['DL-FED', 'Ember Hawk'], roleAssignable: [], dynamic: [] });
+    const step = p.steps.find((s) => s.key === 'add_groups')!;
+    expect(step.detail.groups).toEqual(expect.arrayContaining(['DL-FED', 'Ember Hawk']));
+  });
+
+  // Held back, not copied. The blocker forces the approver to look at the name.
+  it('refuses to copy a role-assignable group without it being seen', () => {
+    const p = withMirror({ upn: 'mike.rohan@sbsfederal.com', assignable: ['DL-FED'], roleAssignable: ['SBS_Dev_Users'], dynamic: [] });
+    expect(p.blockers.map((b) => b.code)).toContain('mirror_privileged_group');
+    expect(p.blockers.find((b) => b.code === 'mirror_privileged_group')!.message).toContain('SBS_Dev_Users');
+    const step = p.steps.find((s) => s.key === 'add_groups')!;
+    expect(step.detail.groups).not.toContain('SBS_Dev_Users');
+  });
+
+  // Not a blocker: nothing is wrong, the membership simply cannot be copied and saying so beats
+  // a silent omission the requester discovers later.
+  it('reports dynamic groups as uncopyable rather than failing', () => {
+    const p = withMirror({ upn: 'x@y.gov', assignable: ['DL-FED'], roleAssignable: [], dynamic: ['Auto-All'] });
+    expect(p.blockers.map((b) => b.code)).not.toContain('mirror_privileged_group');
+    const step = p.steps.find((s) => s.key === 'add_groups')!;
+    expect(step.detail.mirrorSkippedDynamic).toEqual(['Auto-All']);
+  });
+
+  it('leaves the plan untouched when no mirror user was named', () => {
+    const p = planRun({ ...base });
+    const step = p.steps.find((s) => s.key === 'add_groups')!;
+    expect(step.detail.groups).toEqual(['All Staff']);
+  });
+
+  it('does not duplicate a group the requester already asked for', () => {
+    const p = withMirror({ upn: 'x@y.gov', assignable: ['All Staff', 'DL-FED'], roleAssignable: [], dynamic: [] });
+    const groups = (p.steps.find((s) => s.key === 'add_groups')!.detail.groups as string[]);
+    expect(groups.filter((x) => x === 'All Staff')).toHaveLength(1);
+  });
+});

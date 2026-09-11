@@ -34,6 +34,8 @@ import type { DeliveryResult } from '../../integrations/m365/adapter.js';
 import {
   readTenantState,
   findUserByUpn,
+  listMemberOf,
+  partitionMirrorGroups,
   directoryRoleCount,
   createUser,
   assignLicenses,
@@ -46,7 +48,7 @@ import {
   isTapPolicyDisabledError,
   type DirectoryGroup,
 } from '../../integrations/m365/provisioning-graph.js';
-import { planRun, deriveUpn, planFingerprint, normalizeForMatch, type Plan } from './planner.js';
+import { planRun, deriveUpn, planFingerprint, normalizeForMatch, type Plan, type PlanInput } from './planner.js';
 import {
   executePlan, TapPolicyUnavailableError, TAP_SKIPPED_NOTICE,
   type ProvisioningOps, type StepOutcome,
@@ -299,6 +301,24 @@ async function requireApprovedOnboardingRequest(ticket: TicketRow): Promise<void
  * traffic. Everything the planner needs is gathered here and handed in; the planner itself
  * stays pure.
  */
+
+/**
+ * Resolve the `copy_from` answer (a Nexus user id) to the email used in the tenant.
+ *
+ * Same shape as the offboarding engine's resolveDepartingUpn, and for the same reason: the intake
+ * stores a reference, not a typed name, so the form and the directory lookup point at one person
+ * by construction rather than by someone retyping an address.
+ */
+async function resolveMirrorUpn(answers: Record<string, unknown>): Promise<string | null> {
+  const ref = answers.copy_from;
+  if (typeof ref !== 'string' || !ref.trim()) return null;
+  return withSystemContext(async (sql) => {
+    const { rows } = await sql.query('SELECT email FROM users WHERE id = $1', [ref]);
+    const email = rows[0]?.email as string | undefined;
+    return email ? email.trim().toLowerCase() : null;
+  });
+}
+
 async function buildPlan(actor: Principal, ticketId: string): Promise<{ plan: Plan; ticket: TicketRow }> {
   requireEnabled();
   const ticket = await loadTicket(ticketId);
@@ -315,8 +335,29 @@ async function buildPlan(actor: Principal, ticketId: string): Promise<{ plan: Pl
   const existingUser = await findUserByUpn(g.graph, upn);
   const existingRoleCount = existingUser ? await directoryRoleCount(g.graph, existingUser.id) : 0;
 
+  // "Copy access from (mirror user)". The answer is a Nexus user reference; resolve it to an email
+  // and read that account's real memberships from Entra. Licences are deliberately not mirrored —
+  // the baseline decides those.
+  const mirrorUpn = await resolveMirrorUpn(answers);
+  let mirror: PlanInput['mirror'];
+  if (mirrorUpn) {
+    const mirrorUser = await findUserByUpn(g.graph, mirrorUpn);
+    if (mirrorUser) {
+      const p = partitionMirrorGroups(await listMemberOf(g.graph, mirrorUser.id));
+      mirror = {
+        upn: mirrorUpn,
+        assignable: p.assignable.map((x) => x.displayName).filter(Boolean),
+        roleAssignable: p.roleAssignable.map((x) => x.displayName).filter(Boolean),
+        dynamic: p.dynamic.map((x) => x.displayName).filter(Boolean),
+      };
+    }
+    // A mirror user who is not in the tenant is reported by the planner as a blocker below rather
+    // than silently producing a plan that copies nothing.
+  }
+
   const planned = planRun({
     answers,
+    mirror,
     tenant,
     upnDomain: config.provisioning.upnDomain,
     baselineSkus: config.provisioning.baselineSkus,

@@ -221,6 +221,59 @@ export function isTapPolicyDisabledError(err: unknown): boolean {
   return namesTap && notEnabled;
 }
 
+
+export interface MirrorGroup { id: string; displayName: string }
+
+export interface MirrorPartition {
+  /** Safe to copy: ordinary security groups and distribution lists. */
+  assignable: MirrorGroup[];
+  /** Groups that can carry a directory role. Never copied silently — the approver must see them. */
+  roleAssignable: MirrorGroup[];
+  /** Dynamic groups. Graph refuses a manual add, so attempting one fails the run. */
+  dynamic: MirrorGroup[];
+  /** Directory roles. Never mirrored under any circumstance. */
+  directoryRoles: MirrorGroup[];
+}
+
+/**
+ * Sort a mirror user's memberships into what may be copied and what may not.
+ *
+ * Copying access is not one action. The mirror user's memberships include things a new starter
+ * must not inherit by side effect:
+ *
+ *  - DIRECTORY ROLES are never mirrored. Copying a role because someone typed a colleague's name
+ *    into a form field is not a decision anyone made.
+ *  - ROLE-ASSIGNABLE GROUPS are held back for acknowledgement. mike.rohan really does hold
+ *    SBS_Dev_Users (isAssignableToRole=true) among 23 groups; a silent copy hands a new hire a
+ *    group that can carry a directory role, approved by someone who read "copy access from Mike"
+ *    rather than the list of what Mike actually holds.
+ *  - DYNAMIC GROUPS cannot take manual members at all. Graph rejects the add, and the failure
+ *    reads like a permissions problem rather than a category error.
+ */
+export function partitionMirrorGroups(memberOf: Array<Record<string, unknown>>): MirrorPartition {
+  const out: MirrorPartition = { assignable: [], roleAssignable: [], dynamic: [], directoryRoles: [] };
+  for (const m of memberOf ?? []) {
+    const entry: MirrorGroup = { id: String(m.id ?? ''), displayName: String(m.displayName ?? '') };
+    const type = String(m['@odata.type'] ?? '');
+    if (type.endsWith('directoryRole')) { out.directoryRoles.push(entry); continue; }
+    if (m.membershipRule) { out.dynamic.push(entry); continue; }
+    if (m.isAssignableToRole === true) { out.roleAssignable.push(entry); continue; }
+    out.assignable.push(entry);
+  }
+  return out;
+}
+
+/** Every group and directory role a user belongs to, for the mirror-access flow. */
+export async function listMemberOf(g: GraphClient, userId: string): Promise<Array<Record<string, unknown>>> {
+  // $select must name isAssignableToRole and membershipRule — Graph omits unselected fields
+  // silently, and without them every group would look ordinary and copyable.
+  const res = await g.get(
+    `/users/${encodeURIComponent(userId)}/memberOf`
+    + '?$select=id,displayName,membershipRule,isAssignableToRole,groupTypes,securityEnabled,mailEnabled',
+  );
+  return (res?.value ?? []) as Array<Record<string, unknown>>;
+}
+
 export async function issueTap(g: GraphClient, userId: string, lifetimeInMinutes: number) {
   // Single-use regardless of lifetime. A longer window widens the time a pass is live, so
   // one-shot use is what keeps a 7-day pass from being a 7-day standing credential.

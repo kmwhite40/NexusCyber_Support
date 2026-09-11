@@ -28,6 +28,12 @@ export interface PlanInput {
   cloudPcSku?: string;
   /** Two-letter country for licence eligibility. Graph rejects assignLicense without it. */
   usageLocation?: string;
+  /**
+   * Resolved memberships of the "copy access from" user, already partitioned by what may be
+   * copied. Absent when no mirror user was named. Licences are deliberately NOT mirrored — the
+   * baseline decides those.
+   */
+  mirror?: { upn: string; assignable: string[]; roleAssignable: string[]; dynamic: string[] };
   existingUser: { id: string; userPrincipalName: string } | null;
   existingRoleCount: number;
 }
@@ -107,7 +113,7 @@ export function deriveUpn(answers: Record<string, unknown>, upnDomain: string): 
 }
 
 export function planRun(input: PlanInput): Plan {
-  const { answers, tenant, upnDomain, baselineSkus, cloudPcSku, usageLocation, existingUser, existingRoleCount } = input;
+  const { answers, tenant, upnDomain, baselineSkus, cloudPcSku, usageLocation, mirror, existingUser, existingRoleCount } = input;
   const blockers: Blocker[] = [];
   const upn = deriveUpn(answers, upnDomain);
   const first = str(answers.preferred_first_name) || str(answers.legal_first_name);
@@ -173,6 +179,22 @@ export function planRun(input: PlanInput): Plan {
 
   const groups = str(answers.security_groups).split(/[,\n]/).map((g) => g.trim()).filter(Boolean);
 
+  // Mirrored access. Only the groups that CAN be copied are added; the rest are surfaced so the
+  // approver sees them rather than discovering them later.
+  if (mirror) {
+    for (const g of mirror.assignable) if (!groups.includes(g)) groups.push(g);
+    if (mirror.roleAssignable.length) {
+      // A blocker, not a silent copy: these groups can carry a directory role, and the request
+      // was approved by someone who read "copy access from <name>", not the list of what that
+      // person actually holds.
+      blockers.push({
+        code: 'mirror_privileged_group',
+        message: `${mirror.upn} belongs to role-assignable group(s) that will NOT be copied automatically: `
+          + `${mirror.roleAssignable.join(', ')}. Grant them deliberately if this hire needs them.`,
+      });
+    }
+  }
+
   const policyName = str(answers.cloud_pc_policy);
   let policyGroupId: string | null = null;
   if (policyName) {
@@ -225,7 +247,18 @@ export function planRun(input: PlanInput): Plan {
   // Seam: group NAMES only. A later task (the service layer) resolves these to directory IDs
   // via Graph and writes detail.groupIds before the executor runs. The planner must not do that
   // lookup itself — that would require I/O and break the preview/execute purity guarantee.
-  if (groups.length) steps.push({ key: 'add_groups', label: `Add to ${groups.length} group(s)`, detail: { groups } });
+  if (groups.length) {
+    steps.push({
+      key: 'add_groups',
+      label: `Add to ${groups.length} group(s)`,
+      detail: {
+        groups,
+        ...(mirror ? { mirroredFrom: mirror.upn } : {}),
+        // Saying what could not be copied beats a silent omission the requester finds later.
+        ...(mirror?.dynamic.length ? { mirrorSkippedDynamic: mirror.dynamic } : {}),
+      },
+    });
+  }
   // Licenses (pushed above) must precede Cloud PC group assignment: an unlicensed user added to
   // the provisioning policy's group yields a Cloud PC that silently never builds.
   if (policyGroupId) steps.push({ key: 'assign_cloudpc', label: `Add to Cloud PC group for "${policyName}"`, detail: { policyName, groupId: policyGroupId } });
