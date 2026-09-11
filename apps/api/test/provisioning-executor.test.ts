@@ -531,3 +531,76 @@ describe('the password change prompt on a new account', () => {
     expect(body.passwordProfile.forceChangePasswordNextSignIn).toBe(false);
   });
 });
+
+// The temporary-password alternative. Everything the TAP path does to keep a live credential out
+// of step rows, ticket notes and error text has to hold here too — the value is the same kind of
+// thing, and outcomes are exactly the sort of structure that ends up on a ticket.
+describe('set_password', () => {
+  const pwPlan: Plan = {
+    ...plan,
+    steps: [
+      plan.steps[0],
+      { key: 'set_password', label: '', detail: { supervisor: 'sup-1' } },
+      ...plan.steps.slice(1).filter((s) => s.key !== 'issue_tap'),
+    ],
+  };
+  const pwOps = (over: Partial<ProvisioningOps> = {}) => ops({
+    setPassword: async () => {},
+    deliverPassword: async () => ({ recipient: 'sup@sbsfederal.com' }),
+    ...over,
+  });
+
+  it('sets a password on the account and sends it to the supervisor', async () => {
+    let set: string | undefined;
+    let sent: string | undefined;
+    const r = await executePlan(pwPlan, pwOps({
+      setPassword: async (_id: string, pw: string) => { set = pw; },
+      deliverPassword: async (_sup: string, _upn: string, pw: string) => { sent = pw; return { recipient: 'sup@x' }; },
+    }));
+    expect(r.outcomes.find((o) => o.key === 'set_password')?.status).toBe('succeeded');
+    expect(set).toBeTruthy();
+    expect(sent).toBe(set); // the value delivered is the value that was set
+    expect(set!.length).toBeGreaterThan(15);
+  });
+
+  // Generated per run, never reused, never derived from anything on the request.
+  it('mints a different password every time', async () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 5; i++) {
+      await executePlan(pwPlan, pwOps({ setPassword: async (_id: string, pw: string) => { seen.add(pw); } }));
+    }
+    expect(seen.size).toBe(5);
+  });
+
+  it('keeps the password out of the outcomes, whatever happens', async () => {
+    let minted = '';
+    const r = await executePlan(pwPlan, pwOps({
+      setPassword: async (_id: string, pw: string) => { minted = pw; },
+      // A mail adapter that echoes the message it failed to send — the message body IS the value.
+      deliverPassword: async (_s: string, _u: string, pw: string) => { throw new Error(`SMTP 550: ${pw}`); },
+    }));
+    expect(r.status).toBe('failed');
+    expect(minted).toBeTruthy();
+    expect(JSON.stringify(r)).not.toContain(minted);
+  });
+
+  it('does not leak it through a failure to set it either', async () => {
+    let minted = '';
+    const r = await executePlan(pwPlan, pwOps({
+      setPassword: async (_id: string, pw: string) => { minted = pw; throw new Error(`Graph rejected: ${pw}`); },
+    }));
+    expect(r.status).toBe('failed');
+    expect(JSON.stringify(r)).not.toContain(minted);
+  });
+
+  // The ticket has to be able to say a credential was handed over, and to whom — never what.
+  it('records who received it, and not the value', async () => {
+    let minted = '';
+    const r = await executePlan(pwPlan, pwOps({
+      setPassword: async (_id: string, pw: string) => { minted = pw; },
+    }));
+    const out = r.outcomes.find((o) => o.key === 'set_password')!;
+    expect(out.note).toMatch(/sup@sbsfederal\.com/);
+    expect(JSON.stringify(out)).not.toContain(minted);
+  });
+});

@@ -12,6 +12,7 @@ import {
   issueTap,
   graphErrorCode,
   setManager,
+  setPassword,
   listSelectableGroups,
   getCloudPcStatus,
   listGroupsByDisplayName,
@@ -649,5 +650,17 @@ describe('issueTap against a just-created account', () => {
     const boom = vi.fn(async () => { throw new Error('socket hang up'); });
     await expect(issueTap({ post: boom } as any, 'u1', 480, { sleep })).rejects.toThrow(/socket hang up/);
     expect(boom).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The temporary-password alternative to a TAP: the same thing the Entra admin centre does when
+// it resets a user's password and ticks "require change at next sign-in".
+describe('setPassword', () => {
+  it('patches the account with a password that must be changed at next sign-in', async () => {
+    const patch = vi.fn(async () => null);
+    await setPassword({ patch } as any, 'u1', 'S3cret!');
+    expect(patch).toHaveBeenCalledWith('/users/u1', {
+      passwordProfile: { password: 'S3cret!', forceChangePasswordNextSignIn: true },
+    });
   });
 });

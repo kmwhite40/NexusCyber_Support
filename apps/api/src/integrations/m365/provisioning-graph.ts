@@ -135,6 +135,20 @@ export async function patchUser(g: GraphClient, userId: string, patch: Record<st
   return g.patch(`/users/${userId}`, patch);
 }
 
+/**
+ * Sets a temporary password on an existing account, to be changed at next sign-in — the
+ * alternative to a Temporary Access Pass, and the same thing the Entra admin centre does.
+ *
+ * Unlike the password written at creation (random, discarded unread), this value IS delivered,
+ * which is what makes `forceChangePasswordNextSignIn` satisfiable here: Entra asks for the
+ * current password before accepting a new one, and with this flow the new starter has it.
+ */
+export async function setPassword(g: GraphClient, userId: string, password: string) {
+  return g.patch(`/users/${userId}`, {
+    passwordProfile: { password, forceChangePasswordNextSignIn: true },
+  });
+}
+
 export async function assignLicenses(g: GraphClient, userId: string, skuIds: string[]) {
   return g.post(`/users/${userId}/assignLicense`, {
     addLicenses: skuIds.map((skuId) => ({ skuId, disabledPlans: [] })),

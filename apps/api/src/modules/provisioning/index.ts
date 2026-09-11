@@ -48,6 +48,7 @@ import {
   isTapPolicyDisabledError,
   graphErrorCode,
   setManager,
+  setPassword,
   listSelectableGroups,
   type DirectoryGroup,
 } from '../../integrations/m365/provisioning-graph.js';
@@ -381,6 +382,7 @@ async function buildPlan(actor: Principal, ticketId: string): Promise<{ plan: Pl
     baselineSkus: config.provisioning.baselineSkus,
     cloudPcSku: config.provisioning.cloudPcSku,
     usageLocation: config.provisioning.usageLocation,
+    initialCredential: config.provisioning.initialCredential,
     existingUser,
     existingRoleCount,
   });
@@ -424,14 +426,15 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  *  - errors thrown from here carry no message content, so the pass cannot ride out on one
  *    (the executor also redacts by literal value as a second layer).
  */
-async function deliverTapToSupervisor(
+async function deliverCredentialToSupervisor(
   organizationId: string,
   supervisorId: string,
   upn: string,
-  pass: string,
-): Promise<void> {
+  secret: string,
+  kind: 'tap' | 'password' = 'tap',
+): Promise<{ recipient: string }> {
   if (!supervisorId) {
-    throw new Error('no supervisor on the request; the Temporary Access Pass has nowhere to go');
+    throw new Error('no supervisor on the request; the credential has nowhere to go');
   }
   if (!UUID_RE.test(supervisorId)) {
     // The form's supervisor field is a user picker, so this is a malformed request rather than
@@ -509,19 +512,25 @@ async function deliverTapToSupervisor(
   }
 
   const life = formatLifetime(config.provisioning.tapLifetimeMinutes);
-  const subject = `Temporary Access Pass for ${upn}`;
+  // The handover instruction differs because the two credentials behave differently, and getting
+  // that wrong is how a supervisor tells a new starter the wrong thing at the worst moment.
+  const isTap = kind === 'tap';
+  const noun = isTap ? 'Temporary Access Pass' : 'temporary password';
+  const subject = `${isTap ? 'Temporary Access Pass' : 'Temporary password'} for ${upn}`;
+  const terms = isTap
+    ? `It is single-use and expires in ${life}. They will be asked to set up their own sign-in method with it.`
+    : 'They will be asked to change it the first time they sign in.';
   const text = [
-    `A Temporary Access Pass has been issued for the new account ${upn}.`,
+    `A ${noun} has been issued for the new account ${upn}.`,
     '',
-    `Pass: ${pass}`,
+    `${isTap ? 'Pass' : 'Password'}: ${secret}`,
     '',
-    `It is single-use and expires in ${life}. Give it to the new user in person or by phone —`,
-    'do not forward this email. They will be asked to set up their own sign-in method with it.',
+    `${terms} Give it to the new user in person or by phone — do not forward this email.`,
   ].join('\n');
-  const html = `<p>A Temporary Access Pass has been issued for the new account <b>${escapeHtml(upn)}</b>.</p>`
-    + `<p><b>Pass:</b> <code>${escapeHtml(pass)}</code></p>`
-    + `<p>It is single-use and expires in ${escapeHtml(life)}. Give it to the new user in person or by phone —`
-    + ' do not forward this email. They will be asked to set up their own sign-in method with it.</p>';
+  const html = `<p>A ${noun} has been issued for the new account <b>${escapeHtml(upn)}</b>.</p>`
+    + `<p><b>${isTap ? 'Pass' : 'Password'}:</b> <code>${escapeHtml(secret)}</code></p>`
+    + `<p>${escapeHtml(terms)} Give it to the new user in person or by phone —`
+    + ' do not forward this email.</p>';
 
   // Wrapped for the same reason issueTap's adapter wrapper is: a mail adapter that throws
   // commonly echoes the message it was asked to send — and this message's body IS the pass.
@@ -532,8 +541,8 @@ async function deliverTapToSupervisor(
   try {
     result = await adapter.sendEmail({ to: supervisor.email, subject, html, text });
   } catch (err) {
-    logger.error({ err, organizationId }, 'sending the Temporary Access Pass to the supervisor threw');
-    throw new Error('sending the Temporary Access Pass to the supervisor failed');
+    logger.error({ err, organizationId, kind }, 'sending the credential to the supervisor threw');
+    throw new Error(`sending the ${noun} to the supervisor failed`);
   }
 
   // Same delivery ledger every other notification lands in — recipient and status only, so the
@@ -542,16 +551,18 @@ async function deliverTapToSupervisor(
     await sql.query(
       `INSERT INTO notification_deliveries
          (organization_id, event_type, channel, recipient, status, provider_message_id)
-       VALUES ($1,'provisioning.tap_delivered','email',$2,$3,$4)`,
-      [organizationId, supervisor.email, result.status, result.providerMessageId ?? null],
+       VALUES ($1,$5,'email',$2,$3,$4)`,
+      [organizationId, supervisor.email, result.status, result.providerMessageId ?? null,
+        isTap ? 'provisioning.tap_delivered' : 'provisioning.password_delivered'],
     );
   });
 
   if (result.status !== 'sent') {
     // Deliberately does NOT interpolate result.error: an adapter's error text is arbitrary
     // provider output, and this string ends up in a step row and a ticket note.
-    throw new Error('sending the Temporary Access Pass to the supervisor failed');
+    throw new Error(`sending the ${noun} to the supervisor failed`);
   }
+  return { recipient: supervisor.email };
 }
 
 function escapeHtml(s: string): string {
@@ -607,8 +618,12 @@ function buildOps(g: ProvisioningGraph, organizationId: string): ProvisioningOps
       if (!pass) throw new Error('Graph did not return a Temporary Access Pass');
       return { temporaryAccessPass: pass };
     },
-    deliverTap: (supervisorId, upn, pass) =>
-      deliverTapToSupervisor(organizationId, supervisorId, upn, pass),
+    deliverTap: async (supervisorId, upn, pass) => {
+      await deliverCredentialToSupervisor(organizationId, supervisorId, upn, pass, 'tap');
+    },
+    setPassword: (userId, password) => setPassword(g.graph, userId, password),
+    deliverPassword: (supervisorId, upn, password) =>
+      deliverCredentialToSupervisor(organizationId, supervisorId, upn, password, 'password'),
   };
 }
 
@@ -740,6 +755,10 @@ async function noteRunOutcome(
   if (outcomes.some((o) => o.key === 'issue_tap' && o.status === 'skipped')) {
     lines.push('', TAP_SKIPPED_NOTICE);
   }
+  // Non-secret, human-facing detail a step wanted on record — who a credential went to, for
+  // instance. The ticket is where someone answers "was this handed over?"; the value itself
+  // never appears here, only the fact and the recipient.
+  for (const o of outcomes) if (o.note) lines.push('', o.note);
   const body = lines.join('\n');
   try {
     await withSystemContext(async (sql) => {

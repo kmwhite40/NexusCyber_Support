@@ -115,6 +115,8 @@ export interface ProvisioningConfig {
   /** Attempts for the TAP request, which 404s while a just-created account replicates to the
    *  authentication-methods service. See issueTap in integrations/m365/provisioning-graph.ts. */
   tapRetryAttempts: number;
+  /** How the new starter first signs in. See InitialCredential in modules/provisioning/planner.ts. */
+  initialCredential: 'tap' | 'password';
   /**
    * Graph API version for the `/deviceManagement/virtualEndpoint/*` family (Cloud PC status
    * lookups). Whether GCC High specifically requires `beta` there vs `v1.0` is an open item in
@@ -207,6 +209,11 @@ export function parseProvisioningConfig(env: NodeJS.ProcessEnv): ProvisioningCon
       // run reports a pass it never issued.
       return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : 5;
     })(),
+    // Anything other than an explicit 'password' keeps the stronger default, so a typo cannot
+    // quietly downgrade every new federal identity to a mailed password.
+    initialCredential: (env.M365_PROV_INITIAL_CREDENTIAL ?? '').trim().toLowerCase() === 'password'
+      ? 'password' as const
+      : 'tap' as const,
     cloudPcApiVersion,
     offboardingEnabled,
   };

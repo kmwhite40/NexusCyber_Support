@@ -458,7 +458,9 @@ describe('Temporary Access Pass containment across the write paths', () => {
   it('records the delivery without recording the pass', async () => {
     await provisionApproved();
     const rec = find(/INSERT INTO notification_deliveries/)[0];
-    expect(rec.params).toEqual([TICKET_ORG, WORK_EMAIL, 'sent', 'graph:1']);
+    // The event type is a parameter now that the same path delivers a temporary password too,
+    // so the ledger says WHICH credential was handed over — still never the value.
+    expect(rec.params).toEqual([TICKET_ORG, WORK_EMAIL, 'sent', 'graph:1', 'provisioning.tap_delivered']);
   });
 });
 

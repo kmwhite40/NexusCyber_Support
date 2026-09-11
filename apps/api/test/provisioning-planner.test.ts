@@ -672,3 +672,45 @@ describe('forceChangePassword tracks how the first sign-in actually happens', ()
     expect(forceOf(planRun({ ...base, tenant: { ...tenant, tapEnabled: false } }))).toBe(true);
   });
 });
+
+// Asked for after "the password is invalid on first use": an alternative that works the way the
+// Entra admin centre does — set a temporary password, hand it over, make them change it. A
+// Temporary Access Pass is the stronger credential and stays the default, but a password is what
+// the team already knows, and it is the honest answer for a tenant with no TAP policy at all,
+// where today the run creates a live account that nobody can sign into and nothing sets.
+describe('initialCredential', () => {
+  const keys = (over: Record<string, unknown>) =>
+    planRun({ ...base, ...over }).steps.map((s) => s.key);
+
+  it('issues a Temporary Access Pass by default', () => {
+    expect(keys({})).toContain('issue_tap');
+    expect(keys({})).not.toContain('set_password');
+  });
+
+  it('sets a temporary password instead when that is configured', () => {
+    const k = keys({ initialCredential: 'password' as const });
+    expect(k).toContain('set_password');
+    expect(k).not.toContain('issue_tap');
+  });
+
+  // The two are alternatives, never both: each hands the new starter a live credential, and
+  // minting two means one of them is loose with nobody expecting it.
+  it('never plans both', () => {
+    for (const c of ['tap', 'password'] as const) {
+      const k = keys({ initialCredential: c });
+      expect(k.filter((x) => x === 'issue_tap' || x === 'set_password')).toHaveLength(1);
+    }
+  });
+
+  // A password the user must change is the whole point of this mode — and unlike the TAP case it
+  // IS satisfiable, because the password is delivered rather than discarded.
+  it('demands a change at next sign-in, which is what makes it temporary', () => {
+    const p = planRun({ ...base, initialCredential: 'password' });
+    expect(p.steps.find((s) => s.key === 'create_user')?.detail.forceChangePassword).toBe(true);
+  });
+
+  it('carries the supervisor so the credential has somewhere to go', () => {
+    const p = planRun({ ...base, initialCredential: 'password' });
+    expect(p.steps.find((s) => s.key === 'set_password')?.detail.supervisor).toBe('sup-1');
+  });
+});

@@ -7,7 +7,18 @@ import type { TenantState } from '../../integrations/m365/provisioning-graph.js'
 
 export type StepKey =
   | 'create_user' | 'set_manager' | 'assign_licenses' | 'add_groups'
-  | 'assign_cloudpc' | 'issue_tap' | 'await_cloudpc';
+  | 'assign_cloudpc' | 'issue_tap' | 'set_password' | 'await_cloudpc';
+
+/**
+ * How the new starter first signs in.
+ *
+ * `tap` is the default and the stronger of the two: a Temporary Access Pass is time-boxed and
+ * drives the user straight into registering their own method. `password` is the flow the Entra
+ * admin centre offers — mint a temporary password, hand it over, require a change — and it is
+ * the honest answer for a tenant with no TAP policy, where the alternative is a live account
+ * nobody can sign into. It is weaker: the value sits in a mailbox and is reusable until changed.
+ */
+export type InitialCredential = 'tap' | 'password';
 
 export interface PlanStep { key: StepKey; label: string; detail: Record<string, unknown> }
 export interface Blocker { code: string; message: string }
@@ -38,6 +49,8 @@ export interface PlanInput {
    *  request named one that could not be found in the tenant — which is a blocker, not a
    *  silently skipped step. */
   manager?: { upn: string; objectId: string };
+  /** Defaults to 'tap'. See InitialCredential. */
+  initialCredential?: InitialCredential;
   existingUser: { id: string; userPrincipalName: string } | null;
   existingRoleCount: number;
 }
@@ -164,6 +177,7 @@ export function userAttributes(answers: Record<string, unknown>): Record<string,
 
 export function planRun(input: PlanInput): Plan {
   const { answers, tenant, upnDomain, baselineSkus, cloudPcSku, usageLocation, mirror, manager, existingUser, existingRoleCount } = input;
+  const initialCredential: InitialCredential = input.initialCredential ?? 'tap';
   const blockers: Blocker[] = [];
   const upn = deriveUpn(answers, upnDomain);
   const first = str(answers.preferred_first_name) || str(answers.legal_first_name);
@@ -285,6 +299,7 @@ export function planRun(input: PlanInput): Plan {
   // the policy could not be read, and the run still ATTEMPTS the pass — so the pass is still the
   // way in, and the flag below must follow that, not the unknown.
   const tapDisabled = tenant.tapEnabled === false;
+  const usingPassword = initialCredential === 'password';
   const steps: PlanStep[] = [
     {
       key: 'create_user',
@@ -310,7 +325,7 @@ export function planRun(input: PlanInput): Plan {
         // So the flag follows the credential. It is on only when the tenant has no pass to issue
         // and an admin therefore sets one out of band — the single case where a forced change at
         // next sign-in is the right behaviour.
-        forceChangePassword: tapDisabled,
+        forceChangePassword: tapDisabled || usingPassword,
       },
     },
   ];
@@ -366,7 +381,15 @@ export function planRun(input: PlanInput): Plan {
   //
   // Only an explicit `false` pre-skips. `undefined` means the policy could not be read, and
   // pre-skipping on that would silently stop issuing credentials in a tenant where TAP works.
-  steps.push({
+  // Exactly one credential step, never both: each hands the new starter something live, and
+  // minting two means one of them is loose with nobody expecting it.
+  if (usingPassword) {
+    steps.push({
+      key: 'set_password',
+      label: 'Set a temporary password and send it to the supervisor',
+      detail: { supervisor: str(answers.supervisor) },
+    });
+  } else steps.push({
     key: 'issue_tap',
     label: tapDisabled
       ? 'Issue Temporary Access Pass to supervisor (will be skipped)'

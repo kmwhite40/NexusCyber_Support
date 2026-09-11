@@ -52,6 +52,9 @@ export interface StepOutcome {
   status: 'succeeded' | 'failed' | 'skipped';
   graphObjectId?: string;
   error?: string;
+  /** Non-secret, human-facing detail rendered onto the ticket note — who a credential went to,
+   *  for instance. Never a credential, never provider error text. */
+  note?: string;
 }
 
 export interface ProvisioningOps {
@@ -64,6 +67,12 @@ export interface ProvisioningOps {
    *  still type-checks; a plan carrying set_manager without it fails loudly below. */
   setManager?: (userId: string, managerObjectId: string) => Promise<unknown>;
   issueTap: (userId: string) => Promise<{ temporaryAccessPass: string }>;
+  /** The temporary-password alternative to issueTap. Optional so an ops bag built before this
+   *  step existed still type-checks; a plan carrying set_password without it fails loudly. */
+  setPassword?: (userId: string, password: string) => Promise<unknown>;
+  /** Hands the temporary password to the supervisor. Returns the recipient so the outcome can
+   *  record WHO received a credential — never what it was. */
+  deliverPassword?: (supervisorId: string, upn: string, password: string) => Promise<{ recipient: string }>;
   patchUser?: (userId: string, patch: Record<string, unknown>) => Promise<unknown>;
   deliverTap: (supervisorId: string, upn: string, pass: string) => Promise<void>;
 }
@@ -213,6 +222,31 @@ export async function executePlan(
           }
           await ops.addToGroup(groupId, userId);
           outcomes.push({ key: step.key, status: 'succeeded' });
+          break;
+        }
+        case 'set_password': {
+          requireUserId(userId, step.key);
+          if (!ops.setPassword || !ops.deliverPassword) {
+            throw new Error('set_password: no setPassword/deliverPassword operations were provided');
+          }
+          // Minted here and held in this scope only. Same containment as issue_tap below: Graph
+          // and mail adapters both routinely echo what they were given back in their error text,
+          // and a StepOutcome ends up in a ticket note and an audit detail blob.
+          const password = generateInitialPassword();
+          let recipient: string;
+          try {
+            await ops.setPassword(userId, password);
+            ({ recipient } = await ops.deliverPassword(String(step.detail.supervisor ?? ''), plan.upn, password));
+          } catch (err) {
+            throw new Error(redactSecret(toErrorMessage(err), password));
+          }
+          // The recipient, never the value — that is what makes the ticket able to answer "was
+          // this handed over, and to whom?" without becoming a place the credential is stored.
+          outcomes.push({
+            key: step.key,
+            status: 'succeeded',
+            note: `A temporary password was sent to ${recipient}. It must be changed at first sign-in.`,
+          });
           break;
         }
         case 'issue_tap': {
