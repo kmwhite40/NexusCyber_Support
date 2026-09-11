@@ -23,8 +23,17 @@ describeDb('people-picker scope', () => {
   });
 
   it('does not let a customer user enumerate the provider staff', async () => {
+    // Must hold ticket.create, or searchUsers refuses before it can return anything and the test
+    // proves nothing about scoping. CI's seed has customer users without it, which is how this
+    // surfaced — a 403 is a fine outcome for THAT user, just not evidence about this property.
     const cust = await withSystemContext(async (sql) => (await sql.query(
-      "SELECT id, plane, email, organization_id FROM users WHERE plane='customer' AND status='active' AND organization_id IS NOT NULL LIMIT 1")).rows[0]);
+      `SELECT u.id, u.plane, u.email, u.organization_id
+         FROM users u
+         JOIN role_assignments ra ON ra.user_id = u.id
+         JOIN role_permissions rp ON rp.role_id = ra.role_id
+        WHERE u.plane='customer' AND u.status='active' AND u.organization_id IS NOT NULL
+          AND rp.permission_key = 'ticket.create'
+        LIMIT 1`)).rows[0]);
     if (!cust) return;
     const p = await loadPrincipal({ sub: cust.id, plane: cust.plane, email: cust.email, org: cust.organization_id, roles: [] });
     const hits = await searchUsers(p, '', cust.organization_id);

@@ -405,31 +405,50 @@ export interface UserHit {
   email: string;
 }
 
-/** Type-ahead user search for people pickers, scoped to one org and RLS-enforced. */
+/**
+ * Type-ahead user search for people pickers.
+ *
+ * Two queries, because the two populations live under different rules. Customer users are read
+ * under the caller's org context so RLS enforces tenancy. The provider's own staff are nexus-plane
+ * with organization_id NULL, and RLS filters those out of an org context ENTIRELY — a WHERE clause
+ * cannot reach them, which is why an agent could not find themselves to raise a request on behalf
+ * of. That half runs in a system context, narrowly: nexus plane only, active only, and only when
+ * the CALLER is themselves nexus. A customer-plane user must never be able to enumerate the
+ * provider's staff through a type-ahead on their own request form.
+ */
 export async function searchUsers(actor: Principal, q: string, organizationId?: string): Promise<UserHit[]> {
   const orgId = resolveSearchOrg(actor, organizationId);
   if (!orgId) return [];
   authorize(actor, 'ticket.create', { organizationId: orgId });
-  return withOrgContext(orgContextFor(actor), async (sql) => {
-    const term = (q ?? '').trim();
+  const term = (q ?? '').trim();
+
+  const inOrg = await withOrgContext(orgContextFor(actor), async (sql) => {
     const { rows } = await sql.query(
-      // Agents can also be picked. The MSP's own staff are nexus-plane with organization_id NULL,
-      // so an org-scoped search could not find them at all — an agent raising a request on behalf
-      // of themselves, or naming a colleague as supervisor, had no way to select anyone. That
-      // surfaced as "it cannot find the requester name", with the picker returning nothing for a
-      // name the operator could see in the product.
-      //
-      // Only for a NEXUS actor: a customer-plane user must never be able to enumerate the
-      // provider's staff through a type-ahead on their own request form.
       `SELECT id, display_name, email FROM users
-        WHERE status = 'active'
-          AND (organization_id = $1 OR ($3 AND plane = 'nexus'))
+        WHERE organization_id = $1 AND status = 'active'
           AND ($2 = '' OR display_name ILIKE '%' || $2 || '%' OR email ILIKE '%' || $2 || '%')
-        ORDER BY (organization_id = $1) DESC, display_name NULLS LAST LIMIT 10`,
-      [orgId, term, actor.plane === 'nexus'],
+        ORDER BY display_name NULLS LAST LIMIT 10`,
+      [orgId, term],
     );
     return rows as UserHit[];
   });
+
+  if (actor.plane !== 'nexus') return inOrg;
+
+  const staff = await withSystemContext(async (sql) => {
+    const { rows } = await sql.query(
+      `SELECT id, display_name, email FROM users
+        WHERE plane = 'nexus' AND status = 'active'
+          AND ($1 = '' OR display_name ILIKE '%' || $1 || '%' OR email ILIKE '%' || $1 || '%')
+        ORDER BY display_name NULLS LAST LIMIT 10`,
+      [term],
+    );
+    return rows as UserHit[];
+  });
+
+  // The customer's own people first — they are who a request is usually about.
+  const seen = new Set(inOrg.map((u) => u.id));
+  return [...inOrg, ...staff.filter((u) => !seen.has(u.id))].slice(0, 10);
 }
 
 export async function getOrganization(actor: Principal, id: string) {
