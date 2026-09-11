@@ -14,6 +14,7 @@
 //      Cloud PC assignment) assume every prior step actually succeeded.
 import type { Plan, StepKey } from './planner.js';
 import { randomBytes } from 'node:crypto';
+import { logger } from '../../logger.js';
 
 /**
  * Spec open item #4's fallback, made representable.
@@ -100,6 +101,7 @@ export async function executePlan(
           // actually succeeded server-side must adopt the object Graph already created, never
           // call createUser a second time and mint a duplicate identity.
           const existing = await ops.findUser(plan.upn);
+          let adoptionNote: string | undefined;
           const usageLocation = String(step.detail.usageLocation ?? '');
           // Mapped by planner.ts's userAttributes — Graph property names, blanks already dropped.
           const attributes = (step.detail.attributes as Record<string, string> | undefined) ?? {};
@@ -121,25 +123,31 @@ export async function executePlan(
             // Same gaps-only rule for the rest of the profile, and for the same reason: a form
             // answer must never overwrite what a real person's record already says.
             for (const [k, v] of Object.entries(attributes)) if (!cur[k]) patch[k] = v;
-            // The one thing adoption DOES overwrite, and only when leaving it would break the
-            // run's own work. Accounts created before the force-change fix still demand a
-            // password change against a password nobody was ever given; re-running would hand
-            // them a fresh Temporary Access Pass that the demand makes unusable, reproducing
-            // "the password is invalid on first use" exactly. So: if this run is issuing a
-            // first-sign-in credential, the account must not demand a change that credential
-            // cannot answer. A run that issues no credential leaves the account as it found it.
-            //
-            // The state is always UNKNOWN in practice: passwordProfile cannot be read back —
-            // naming it in a $select makes Graph refuse the whole request with 403 — so this
-            // writes on every adoption that issues a credential. That is the right trade: a stale
-            // demand left in place breaks the credential being issued, a redundant write costs
-            // nothing, and the read that would avoid it is not available at any price.
-            const wantsChange = step.detail.forceChangePassword === true;
-            const curProfile = cur.passwordProfile as { forceChangePasswordNextSignIn?: boolean } | undefined;
-            if (!wantsChange && curProfile?.forceChangePasswordNextSignIn !== false) {
-              patch.passwordProfile = { forceChangePasswordNextSignIn: false };
-            }
             if (Object.keys(patch).length && ops.patchUser) await ops.patchUser(userId, patch);
+            // A SEPARATE write, and best-effort on purpose.
+            //
+            // Accounts created before the force-change fix still demand a password change against
+            // a password nobody was ever given, so a fresh credential issued to them is unusable —
+            // the original "the password is invalid on first use". Clearing it is the repair. But
+            // writing passwordProfile on an EXISTING user needs User-PasswordProfile.ReadWrite.All,
+            // which is a different permission from the User.ReadWrite.All this app holds: setting
+            // a password while CREATING a user is covered, changing one afterwards is not.
+            //
+            // Bundled into the patch above, that 403 failed create_user outright and skipped every
+            // step after it — provisioning stopped working entirely over a tidy-up. So it stands
+            // alone, and a refusal is reported on the outcome rather than ending the run. Silence
+            // would be worse than either: the run would read as clean while the account still
+            // refuses the credential it was just handed.
+            if (step.detail.forceChangePassword !== true && ops.patchUser) {
+              try {
+                await ops.patchUser(userId, { passwordProfile: { forceChangePasswordNextSignIn: false } });
+              } catch (err) {
+                adoptionNote = 'This account was left requiring a password change at next sign-in, and that '
+                  + 'could not be cleared (grant User-PasswordProfile.ReadWrite.All, or clear it in Entra). '
+                  + 'Until it is, the credential issued by this run will be rejected at first sign-in.';
+                logger.warn({ userId, err }, 'could not clear forceChangePasswordNextSignIn on adopted account');
+              }
+            }
           } else {
             const password = generateInitialPassword();
             let created: { id: string };
@@ -182,7 +190,7 @@ export async function executePlan(
             }
             userId = created.id;
           }
-          outcomes.push({ key: step.key, status: 'succeeded', graphObjectId: userId });
+          outcomes.push({ key: step.key, status: 'succeeded', graphObjectId: userId, ...(adoptionNote ? { note: adoptionNote } : {}) });
           break;
         }
         case 'set_manager': {

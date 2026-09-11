@@ -377,7 +377,7 @@ describe('usageLocation is set before licences are assigned', () => {
     const patched: Array<{ id: string; patch: any }> = [];
     await executePlan(planWithLoc, ops({
       findUser: async () => ({ id: 'existing', userPrincipalName: plan.upn, usageLocation: null, passwordProfile: { forceChangePasswordNextSignIn: false } }),
-      patchUser: async (id: string, patch: any) => { patched.push({ id, patch }); },
+      patchUser: async (id: string, patch: any) => { if (!patch.passwordProfile) patched.push({ id, patch }); },
     } as any));
     expect(patched).toEqual([{ id: 'existing', patch: { usageLocation: 'US' } }]);
   });
@@ -386,7 +386,7 @@ describe('usageLocation is set before licences are assigned', () => {
     let calls = 0;
     await executePlan(planWithLoc, ops({
       findUser: async () => ({ id: 'existing', userPrincipalName: plan.upn, usageLocation: 'US', passwordProfile: { forceChangePasswordNextSignIn: false } }),
-      patchUser: async () => { calls += 1; },
+      patchUser: async (_id: string, patch: any) => { if (!patch.passwordProfile) calls += 1; },
     } as any));
     expect(calls).toBe(0);
   });
@@ -410,7 +410,7 @@ describe('given name and surname reach Graph', () => {
     const patches: any[] = [];
     await executePlan(named, ops({
       findUser: async () => ({ id: 'existing', userPrincipalName: plan.upn, usageLocation: 'US', passwordProfile: { forceChangePasswordNextSignIn: false } }),
-      patchUser: async (_id: string, patch: any) => { patches.push(patch); },
+      patchUser: async (_id: string, patch: any) => { if (!patch.passwordProfile) patches.push(patch); },
     } as any));
     expect(patches).toEqual([{ givenName: 'Ada', surname: 'Lovelace' }]);
   });
@@ -425,7 +425,7 @@ describe('given name and surname reach Graph', () => {
         id: 'existing', userPrincipalName: plan.upn, usageLocation: 'US',
         givenName: 'Augusta', surname: 'King',
       }),
-      patchUser: async (_id: string, patch: any) => { patches.push(patch); },
+      patchUser: async (_id: string, patch: any) => { if (!patch.passwordProfile) patches.push(patch); },
     } as any));
     expect(patches).toEqual([]);
   });
@@ -459,7 +459,7 @@ describe('the profile attributes on the created account', () => {
         id: 'existing', userPrincipalName: 'ada.lovelace@sbsfederal.com',
         jobTitle: 'Principal Engineer', department: null,
       }) as any,
-      patchUser: async (_id: string, p: any) => { patch = p; return {}; },
+      patchUser: async (_id: string, p: any) => { if (!p.passwordProfile) patch = p; return {}; },
     }));
     expect(patch.department).toBe('Engineering');
     expect(patch.officeLocation).toBe('Chantilly, VA');
@@ -655,5 +655,62 @@ describe('adopting an account that was left demanding a password change', () => 
       patchUser: async (_id: string, p: any) => { patch = p; return {}; },
     }));
     expect(patch).toEqual({ passwordProfile: { forceChangePasswordNextSignIn: false } });
+  });
+});
+
+// Writing passwordProfile on an EXISTING user needs User-PasswordProfile.ReadWrite.All, a
+// separate permission from the User.ReadWrite.All this app holds — setting a password as part of
+// creating a user is covered, changing one afterwards is not. So the repair 403s, and because it
+// lived in the same patch as the profile attributes it failed create_user outright and skipped
+// every step after it. Provisioning stopped working entirely for a best-effort tidy-up.
+describe('when the tenant will not let us clear the password-change demand', () => {
+  const adopted: Plan = {
+    ...plan,
+    steps: plan.steps.map((s) => (s.key === 'create_user'
+      ? { ...s, detail: { ...s.detail, forceChangePassword: false, attributes: { jobTitle: 'Analyst' } } }
+      : s)),
+  };
+  const existingUser = async () => ({ id: 'existing', userPrincipalName: 'ada.lovelace@sbsfederal.com' }) as any;
+
+  it('carries on with the run instead of failing it', async () => {
+    const r = await executePlan(adopted, ops({
+      findUser: existingUser,
+      patchUser: async (_id: string, p: any) => {
+        if (p.passwordProfile) throw Object.assign(new Error('Graph request failed: 403'), { status: 403 });
+        return {};
+      },
+    }));
+    expect(r.outcomes.find((o) => o.key === 'create_user')?.status).toBe('succeeded');
+    expect(r.outcomes.map((o) => o.key)).toContain('issue_tap');
+  });
+
+  // Silence here would be the worst outcome: the run reads as clean while the account still
+  // demands a change the credential cannot satisfy, which is the original bug wearing a
+  // "succeeded" badge.
+  it('says on the ticket that the account may still refuse the credential', async () => {
+    const r = await executePlan(adopted, ops({
+      findUser: existingUser,
+      patchUser: async (_id: string, p: any) => {
+        if (p.passwordProfile) throw Object.assign(new Error('403'), { status: 403 });
+        return {};
+      },
+    }));
+    expect(r.outcomes.find((o) => o.key === 'create_user')?.note)
+      .toMatch(/password|change|User-PasswordProfile/i);
+  });
+
+  // The profile attributes are a separate write and must still land — one failing tidy-up must
+  // not take the useful half of the step with it.
+  it('still writes the profile attributes', async () => {
+    const patches: any[] = [];
+    await executePlan(adopted, ops({
+      findUser: existingUser,
+      patchUser: async (_id: string, p: any) => {
+        patches.push(p);
+        if (p.passwordProfile) throw Object.assign(new Error('403'), { status: 403 });
+        return {};
+      },
+    }));
+    expect(patches.some((p) => p.jobTitle === 'Analyst')).toBe(true);
   });
 });
