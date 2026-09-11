@@ -22,6 +22,8 @@ export interface TemplateContext {
   resolutionCode?: string;
   ticketId?: string;
   webOrigin?: string;
+  /** Raw public survey token. Exists only in flight — the database stores its hash. */
+  surveyToken?: string;
   changeId?: string;
   changeTitle?: string;
   voteDeadline?: string;
@@ -213,7 +215,7 @@ const TEMPLATES: Record<string, Renderer> = {
       'Thank you,',
       brand,
       'Automated Notification',
-    ].join('\n');
+    ].filter((l) => l !== null).join('\n');
     const html =
       `<p>Hello,</p>` +
       `<p>${brand} has responded to your support request (ticket <strong>${escapeHtml(c.ticketNumber ?? '')}</strong>).</p>` +
@@ -258,15 +260,25 @@ const TEMPLATES: Record<string, Renderer> = {
   },
   'csat.survey_created': (c) => {
     const brand = 'Anchor Support';
-    const link = c.webOrigin && c.ticketId ? `${c.webOrigin}/tickets/${c.ticketId}` : '';
+    // The PUBLIC survey link, not the portal deep link this used to carry. Asking an end user to
+    // authenticate before they can give a rating is why so few of them ever did. The token is a
+    // credential — it answers on their behalf with no login — hence the "do not forward" line and
+    // the stated lifetime, both of which are part of the control and not decoration.
+    //
+    // No token means the survey was created in the portal and was never meant to be emailed a
+    // link; say the true thing rather than linking somewhere that can only answer "unknown".
+    const token = typeof c.surveyToken === 'string' ? c.surveyToken : '';
+    const link = c.webOrigin && token ? `${c.webOrigin}/survey/${token}` : '';
     const text = [
       `Hello,`,
       '',
       `Your recent support request (ticket ${c.ticketNumber}) has been resolved, and we'd love your feedback.`,
       '',
-      `How would you rate your experience? It takes just a moment:`,
+      `How would you rate your experience? Three quick questions, and it takes a moment:`,
       link ? link : `Sign in to the support portal and open ticket ${c.ticketNumber} to rate it.`,
       '',
+      link ? 'This link is personal to you and works for 30 days — please do not forward it.' : '',
+      link ? '' : null,
       `Subject: ${c.subject ?? ''}`,
       '',
       'Thank you,',
@@ -279,6 +291,8 @@ const TEMPLATES: Record<string, Renderer> = {
       `<p><strong>How would you rate your experience?</strong> It takes just a moment.</p>` +
       (link
         ? `<p><a href="${escapeHtml(link)}">Rate your experience &rarr;</a></p>`
+          + `<p style="font-size:12px;color:#666">This link is personal to you and works for 30 days —`
+          + ' please do not forward it.</p>'
         : `<p>Sign in to the support portal and open ticket ${escapeHtml(c.ticketNumber ?? '')} to rate it.</p>`) +
       `<p><strong>Subject:</strong> ${escapeHtml(c.subject ?? '')}</p>` +
       `<p>Thank you,<br/>${brand}<br/><em>Automated Notification</em></p>`;

@@ -157,6 +157,8 @@ export async function dispatch(
     commentExcerpt: d.comment_excerpt,
     resolutionCode: d.resolution_code,
     webOrigin: config.webOrigin[0],
+    // Carried on the event because it is nowhere else: only its hash is stored.
+    surveyToken: d.survey_token,
     changeId: changeRef,
     changeTitle: c.title,
     voteDeadline: d.vote_deadline,

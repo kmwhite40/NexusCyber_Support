@@ -1058,6 +1058,35 @@ export async function registerRoutes(app: FastifyInstance) {
   });
 
   // ---------------- CSAT satisfaction surveys ----------------
+  // ---------------- Public survey response (NO principal) ----------------
+  //
+  // The only routes in this file outside /auth/* that do not call requirePrincipal, and that is
+  // the point: a customer rating a resolved ticket should not have to hold an account, remember a
+  // password, or pass MFA to answer three questions. Authorization is the token — 256 bits, stored
+  // only as a hash, single-use, and expiring — which is why the handlers below hand back state
+  // rather than data. A survey link can be forwarded or land in a shared mailbox; whoever holds
+  // it learns the ticket NUMBER and nothing else.
+  //
+  // No Principal is synthesized for the write, deliberately. The audit log is hash-chained, and
+  // inventing an actor writes a false claim about who did what into the one record whose value is
+  // that it cannot be argued with. The response is recorded as a domain event instead.
+  app.get('/api/v1/csat/r/:token', async (req) => {
+    const { token } = z.object({ token: z.string().min(20).max(200) }).parse(req.params);
+    return await csat.publicSurveyByToken(token);
+  });
+
+  app.post('/api/v1/csat/r/:token', async (req) => {
+    const { token } = z.object({ token: z.string().min(20).max(200) }).parse(req.params);
+    const body = z.object({
+      overall: z.number().int().min(1).max(5),
+      timeliness: z.number().int().min(1).max(5),
+      technician: z.number().int().min(1).max(5),
+      comment: z.string().max(2000).optional(),
+    }).parse(req.body);
+    const { comment, ...scores } = body;
+    return await csat.respondPublic(token, scores, comment);
+  });
+
   app.get('/api/v1/csat/pending', async (req) => {
     const p = await requirePrincipal(req);
     return { data: await csat.pending(p) };

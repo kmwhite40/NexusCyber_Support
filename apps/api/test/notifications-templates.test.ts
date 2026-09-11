@@ -84,12 +84,18 @@ describe('renderTemplate', () => {
     expect(out.text.toLowerCase()).toContain('reopen');
   });
 
-  it('csat survey renders a rating link to the ticket page', () => {
+  // The link moved from the portal deep link to the PUBLIC survey, because the deep link sat
+  // behind the login wall and a survey you must authenticate to answer is one most people never
+  // answer. Covered in full in csat-invite-template.test.ts; this keeps the subject pinned here
+  // alongside its siblings.
+  it('csat survey renders a rating link to the public survey', () => {
     const out = renderTemplate('csat.survey_created', {
-      ticketNumber: 'ACME-9', subject: 'Laptop', ticketId: 't-123', webOrigin: 'https://anchor.azurewebsites.us',
+      ticketNumber: 'ACME-9', subject: 'Laptop', ticketId: 't-123',
+      webOrigin: 'https://anchor.azurewebsites.us', surveyToken: 'TOKEN1234567890123456789',
     });
     expect(out.subject.toLowerCase()).toContain('how did we do');
-    expect(out.html).toContain('https://anchor.azurewebsites.us/tickets/t-123');
+    expect(out.html).toContain('https://anchor.azurewebsites.us/survey/TOKEN1234567890123456789');
+    expect(out.html).not.toContain('/tickets/t-123');
   });
 
   it('assigned reads as "in progress" for the customer', () => {
