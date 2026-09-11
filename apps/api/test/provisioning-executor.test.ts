@@ -376,7 +376,7 @@ describe('usageLocation is set before licences are assigned', () => {
   it('back-fills usageLocation when adopting an existing user that has none', async () => {
     const patched: Array<{ id: string; patch: any }> = [];
     await executePlan(planWithLoc, ops({
-      findUser: async () => ({ id: 'existing', userPrincipalName: plan.upn, usageLocation: null }),
+      findUser: async () => ({ id: 'existing', userPrincipalName: plan.upn, usageLocation: null, passwordProfile: { forceChangePasswordNextSignIn: false } }),
       patchUser: async (id: string, patch: any) => { patched.push({ id, patch }); },
     } as any));
     expect(patched).toEqual([{ id: 'existing', patch: { usageLocation: 'US' } }]);
@@ -385,7 +385,7 @@ describe('usageLocation is set before licences are assigned', () => {
   it('does not re-patch a user that already has the right usageLocation', async () => {
     let calls = 0;
     await executePlan(planWithLoc, ops({
-      findUser: async () => ({ id: 'existing', userPrincipalName: plan.upn, usageLocation: 'US' }),
+      findUser: async () => ({ id: 'existing', userPrincipalName: plan.upn, usageLocation: 'US', passwordProfile: { forceChangePasswordNextSignIn: false } }),
       patchUser: async () => { calls += 1; },
     } as any));
     expect(calls).toBe(0);
@@ -409,7 +409,7 @@ describe('given name and surname reach Graph', () => {
   it('back-fills them on an adopted account that has none', async () => {
     const patches: any[] = [];
     await executePlan(named, ops({
-      findUser: async () => ({ id: 'existing', userPrincipalName: plan.upn, usageLocation: 'US' }),
+      findUser: async () => ({ id: 'existing', userPrincipalName: plan.upn, usageLocation: 'US', passwordProfile: { forceChangePasswordNextSignIn: false } }),
       patchUser: async (_id: string, patch: any) => { patches.push(patch); },
     } as any));
     expect(patches).toEqual([{ givenName: 'Ada', surname: 'Lovelace' }]);
@@ -421,6 +421,7 @@ describe('given name and surname reach Graph', () => {
     const patches: any[] = [];
     await executePlan(named, ops({
       findUser: async () => ({
+        passwordProfile: { forceChangePasswordNextSignIn: false },
         id: 'existing', userPrincipalName: plan.upn, usageLocation: 'US',
         givenName: 'Augusta', surname: 'King',
       }),
@@ -602,5 +603,54 @@ describe('set_password', () => {
     const out = r.outcomes.find((o) => o.key === 'set_password')!;
     expect(out.note).toMatch(/sup@sbsfederal\.com/);
     expect(JSON.stringify(out)).not.toContain(minted);
+  });
+});
+
+// Accounts created BEFORE the force-change fix are still broken, and re-running does not repair
+// them: adoption fills gaps and deliberately overwrites nothing, so the account keeps demanding a
+// password change that the pass it is about to be handed cannot satisfy. A fresh pass alone just
+// reproduces "the password is invalid on first use".
+//
+// The rule is narrow and follows from what the run is doing: if this run is handing the account a
+// first-sign-in credential, the account must not demand a password change that credential cannot
+// answer. That is the only case the flag is touched — an adopted account in a run that issues no
+// credential is left exactly as it was found.
+describe('adopting an account that was left demanding a password change', () => {
+  const adopt = (over: Record<string, unknown>) => ({
+    ...plan,
+    steps: plan.steps.map((s) => (s.key === 'create_user' ? { ...s, detail: { ...s.detail, ...over } } : s)),
+  });
+  const existing = (extra: Record<string, unknown> = {}) => async () => ({
+    id: 'existing', userPrincipalName: 'ada.lovelace@sbsfederal.com', ...extra,
+  });
+
+  it('clears the demand so the pass it is about to issue can actually be used', async () => {
+    let patch: any;
+    await executePlan(adopt({ forceChangePassword: false }), ops({
+      findUser: existing() as any,
+      patchUser: async (_id: string, p: any) => { patch = p; return {}; },
+    }));
+    expect(patch.passwordProfile).toEqual({ forceChangePasswordNextSignIn: false });
+  });
+
+  // A run whose plan says the admin sets the credential out of band must leave the demand alone —
+  // there, a forced change at next sign-in is the correct and intended state.
+  it('leaves it alone when no credential is being issued', async () => {
+    let patch: any = {};
+    await executePlan(adopt({ forceChangePassword: true }), ops({
+      findUser: existing() as any,
+      patchUser: async (_id: string, p: any) => { patch = p; return {}; },
+    }));
+    expect(patch.passwordProfile).toBeUndefined();
+  });
+
+  // No pointless write on an account that is already fine.
+  it('does not patch an account that is not demanding one', async () => {
+    let called = 0;
+    await executePlan(adopt({ forceChangePassword: false, usageLocation: '', givenName: '', surname: '' }), ops({
+      findUser: existing({ passwordProfile: { forceChangePasswordNextSignIn: false } }) as any,
+      patchUser: async () => { called += 1; return {}; },
+    }));
+    expect(called).toBe(0);
   });
 });

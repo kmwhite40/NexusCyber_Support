@@ -121,6 +121,22 @@ export async function executePlan(
             // Same gaps-only rule for the rest of the profile, and for the same reason: a form
             // answer must never overwrite what a real person's record already says.
             for (const [k, v] of Object.entries(attributes)) if (!cur[k]) patch[k] = v;
+            // The one thing adoption DOES overwrite, and only when leaving it would break the
+            // run's own work. Accounts created before the force-change fix still demand a
+            // password change against a password nobody was ever given; re-running would hand
+            // them a fresh Temporary Access Pass that the demand makes unusable, reproducing
+            // "the password is invalid on first use" exactly. So: if this run is issuing a
+            // first-sign-in credential, the account must not demand a change that credential
+            // cannot answer. A run that issues no credential leaves the account as it found it.
+            //
+            // If Graph did not return passwordProfile the state is UNKNOWN, and unknown has to
+            // mean "write it": a stale demand left in place breaks the credential being issued,
+            // while a redundant write costs nothing.
+            const wantsChange = step.detail.forceChangePassword === true;
+            const curProfile = cur.passwordProfile as { forceChangePasswordNextSignIn?: boolean } | undefined;
+            if (!wantsChange && curProfile?.forceChangePasswordNextSignIn !== false) {
+              patch.passwordProfile = { forceChangePasswordNextSignIn: false };
+            }
             if (Object.keys(patch).length && ops.patchUser) await ops.patchUser(userId, patch);
           } else {
             const password = generateInitialPassword();

@@ -110,7 +110,12 @@ function odataStringLiteral(value: string): string {
  */
 export async function findUserByUpn(g: GraphClient, upn: string) {
   const filter = `userPrincipalName eq ${odataStringLiteral(upn)}`;
-  const select = 'id,userPrincipalName,displayName,accountEnabled,givenName,surname,usageLocation';
+  // passwordProfile is selected so adoption can tell whether the account is already in the
+  // state it wants and skip a pointless write. Graph omits unselected fields silently, so
+  // without naming it here the answer would always be "unknown" — and unknown has to mean
+  // "write it", since leaving a stale force-change demand in place breaks the credential
+  // this run is about to issue.
+  const select = 'id,userPrincipalName,displayName,accountEnabled,givenName,surname,usageLocation,passwordProfile';
   const res = await g.get(`/users?$filter=${encodeURIComponent(filter)}&$select=${select}`);
   return res?.value?.[0] ?? null;
 }
