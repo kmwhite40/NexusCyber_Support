@@ -100,3 +100,25 @@ describe('user picker dismissal', () => {
   });
 
 });
+
+// "Almost like it can't find the requestor name." When the search returned nothing the component
+// rendered NOTHING — `{open && hits.length > 0 && ...}` — so "no matches" and "not searched yet"
+// looked identical. An operator typed a name, saw no list, and reasonably concluded the picker was
+// broken; the typed text then sat in the box looking like a value while the field stayed empty.
+describe('user picker feedback when nothing matches', () => {
+  it('says so instead of rendering nothing', async () => {
+    const { users } = await import('@/lib/api');
+    (users.search as any).mockResolvedValueOnce({ data: [] });
+    render(<UserPicker value={null} onChange={vi.fn()} organizationId="org-1" />);
+    await userEvent.type(screen.getByPlaceholderText(/enter name or email/i), 'nobody');
+    expect(await screen.findByText(/no (one|matches)/i)).toBeTruthy();
+  });
+
+  it('warns that typed text is not a selection', async () => {
+    const { users } = await import('@/lib/api');
+    (users.search as any).mockResolvedValueOnce({ data: [] });
+    render(<UserPicker value={null} onChange={vi.fn()} organizationId="org-1" />);
+    await userEvent.type(screen.getByPlaceholderText(/enter name or email/i), 'kevin.white@sbsfederal.com');
+    expect(await screen.findByText(/choose|select|pick/i)).toBeTruthy();
+  });
+});

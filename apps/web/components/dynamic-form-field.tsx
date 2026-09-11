@@ -80,9 +80,12 @@ export function groupFieldsBySection(fields: FormFieldDef[]): Array<{ section: s
 }
 
 export function DynamicFormField({
-  field, value, answers, options, file, onChange, onFileChange, renderUserPicker,
+  field, value, answers, options, file, onChange, onFileChange, renderUserPicker, error,
 }: {
   field: FormFieldDef;
+  /** Server-side validation message for THIS field, shown at the control rather than in a
+   *  paragraph at the foot of the dialog the operator then has to map back to fields. */
+  error?: string;
   /** answers[field.key] — passed separately so callers can read/derive it however they like. */
   value: unknown;
   /** The full answers bag, needed to evaluate this (and other fields') visibility. */
@@ -101,7 +104,9 @@ export function DynamicFormField({
   const hint = field.sensitive ? 'Sensitive — handled and stored separately from other request data.' : undefined;
 
   return (
-    <Field label={label} hint={hint}>
+    // data-field lets the dialog scroll to the first rejected field instead of describing it.
+    <div data-field={field.key}>
+      <Field label={label} hint={error ? undefined : hint}>
       {field.data_type === 'textarea' ? (
         <Textarea value={(value as string) ?? ''} onChange={(e) => set(e.target.value)} />
       ) : field.data_type === 'select' ? (
@@ -148,6 +153,8 @@ export function DynamicFormField({
           )}
         />
       )}
-    </Field>
+      </Field>
+      {error && <p className="-mt-3 mb-4 text-xs text-danger">{error}</p>}
+    </div>
   );
 }

@@ -6,6 +6,12 @@ export class ApiError extends Error {
     public title: string,
     public detail?: string,
     public code?: string,
+    /**
+     * Machine-readable specifics the client can act on — currently per-field validation errors.
+     * Flattening them into `detail` told an operator WHAT was wrong but not WHERE, which in a
+     * thirty-field dialog means hunting for the field the message names.
+     */
+    public errors?: Array<{ field: string; message: string }>,
   ) {
     super(detail ?? title);
   }
@@ -24,7 +30,8 @@ export const Errors = {
   // able to tell this apart from "a run is already in progress", which is also a 409.
   preconditionFailed: (detail?: string) =>
     new ApiError(412, 'Precondition Failed', detail, 'precondition_failed'),
-  validation: (detail?: string) => new ApiError(422, 'Unprocessable Entity', detail, 'validation'),
+  validation: (detail?: string, errors?: Array<{ field: string; message: string }>) =>
+    new ApiError(422, 'Unprocessable Entity', detail, 'validation', errors),
   badRequest: (detail?: string) => new ApiError(400, 'Bad Request', detail, 'bad_request'),
   // An upstream (Microsoft Graph, a customer tenant) refused or failed. Distinct from a 500:
   // nothing here is broken, and the operator can usually fix it — but only if they can read

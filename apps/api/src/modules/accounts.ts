@@ -413,11 +413,20 @@ export async function searchUsers(actor: Principal, q: string, organizationId?: 
   return withOrgContext(orgContextFor(actor), async (sql) => {
     const term = (q ?? '').trim();
     const { rows } = await sql.query(
+      // Agents can also be picked. The MSP's own staff are nexus-plane with organization_id NULL,
+      // so an org-scoped search could not find them at all — an agent raising a request on behalf
+      // of themselves, or naming a colleague as supervisor, had no way to select anyone. That
+      // surfaced as "it cannot find the requester name", with the picker returning nothing for a
+      // name the operator could see in the product.
+      //
+      // Only for a NEXUS actor: a customer-plane user must never be able to enumerate the
+      // provider's staff through a type-ahead on their own request form.
       `SELECT id, display_name, email FROM users
-        WHERE organization_id = $1 AND status = 'active'
+        WHERE status = 'active'
+          AND (organization_id = $1 OR ($3 AND plane = 'nexus'))
           AND ($2 = '' OR display_name ILIKE '%' || $2 || '%' OR email ILIKE '%' || $2 || '%')
-        ORDER BY display_name NULLS LAST LIMIT 10`,
-      [orgId, term],
+        ORDER BY (organization_id = $1) DESC, display_name NULLS LAST LIMIT 10`,
+      [orgId, term, actor.plane === 'nexus'],
     );
     return rows as UserHit[];
   });

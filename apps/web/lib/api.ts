@@ -23,7 +23,13 @@ export function setToken(token: string | null) {
 }
 
 export class ApiError extends Error {
-  constructor(public status: number, public detail: string) {
+  constructor(
+    public status: number,
+    public detail: string,
+    /** Per-field validation errors, when the API sent them. Lets a form mark the actual controls
+     *  rather than printing a sentence the operator has to map back to fields by hand. */
+    public errors?: Array<{ field: string; message: string }>,
+  ) {
     super(detail);
   }
 }
@@ -46,7 +52,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   const text = await res.text();
   const data = text ? JSON.parse(text) : undefined;
   if (!res.ok) {
-    throw new ApiError(res.status, data?.detail ?? data?.title ?? res.statusText);
+    throw new ApiError(res.status, data?.detail ?? data?.title ?? res.statusText, data?.errors);
   }
   return data as T;
 }

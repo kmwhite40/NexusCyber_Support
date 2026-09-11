@@ -84,7 +84,9 @@ export async function createRequest(actor: Principal, key: string, input: Create
     const form = await getFormByCatalogKey(actor, key);
     if (form) {
       const v = validateAgainstForm(form.fields, input.answers);
-      if (!v.ok) throw Errors.validation(v.errors.map((e) => e.message).join('; '));
+      // Both forms: a readable sentence AND the per-field list, so the dialog can mark the
+      // offending controls instead of printing a paragraph the operator has to map by hand.
+      if (!v.ok) throw Errors.validation(v.errors.map((e) => e.message).join('; '), v.errors);
       write = planRequestWrite(form.fields, input.answers, item.form_key, {
         defaultRequesterId: actor.plane === 'customer' ? actor.id : null,
       });

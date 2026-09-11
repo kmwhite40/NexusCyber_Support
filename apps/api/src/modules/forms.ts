@@ -47,7 +47,15 @@ export function validateAgainstForm(fields: FormField[], answers: Record<string,
         }
         break;
       case 'select':
-        if (!f.options.includes(String(v))) errors.push({ field: f.key, message: `${f.label} must be one of: ${f.options.join(', ')}` });
+        // A field whose options come from a LIVE source (options_source) has an empty static
+        // list by design, so checking against it could never pass — it produced
+        // "Cloud PC provisioning policy must be one of:" with nothing after the colon, while the
+        // dropdown showed a valid selection, and made the entire Cloud PC path of onboarding
+        // unreachable. Whether the value names something real is settled downstream: the
+        // provisioning planner raises policy_missing against the tenant's actual policies.
+        if (!f.options_source && !f.options.includes(String(v))) {
+          errors.push({ field: f.key, message: `${f.label} must be one of: ${f.options.join(', ')}` });
+        }
         break;
       case 'checkbox':
         if (typeof v !== 'boolean') errors.push({ field: f.key, message: `${f.label} must be true or false` });

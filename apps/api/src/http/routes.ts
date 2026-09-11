@@ -63,6 +63,9 @@ export async function registerRoutes(app: FastifyInstance) {
         status: err.status,
         detail: err.detail,
         code: err.code,
+        // Per-field specifics, when the error has them. Omitted entirely otherwise, so the
+        // problem+json shape is unchanged for every error that carries none.
+        ...(err.errors?.length ? { errors: err.errors } : {}),
         correlation_id: req.id,
       });
       return;

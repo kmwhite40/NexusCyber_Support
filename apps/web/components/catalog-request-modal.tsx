@@ -34,6 +34,9 @@ export function RequestModal({
   const [description, setDescription] = React.useState('');
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  // Which fields the server rejected, so they can be marked where they actually are. A 34-field
+  // dialog that only prints "X is required; Y is required" at the bottom makes the operator hunt.
+  const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({});
   // Resolved options for fields with an `options_source` (e.g. cloud_pc_policy), keyed by
   // field key. Populated by the effect below; falls back to the field's static `options`
   // until (or unless) that fetch succeeds.
@@ -72,7 +75,7 @@ export function RequestModal({
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
-    setError(null);
+    setError(null); setFieldErrors({});
     try {
       // Drop answers for fields the user can't currently see — a value entered before a
       // condition changed (e.g. answering `end_date` then switching `access_type` away
@@ -92,7 +95,19 @@ export function RequestModal({
       if (file) await attachmentsApi.upload(t.id, file);
       onCreated(t);
     } catch (err) {
+      const fe: Record<string, string> = {};
+      if (err instanceof ApiError) for (const e of err.errors ?? []) fe[e.field] = e.message;
+      setFieldErrors(fe);
       setError(err instanceof ApiError ? err.detail : 'Could not submit request');
+      // Take them to the first offending field rather than describing it. In a scrolling dialog
+      // the field named in the message is frequently not on screen.
+      const firstKey = Object.keys(fe)[0];
+      if (firstKey) {
+        window.setTimeout(() => {
+          document.querySelector(`[data-field="${firstKey}"]`)
+            ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 0);
+      }
     } finally {
       setBusy(false);
     }
@@ -153,6 +168,7 @@ export function RequestModal({
                 {group.fields.map((f: FormFieldDef) => (
                   <DynamicFormField
                     key={f.key}
+                    error={fieldErrors[f.key]}
                     field={f}
                     value={answers[f.key]}
                     answers={answers}

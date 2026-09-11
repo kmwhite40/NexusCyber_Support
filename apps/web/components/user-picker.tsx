@@ -21,6 +21,7 @@ export function UserPicker({
 }) {
   const [q, setQ] = React.useState('');
   const [hits, setHits] = React.useState<UserHit[]>([]);
+  const [searched, setSearched] = React.useState(false);
   const [open, setOpen] = React.useState(false);
   const [chosen, setChosen] = React.useState<Record<string, UserHit>>({});
   const boxRef = React.useRef<HTMLDivElement>(null);
@@ -89,7 +90,9 @@ export function UserPicker({
   React.useEffect(() => {
     if (!open) return;
     const t = setTimeout(() => {
-      users.search(q, organizationId).then((r) => setHits(r.data)).catch(() => setHits([]));
+      users.search(q, organizationId)
+        .then((r) => { setHits(r.data); setSearched(true); })
+        .catch(() => { setHits([]); setSearched(true); });
     }, 200);
     return () => clearTimeout(t);
   }, [q, open, organizationId]);
@@ -103,6 +106,7 @@ export function UserPicker({
       setOpen(false);
     }
     setQ('');
+    setSearched(false);
   }
   function remove(id: string) {
     if (multiple) onChange(selectedIds.filter((x) => x !== id));
@@ -128,6 +132,14 @@ export function UserPicker({
         onFocus={() => setOpen(true)}
         onChange={(e) => { setQ(e.target.value); setOpen(true); }}
       />
+      {/* An empty result used to render NOTHING, so "no matches" and "not searched yet" looked
+          identical. An operator typed a name, saw no list, and concluded the picker was broken —
+          while the typed text sat in the box looking like a value and the field stayed empty. */}
+      {open && searched && hits.length === 0 && q.trim() !== '' && (
+        <p className="mt-1 text-xs text-muted">
+          No one matches “{q.trim()}”. Pick a name from the list — typing alone does not select anyone.
+        </p>
+      )}
       {open && hits.length > 0 && rect && createPortal((
         <ul
           ref={listRef}
