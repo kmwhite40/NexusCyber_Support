@@ -22,6 +22,12 @@ const config: Config = {
         sticky: '1100',
         backdrop: '1200',
         modal: '1300',
+        // A dropdown portalled to the body to escape a dialog's `overflow-auto` clip lands in the
+        // body's stacking context, alongside the dialog's own backdrop — so it has to clear the
+        // MODAL layer, not the dropdown one. At `z-50` the people picker's results were painted
+        // behind the frosted backdrop: present in the DOM, invisible on screen, and every click
+        // meant for a name landed on the backdrop instead.
+        popover: '1350',
         toast: '1400',
         tooltip: '1500',
       },

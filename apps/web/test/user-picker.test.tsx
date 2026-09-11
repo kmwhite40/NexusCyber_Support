@@ -149,3 +149,47 @@ describe('typed text is not a selection', () => {
     expect(screen.queryByText(/not selected/i)).toBeNull();
   });
 });
+
+// The picker's results list is portalled to document.body so it escapes the dialog body's
+// `overflow-auto` clip. That put it in the same stacking context as the dialog's own backdrop —
+// which is `z-modal` (1300) while the list carried a bare `z-50`. The backdrop is opaque-ish and
+// blurred, so it painted OVER the results: the list was there in the DOM, and every test that
+// queried the DOM passed, but on screen it was behind a frosted sheet and every click meant for a
+// name landed on the backdrop instead. The operator typed the whole name, saw nothing usable,
+// and the field stayed empty.
+//
+// jsdom does not paint, so no rendering test can catch this. What CAN be pinned is the invariant
+// the portal depends on: the list's layer must sit above the backdrop's, read from the one z-index
+// scale both of them name.
+describe('portalled results list stacks above the dialog it escapes', () => {
+  it('uses a higher layer than the dialog backdrop', async () => {
+    const { Dialog } = await import('@/components/ui/dialog');
+    const cfg = (await import('../tailwind.config')).default as any;
+    const scale: Record<string, string> = cfg.theme.extend.zIndex;
+    const layerOf = (el: Element) => {
+      const cls = [...el.classList].find((c) => /^z-/.test(c));
+      if (!cls) throw new Error(`no z- class on ${el.tagName}: ${el.className}`);
+      const key = cls.slice(2);
+      return Number(scale[key] ?? key);
+    };
+
+    const { users } = await import('@/lib/api');
+    // mockReset, not mockResolvedValue: an unconsumed `...Once` queued by an earlier test would
+    // otherwise answer this search with an empty list and the assertion would never be reached.
+    (users.search as any).mockReset();
+    (users.search as any).mockResolvedValue({
+      data: [{ id: 'u1', display_name: 'Bragg, Coady', email: 'coady.bragg@sbsfederal.com' }],
+    });
+    render(
+      <Dialog title="New request" onClose={vi.fn()}>
+        <UserPicker value={null} onChange={vi.fn()} organizationId="org-1" />
+      </Dialog>,
+    );
+    await userEvent.type(screen.getByPlaceholderText(/enter name or email/i), 'coady');
+    await waitFor(() => expect(screen.getByText('Bragg, Coady')).toBeTruthy());
+
+    const list = screen.getByText('Bragg, Coady').closest('ul')!;
+    const backdrop = document.querySelector('[data-dialog-backdrop]')!;
+    expect(layerOf(list)).toBeGreaterThan(layerOf(backdrop));
+  });
+});

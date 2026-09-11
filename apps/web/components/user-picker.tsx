@@ -153,7 +153,7 @@ export function UserPicker({
             position: 'fixed', left: rect.left, width: rect.width,
             ...(rect.above ? { bottom: window.innerHeight - rect.top + 4 } : { top: rect.top + 4 }),
           }}
-          className="z-50 max-h-56 overflow-auto rounded-md border border-border bg-surface shadow-lg"
+          className="z-popover max-h-56 overflow-auto rounded-md border border-border bg-surface shadow-lg"
         >
           {hits.map((u) => (
             <li key={u.id}>
