@@ -10,6 +10,7 @@ import {
   userLicenseSkuIds,
   addToGroup,
   issueTap,
+  graphErrorCode,
   getCloudPcStatus,
   listGroupsByDisplayName,
   isAlreadyMemberError,
@@ -442,5 +443,63 @@ describe('readTenantState reads the TAP policy', () => {
     const state = await readTenantState(g, beta);
     expect(state.tapEnabled).toBeUndefined();
     expect(state.skus).toHaveLength(1);
+  });
+});
+
+// A run failed in production with nothing to go on but "issuing the Temporary Access Pass failed
+// (Graph 404)". The adapter deliberately keeps the Graph response away from the error path,
+// because a TAP request that fails AFTER Graph has minted a pass would otherwise carry the pass
+// out in the message. But that reasoning covers the RESPONSE BODY of a success; it swallowed the
+// error payload too, and with it the only thing that says which 404 this is — a user the
+// authentication-methods service cannot resolve yet, or a segment this cloud does not serve on
+// this API version. Graph's `error.code` is a diagnostic label from a fixed vocabulary; it is
+// never request content and never a credential.
+describe('graphErrorCode', () => {
+  it('names the Graph error code so a failure can be diagnosed', () => {
+    const err = new GraphError(404, '{"error":{"code":"ResourceNotFound","message":"Resource not found for the segment."}}');
+    expect(graphErrorCode(err)).toBe('ResourceNotFound');
+  });
+
+  it('is undefined rather than guessing when the body is not a Graph error', () => {
+    expect(graphErrorCode(new GraphError(502, '<html>bad gateway</html>'))).toBeUndefined();
+    expect(graphErrorCode(new GraphError(404, ''))).toBeUndefined();
+    expect(graphErrorCode(new Error('network'))).toBeUndefined();
+  });
+
+  // The code is the ONLY field taken. Graph's `message` can echo request content, and this value
+  // goes into an operator-visible outcome that lands on a ticket.
+  it('takes only the code, never the message', () => {
+    const err = new GraphError(400, '{"error":{"code":"badRequest","message":"secret-ish detail"}}');
+    expect(graphErrorCode(err)).toBe('badRequest');
+    expect(JSON.stringify(graphErrorCode(err))).not.toContain('secret-ish');
+  });
+});
+
+// The up-front TAP-policy read exists so a tenant with the method turned off is pre-skipped
+// rather than failing a run after the account, licences and groups are already written. Reading
+// it needs Policy.Read.All — a permission this tenant's app registration was never granted — so
+// the read has been returning 403 and `.catch(() => null)` turned that into "unknown", which is
+// indistinguishable from a healthy read of a tenant whose state simply could not be determined.
+// A guard that has never once run reports the same thing as a guard that ran and found nothing.
+describe('readTenantState when the TAP policy cannot be read', () => {
+  it('says so in the log instead of failing silently', async () => {
+    const { logger } = await import('../src/logger.js');
+    const warn = vi.spyOn(logger, 'warn').mockImplementation((() => {}) as any);
+    const g = {
+      get: vi.fn(async (p: string) => {
+        if (p.startsWith('/policies/')) throw new GraphError(403, '{"error":{"code":"Authorization_RequestDenied"}}');
+        return { value: [] };
+      }),
+    } as any;
+    const beta = { get: vi.fn(async () => ({ value: [] })) } as any;
+
+    const state = await readTenantState(g, beta);
+
+    // Still non-fatal, and still "unknown" — that part was right.
+    expect(state.tapEnabled).toBeUndefined();
+    expect(warn).toHaveBeenCalled();
+    const arg = JSON.stringify(warn.mock.calls[0]);
+    expect(arg).toMatch(/Authorization_RequestDenied|403/);
+    warn.mockRestore();
   });
 });

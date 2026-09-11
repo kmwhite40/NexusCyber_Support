@@ -46,6 +46,7 @@ import {
   listGroupsByDisplayName,
   normalizePolicies,
   isTapPolicyDisabledError,
+  graphErrorCode,
   type DirectoryGroup,
 } from '../../integrations/m365/provisioning-graph.js';
 import { planRun, deriveUpn, planFingerprint, normalizeForMatch, type Plan, type PlanInput } from './planner.js';
@@ -572,8 +573,16 @@ function buildOps(g: ProvisioningGraph, organizationId: string): ProvisioningOps
           logger.warn({ userId }, 'tenant has no Temporary Access Pass policy; skipping issue_tap');
           throw new TapPolicyUnavailableError();
         }
+        // The status alone sent an operator hunting: a 404 here is either a just-created user
+        // the authentication-methods service cannot resolve yet or a segment this cloud does not
+        // serve on this API version, and those want opposite responses. Graph's error CODE says
+        // which. It is a label from a fixed vocabulary — not request content, and not a
+        // credential — so it is the one field taken; the rest of the payload still goes nowhere.
         const status = (err as { status?: number })?.status;
-        throw new Error(`issuing the Temporary Access Pass failed${status ? ` (Graph ${status})` : ''}`);
+        const code = graphErrorCode(err);
+        logger.error({ userId, status, code }, 'Temporary Access Pass request rejected by Graph');
+        const detail = [status && `Graph ${status}`, code].filter(Boolean).join(' ');
+        throw new Error(`issuing the Temporary Access Pass failed${detail ? ` (${detail})` : ''}`);
       }
       const pass = typeof res?.temporaryAccessPass === 'string' ? res.temporaryAccessPass : '';
       if (!pass) throw new Error('Graph did not return a Temporary Access Pass');

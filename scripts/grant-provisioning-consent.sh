@@ -32,6 +32,11 @@ PERMS=(
   "Organization.Read.All"
   "Group.ReadWrite.All"
   "UserAuthenticationMethod.ReadWrite.All"
+  # Reads /policies/authenticationMethodsPolicy, the up-front check that pre-skips issue_tap when
+  # a tenant has the Temporary Access Pass method turned off. Without it that read 403s, the
+  # result is "unknown", and the run attempts the pass blind — failing AFTER the account, the
+  # licences and the group memberships are already written, which is the worst place to stop.
+  "Policy.Read.All"
   "CloudPC.ReadWrite.All"
 )
 

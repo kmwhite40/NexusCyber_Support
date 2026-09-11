@@ -438,6 +438,65 @@ probe_tap_policy() {
 }
 
 # ---------------------------------------------------------------------------
+# PROBE 5 — added after a production run failed with "issuing the Temporary
+# Access Pass failed (Graph 404)" and the message carried nothing else.
+#
+# A 404 on POST /users/{id}/authentication/temporaryAccessPassMethods has two
+# very different causes that want opposite responses:
+#
+#   (a) The authentication-methods service cannot resolve the user YET. It is a
+#       different backing store from the directory, and a user created seconds
+#       earlier can 404 there while /users/{id} and assignLicense both succeed
+#       — which is exactly the shape of the failed run. The answer is a retry
+#       with backoff around issue_tap.
+#   (b) GCC High does not serve this segment on this API version. The answer is
+#       a pinned API version, the way M365_PROV_CLOUDPC_API_VERSION already
+#       handles the identical problem for /deviceManagement/virtualEndpoint/*.
+#
+# The GET distinguishes them, and it is read-only: run it against a user who
+# has EXISTED for a while. If the segment comes back 200 (even with an empty
+# collection) the endpoint is served here and cause (a) is the live one. A 404
+# naming the SEGMENT rather than the user points at (b).
+#
+# Usage:  PROBE_UPN=someone@sbsfederal.com scripts/probe-provisioning-tenant.sh
+# ---------------------------------------------------------------------------
+probe_tap_endpoint() {
+  section "PROBE 5 — Per-user TAP endpoint (GET /users/{upn}/authentication/temporaryAccessPassMethods)"
+  if [ -z "${PROBE_UPN:-}" ]; then
+    info "Skipped — set PROBE_UPN to an EXISTING user's UPN to run this probe."
+    info "Use an established account, not one just created: a fresh user is the"
+    info "very condition being tested for, and would make the result ambiguous."
+    return
+  fi
+  info "Probing as: $PROBE_UPN"
+  graph_get "${GRAPH}/v1.0/users/${PROBE_UPN}/authentication/temporaryAccessPassMethods"
+  if [ "$GET_STATUS" = "200" ]; then
+    ok "The segment IS served on v1.0 in this cloud."
+    info "So a 404 from the provisioning run was about the USER, not the endpoint:"
+    info "the authentication-methods service had not caught up with the just-created"
+    info "account. Fix is a bounded retry with backoff around issue_tap."
+    return
+  fi
+  warn "HTTP $GET_STATUS: $(graph_error_summary "$GET_BODY_FILE")"
+  if [ "$GET_STATUS" = "404" ]; then
+    warn "A 404 for a user who definitely exists points at the ENDPOINT, not the user."
+    warn "Next step: retry the same path with /beta in place of /v1.0. If beta answers,"
+    warn "this wants the same treatment as M365_PROV_CLOUDPC_API_VERSION — a pinned"
+    warn "API version for the TAP call rather than a source-code literal."
+    info "Retrying on beta now:"
+    graph_get "${GRAPH}/beta/users/${PROBE_UPN}/authentication/temporaryAccessPassMethods"
+    if [ "$GET_STATUS" = "200" ]; then
+      ok "beta ANSWERS where v1.0 404s — that is the cause, and the fix is a pinned version."
+    else
+      warn "beta also returns HTTP $GET_STATUS: $(graph_error_summary "$GET_BODY_FILE")"
+    fi
+  elif [ "$GET_STATUS" = "403" ]; then
+    warn "403 is a permissions answer, not a 404 — UserAuthenticationMethod.ReadWrite.All"
+    warn "may not be consented on the credential this probe is using."
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -450,6 +509,7 @@ get_access_token
 probe_subscribed_skus
 probe_cloudpc_policies
 probe_tap_policy
+probe_tap_endpoint
 
 section "RECOMMENDED M365_PROV_* App Service settings, based on this run"
 

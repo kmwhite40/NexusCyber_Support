@@ -70,7 +70,19 @@ export async function readTenantState(g: GraphClient, policyBeta: GraphClient): 
     // which is an ADDITION to the design's standing permission list, so a tenant that has not
     // granted it should still be able to plan a run. An unreadable policy is UNKNOWN, and unknown
     // falls through to the executor's existing error path rather than pre-skipping.
-    g.get('/policies/authenticationMethodsPolicy').catch(() => null),
+    // ...but "could not read it" must not look like "read it and learned nothing". Without this
+    // line a tenant whose app registration lacks Policy.Read.All reports exactly what a healthy
+    // tenant with an indeterminate policy reports, and the guard that exists to pre-skip issue_tap
+    // silently never runs — which is how a run reached Graph blind and failed after the account
+    // was already written.
+    g.get('/policies/authenticationMethodsPolicy').catch((err) => {
+      logger.warn(
+        { status: (err as { status?: number })?.status, code: graphErrorCode(err) },
+        'Temporary Access Pass policy is unreadable (Policy.Read.All not granted?); '
+          + 'issue_tap cannot be pre-skipped and will be attempted blind',
+      );
+      return null;
+    }),
   ]);
   return {
     skus: normalizeSkus(skus),
@@ -221,6 +233,28 @@ export function isTapPolicyDisabledError(err: unknown): boolean {
   return namesTap && notEnabled;
 }
 
+
+/**
+ * Graph's `error.code` for a failed request, or undefined when there isn't one.
+ *
+ * The TAP adapter keeps the Graph response away from its error path on purpose: a request that
+ * fails AFTER Graph has minted a pass would otherwise carry that pass out in the message. That
+ * reasoning is sound for the response, and it swallowed the error payload along with it — which
+ * is how a production run came back saying only "Graph 404", with no way to tell a user the
+ * authentication-methods service cannot resolve yet from a segment this cloud does not serve.
+ *
+ * Only `code` is taken, never `message`: the code is a label from Graph's fixed vocabulary, while
+ * the message routinely echoes request content, and this value ends up on a ticket.
+ */
+export function graphErrorCode(err: unknown): string | undefined {
+  if (!(err instanceof GraphError)) return undefined;
+  try {
+    const code = JSON.parse(err.body ?? '')?.error?.code;
+    return typeof code === 'string' && code.length > 0 ? code : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export interface MirrorGroup { id: string; displayName: string }
 

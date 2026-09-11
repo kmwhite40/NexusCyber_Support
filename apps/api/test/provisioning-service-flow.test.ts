@@ -769,3 +769,37 @@ describe('a run against a tenant with no Temporary Access Pass policy', () => {
     expect(r.outcomes.find((o) => o.key === 'issue_tap')?.status).toBe('failed');
   });
 });
+
+// ---------------------------------------------------------------------------
+// A production run failed with "issuing the Temporary Access Pass failed (Graph 404)" and that
+// was the whole of the evidence. Two very different tenant states produce a 404 here — a
+// freshly-created user the authentication-methods service cannot resolve yet, and a segment this
+// cloud does not serve on this API version — and the message could not tell them apart, because
+// the adapter discarded the Graph error payload along with the response it was guarding.
+// ---------------------------------------------------------------------------
+describe('a Temporary Access Pass request Graph rejects', () => {
+  beforeEach(() => {
+    g.graph.post.mockImplementation(async (path: string) => {
+      if (path.includes('temporaryAccessPassMethods')) {
+        throw new GraphError(404, '{"error":{"code":"ResourceNotFound","message":"Resource not found for the segment \'authentication\'."}}');
+      }
+      if (path === '/users') return { id: 'u-new' };
+      return {};
+    });
+  });
+
+  it('names the Graph error code, not just the status', async () => {
+    const r = await provisionApproved();
+    expect(r.status).toBe('failed');
+    expect(r.outcomes.find((o) => o.key === 'issue_tap')?.error)
+      .toBe('issuing the Temporary Access Pass failed (Graph 404 ResourceNotFound)');
+  });
+
+  // The code is diagnostic; Graph's message is not, and neither is anything else in that payload.
+  it('still lets nothing else out of the Graph payload', async () => {
+    const r = await provisionApproved();
+    const blob = JSON.stringify(r);
+    expect(blob).not.toContain('Resource not found for the segment');
+    expect(blob).not.toContain(TAP);
+  });
+});
