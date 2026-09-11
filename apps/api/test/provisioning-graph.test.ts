@@ -664,3 +664,14 @@ describe('setPassword', () => {
     });
   });
 });
+
+// Asking Graph for passwordProfile in a $select made it refuse the ENTIRE request with 403 in
+// this tenant — it is a restricted property, and naming it fails the read rather than omitting
+// the field. That took out create_user's adoption lookup and with it every provisioning run.
+describe('findUserByUpn does not ask for restricted properties', () => {
+  it('never names passwordProfile in its $select', async () => {
+    const get = vi.fn(async () => ({ value: [] }));
+    await findUserByUpn({ get } as any, 'ada@sbsfederal.com');
+    expect(get.mock.calls[0][0]).not.toContain('passwordProfile');
+  });
+});

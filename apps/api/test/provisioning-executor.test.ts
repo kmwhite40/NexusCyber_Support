@@ -644,13 +644,16 @@ describe('adopting an account that was left demanding a password change', () => 
     expect(patch.passwordProfile).toBeUndefined();
   });
 
-  // No pointless write on an account that is already fine.
-  it('does not patch an account that is not demanding one', async () => {
-    let called = 0;
+  // passwordProfile cannot be read back from Graph — naming it in a $select makes Graph refuse
+  // the whole request with 403 — so this write happens on every adoption that issues a
+  // credential, rather than only on the ones that need it. A redundant write costs nothing; a
+  // stale demand left in place breaks the credential.
+  it('writes it even though the current state cannot be read', async () => {
+    let patch: any;
     await executePlan(adopt({ forceChangePassword: false, usageLocation: '', givenName: '', surname: '' }), ops({
-      findUser: existing({ passwordProfile: { forceChangePasswordNextSignIn: false } }) as any,
-      patchUser: async () => { called += 1; return {}; },
+      findUser: existing() as any,
+      patchUser: async (_id: string, p: any) => { patch = p; return {}; },
     }));
-    expect(called).toBe(0);
+    expect(patch).toEqual({ passwordProfile: { forceChangePasswordNextSignIn: false } });
   });
 });

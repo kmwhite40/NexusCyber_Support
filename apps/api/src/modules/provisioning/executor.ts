@@ -129,9 +129,11 @@ export async function executePlan(
             // first-sign-in credential, the account must not demand a change that credential
             // cannot answer. A run that issues no credential leaves the account as it found it.
             //
-            // If Graph did not return passwordProfile the state is UNKNOWN, and unknown has to
-            // mean "write it": a stale demand left in place breaks the credential being issued,
-            // while a redundant write costs nothing.
+            // The state is always UNKNOWN in practice: passwordProfile cannot be read back —
+            // naming it in a $select makes Graph refuse the whole request with 403 — so this
+            // writes on every adoption that issues a credential. That is the right trade: a stale
+            // demand left in place breaks the credential being issued, a redundant write costs
+            // nothing, and the read that would avoid it is not available at any price.
             const wantsChange = step.detail.forceChangePassword === true;
             const curProfile = cur.passwordProfile as { forceChangePasswordNextSignIn?: boolean } | undefined;
             if (!wantsChange && curProfile?.forceChangePasswordNextSignIn !== false) {

@@ -110,12 +110,13 @@ function odataStringLiteral(value: string): string {
  */
 export async function findUserByUpn(g: GraphClient, upn: string) {
   const filter = `userPrincipalName eq ${odataStringLiteral(upn)}`;
-  // passwordProfile is selected so adoption can tell whether the account is already in the
-  // state it wants and skip a pointless write. Graph omits unselected fields silently, so
-  // without naming it here the answer would always be "unknown" — and unknown has to mean
-  // "write it", since leaving a stale force-change demand in place breaks the credential
-  // this run is about to issue.
-  const select = 'id,userPrincipalName,displayName,accountEnabled,givenName,surname,usageLocation,passwordProfile';
+  // passwordProfile is deliberately NOT selected. Asking for it made Graph refuse the whole
+  // request with 403 in this tenant — it is a restricted property, and a $select naming it fails
+  // the read rather than omitting the field. That took out create_user's adoption lookup, and
+  // with it every provisioning run. The force-change state is therefore unknowable here, which
+  // the adoption path already handles: unknown means "write it", since a stale demand breaks the
+  // credential the run is about to issue while a redundant write costs nothing.
+  const select = 'id,userPrincipalName,displayName,accountEnabled,givenName,surname,usageLocation';
   const res = await g.get(`/users?$filter=${encodeURIComponent(filter)}&$select=${select}`);
   return res?.value?.[0] ?? null;
 }
