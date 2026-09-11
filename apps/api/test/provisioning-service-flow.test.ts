@@ -115,7 +115,13 @@ function graphDouble(opts: { groups?: any[] } = {}) {
       if (path.startsWith('/subscribedSkus')) {
         return { value: [{ skuId: 'sku-e3', skuPartNumber: 'SPE_E3_USGOV_GCCHIGH', prepaidUnits: { enabled: 10 }, consumedUnits: 1 }] };
       }
-      if (path.startsWith('/users?$filter=')) return { value: [] }; // no existing account
+      if (path.startsWith('/users?$filter=')) {
+        // The new hire does not exist yet; the SUPERVISOR does — that is what makes the manager
+        // reference resolvable, and an unresolved one is a blocker (see `manager_unresolved`).
+        return path.includes(encodeURIComponent(WORK_EMAIL)) || path.includes(WORK_EMAIL)
+          ? { value: [{ id: 'sup-oid', userPrincipalName: WORK_EMAIL }] }
+          : { value: [] };
+      }
       if (path.startsWith('/groups?$filter=')) {
         return { value: opts.groups ?? [{ id: 'g1', displayName: 'All Staff' }] };
       }
@@ -128,6 +134,7 @@ function graphDouble(opts: { groups?: any[] } = {}) {
       return {};
     }),
     patch: vi.fn(),
+    put: vi.fn(async () => null),
   };
   const cloudPc = { get: vi.fn(async () => ({ value: [] })), post: vi.fn(), patch: vi.fn() };
   return { graph, cloudPc, graphEndpoint: 'https://graph.microsoft.us' };
@@ -150,6 +157,7 @@ function defaultRows(over: {
   catalogItem?: any[];
   approvals?: any[];
   tenantOrgRows?: any[];
+  supervisorEmailRows?: any[];
 } = {}) {
   return (text: string) => {
     if (/FROM tickets WHERE id/.test(text)) {
@@ -171,6 +179,10 @@ function defaultRows(over: {
     }
     if (/ticket_sensitive_fields/.test(text)) return [{ key: 'personal_email', value: PERSONAL_EMAIL }];
     if (/INSERT INTO provisioning_runs/.test(text)) return over.runInsert ?? [{ id: RUN }];
+    // The supervisor answer is a Nexus user reference; the service turns it into an email before
+    // it can be looked up in the directory. Distinct from the aliased query below, which is the
+    // org-scoped check that decides whether the TAP may be delivered to them.
+    if (/FROM users WHERE id/.test(text)) return over.supervisorEmailRows ?? [{ email: WORK_EMAIL }];
     if (/FROM users u/.test(text)) {
       return over.supervisorRows
         ?? [{ email: WORK_EMAIL, status: over.supervisorStatus ?? 'active' }];
@@ -447,17 +459,22 @@ describe('Temporary Access Pass containment across the write paths', () => {
 });
 
 describe('a successful run', () => {
-  it('creates the account, licenses it, adds the resolved group, and closes the run', async () => {
+  it('creates the account, sets the manager, licenses it, adds the resolved group, and closes the run', async () => {
     const r = await provisionApproved();
     expect(r.status).toBe('succeeded');
     expect(r.runId).toBe(RUN);
-    expect(r.outcomes.map((o) => o.key)).toEqual(['create_user', 'assign_licenses', 'add_groups', 'issue_tap']);
+    expect(r.outcomes.map((o) => o.key)).toEqual(['create_user', 'set_manager', 'assign_licenses', 'add_groups', 'issue_tap']);
     expect(g.graph.post.mock.calls.map((c) => c[0])).toEqual([
       '/users',
       '/users/u-new/assignLicense',
       '/groups/g1/members/$ref',
       '/users/u-new/authentication/temporaryAccessPassMethods',
     ]);
+    // The manager is a reference, so it is a PUT rather than one of the POSTs above.
+    expect(g.graph.put.mock.calls).toEqual([[
+      '/users/u-new/manager/$ref',
+      { '@odata.id': 'https://graph.microsoft.us/v1.0/directoryObjects/sup-oid' },
+    ]]);
     expect(find(/UPDATE provisioning_runs/)[0].params).toEqual([RUN, 'succeeded', null]);
   });
 

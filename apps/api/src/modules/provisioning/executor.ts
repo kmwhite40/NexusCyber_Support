@@ -60,6 +60,9 @@ export interface ProvisioningOps {
   currentLicenses: (userId: string) => Promise<string[]>;
   assignLicenses: (userId: string, skuIds: string[]) => Promise<unknown>;
   addToGroup: (groupId: string, userId: string) => Promise<unknown>;
+  /** PUT /users/{id}/manager/$ref. Optional so an ops bag built before this step existed
+   *  still type-checks; a plan carrying set_manager without it fails loudly below. */
+  setManager?: (userId: string, managerObjectId: string) => Promise<unknown>;
   issueTap: (userId: string) => Promise<{ temporaryAccessPass: string }>;
   patchUser?: (userId: string, patch: Record<string, unknown>) => Promise<unknown>;
   deliverTap: (supervisorId: string, upn: string, pass: string) => Promise<void>;
@@ -89,6 +92,8 @@ export async function executePlan(
           // call createUser a second time and mint a duplicate identity.
           const existing = await ops.findUser(plan.upn);
           const usageLocation = String(step.detail.usageLocation ?? '');
+          // Mapped by planner.ts's userAttributes — Graph property names, blanks already dropped.
+          const attributes = (step.detail.attributes as Record<string, string> | undefined) ?? {};
           if (existing) {
             userId = existing.id;
             // Back-fill on adoption. Graph refuses assignLicense for a user with no
@@ -97,19 +102,26 @@ export async function executePlan(
             // first attempt did, permanently.
             // Fill gaps ONLY. findUser matches any account with this UPN, not just one this
             // engine created, so adoption must never overwrite a real person's directory record.
-            const cur = existing as { usageLocation?: string | null; givenName?: string | null; surname?: string | null };
+            const cur = existing as Record<string, unknown>;
             const patch: Record<string, unknown> = {};
             if (usageLocation && !cur.usageLocation) patch.usageLocation = usageLocation;
             const given = String(step.detail.givenName ?? '');
             const sur = String(step.detail.surname ?? '');
             if (given && !cur.givenName) patch.givenName = given;
             if (sur && !cur.surname) patch.surname = sur;
+            // Same gaps-only rule for the rest of the profile, and for the same reason: a form
+            // answer must never overwrite what a real person's record already says.
+            for (const [k, v] of Object.entries(attributes)) if (!cur[k]) patch[k] = v;
             if (Object.keys(patch).length && ops.patchUser) await ops.patchUser(userId, patch);
           } else {
             const password = generateInitialPassword();
             let created: { id: string };
             try {
               created = await ops.createUser({
+                // Everything else the intake collected — job title, department, office location,
+                // employee id, phone, hire date. Spread FIRST so nothing here can displace an
+                // identity field below.
+                ...attributes,
                 accountEnabled: true,
                 displayName: plan.displayName,
                 userPrincipalName: plan.upn,
@@ -137,6 +149,21 @@ export async function executePlan(
             userId = created.id;
           }
           outcomes.push({ key: step.key, status: 'succeeded', graphObjectId: userId });
+          break;
+        }
+        case 'set_manager': {
+          requireUserId(userId, step.key);
+          const managerObjectId = step.detail.managerObjectId;
+          // The planner emits this step ONLY once the caller has resolved the supervisor to a
+          // directory object, so an empty id here means that resolution did not run. Reporting
+          // "succeeded" while the account quietly has no manager is exactly the failure this
+          // guards against — the same reasoning as add_groups' groupIds check above.
+          if (typeof managerObjectId !== 'string' || managerObjectId.length === 0) {
+            throw new Error('set_manager: detail.managerObjectId is missing or not a non-empty string');
+          }
+          if (!ops.setManager) throw new Error('set_manager: no setManager operation was provided');
+          await ops.setManager(userId, managerObjectId);
+          outcomes.push({ key: step.key, status: 'succeeded' });
           break;
         }
         case 'assign_licenses': {

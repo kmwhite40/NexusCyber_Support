@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deriveUpn, planRun, planFingerprint, normalizeForMatch } from '../src/modules/provisioning/planner.js';
+import { deriveUpn, planRun, planFingerprint, normalizeForMatch, userAttributes } from '../src/modules/provisioning/planner.js';
 
 const tenant = {
   skus: [
@@ -21,6 +21,9 @@ const base = {
   baselineSkus: ['SPE_E3_USGOV_GCCHIGH', 'MDATP_XPLAT'],
   cloudPcSku: 'CPC_FIXTURE_SKU',
   existingUser: null, existingRoleCount: 0,
+  // The fixture names a supervisor, so a CLEAN request is one where the caller resolved them.
+  // Leaving this out is the unresolved case, and that is a blocker — see the manager tests below.
+  manager: { upn: 'sup.one@sbsfederal.com', objectId: 'sup-oid' },
 };
 
 describe('deriveUpn', () => {
@@ -499,5 +502,119 @@ describe('mirrored access', () => {
     const p = withMirror({ upn: 'x@y.gov', assignable: ['All Staff', 'DL-FED'], roleAssignable: [], dynamic: [] });
     const groups = (p.steps.find((s) => s.key === 'add_groups')!.detail.groups as string[]);
     expect(groups.filter((x) => x === 'All Staff')).toHaveLength(1);
+  });
+});
+
+// Reported from the tenant after a real run: "most of the fields were not automatically populated
+// under a user profile like work location supervisor and groups". The account was being created
+// with seven properties — accountEnabled, displayName, UPN, mailNickname, usageLocation,
+// givenName, surname — and every other answer the SBS intake collects was validated, stored on
+// the ticket, and then dropped. The directory record showed a name and nothing else.
+describe('userAttributes', () => {
+  const full = {
+    job_title: 'Systems Engineer',
+    department: 'Engineering',
+    duty_location: 'Chantilly, VA',
+    employee_id: 'E-4417',
+    cell_phone: '703-555-0142',
+    start_date: '2026-10-05',
+    employment_type: 'full-time',
+  };
+
+  it('maps the intake answers onto the Graph user properties', () => {
+    expect(userAttributes(full)).toEqual({
+      jobTitle: 'Systems Engineer',
+      department: 'Engineering',
+      officeLocation: 'Chantilly, VA',
+      employeeId: 'E-4417',
+      mobilePhone: '703-555-0142',
+      employeeHireDate: '2026-10-05T00:00:00Z',
+      employeeType: 'Employee',
+    });
+  });
+
+  // An answer left blank must be ABSENT, not an empty string. The same object is used to fill
+  // gaps on an adopted account, where writing '' would erase a real person's existing value.
+  it('omits blank answers entirely rather than sending empty strings', () => {
+    const out = userAttributes({ job_title: 'Analyst', department: '   ', duty_location: '' });
+    expect(out).toEqual({ jobTitle: 'Analyst', employeeType: 'Employee' });
+    expect('department' in out).toBe(false);
+    expect('officeLocation' in out).toBe(false);
+  });
+
+  // The .ctr UPN suffix already separates contractors in the GAL; employeeType makes the same
+  // distinction available to filters, dynamic groups and audit exports that never see the UPN.
+  it('marks contractors as such', () => {
+    expect(userAttributes({ hire_type: 'Contractor' }).employeeType).toBe('Contractor');
+    expect(userAttributes({ employment_type: 'subcontractor' }).employeeType).toBe('Contractor');
+  });
+
+  // Graph wants a DateTimeOffset; the form field is a plain date. A start date that is not a
+  // plain date is dropped rather than guessed at — a wrong hire date is worse than none.
+  it('sends the hire date as an instant, and drops anything that is not a date', () => {
+    expect(userAttributes({ start_date: '2026-01-02' }).employeeHireDate).toBe('2026-01-02T00:00:00Z');
+    expect(userAttributes({ start_date: 'next monday' }).employeeHireDate).toBeUndefined();
+    expect(userAttributes({ start_date: '' }).employeeHireDate).toBeUndefined();
+  });
+
+  // The home address is captured for HR and marked sensitive. The directory is readable by the
+  // whole tenant through the GAL, so it stays out of it — as does "work location", which answers
+  // Work from Home / On Site. That is a working arrangement, not a place, and officeLocation is
+  // a place. Duty location is the field that holds one.
+  it('keeps the home address and the work-arrangement answer out of the directory', () => {
+    const out = userAttributes({
+      ...full,
+      home_address_street: '12 Elm St',
+      home_address_csz: 'Reston, VA 20190',
+      personal_email: 'someone@example.com',
+      work_location: 'Work from Home - Permanent',
+    });
+    const blob = JSON.stringify(out);
+    expect(blob).not.toContain('Elm St');
+    expect(blob).not.toContain('Reston');
+    expect(blob).not.toContain('example.com');
+    expect(blob).not.toContain('Work from Home');
+    expect(out.officeLocation).toBe('Chantilly, VA');
+  });
+});
+
+describe('planRun carries the profile onto create_user', () => {
+  it('puts the mapped attributes on the step so the executor can send them', () => {
+    const p = planRun({ ...base, answers: { ...answers, job_title: 'Analyst', duty_location: 'Chantilly, VA' } });
+    const step = p.steps.find((s) => s.key === 'create_user');
+    expect(step?.detail.attributes).toMatchObject({ jobTitle: 'Analyst', officeLocation: 'Chantilly, VA' });
+  });
+});
+
+// The Supervisor field carries maps_to='manager', but maps_to links a form field to a TICKET
+// attribute. Nothing ever wrote the Entra manager relationship, so every provisioned account had
+// an empty manager — and with it, no manager chain for dynamic groups, approvals or offboarding.
+describe('planRun and the manager relationship', () => {
+  const withSup = { ...answers, supervisor: 'nexus-user-1' };
+
+  it('adds a set_manager step once the supervisor resolves to a directory object', () => {
+    const p = planRun({ ...base, answers: withSup, manager: { upn: 'pat.lee@sbsfederal.com', objectId: 'mgr-oid' } });
+    const step = p.steps.find((s) => s.key === 'set_manager');
+    expect(step?.detail).toMatchObject({ managerObjectId: 'mgr-oid', managerUpn: 'pat.lee@sbsfederal.com' });
+  });
+
+  // Before the account exists, not after. The whole point of the preview is that an approver sees
+  // what will and will not happen while nothing has been written yet.
+  it('blocks in the PREVIEW when a supervisor is named but cannot be resolved', () => {
+    const p = planRun({ ...base, answers: withSup, manager: undefined });
+    expect(p.blockers.map((b) => b.code)).toContain('manager_unresolved');
+    expect(p.steps.map((s) => s.key)).not.toContain('set_manager');
+  });
+
+  it('does not block when no supervisor was asked for', () => {
+    const p = planRun({ ...base, answers: { ...answers, supervisor: '' }, manager: undefined });
+    expect(p.blockers.map((b) => b.code)).not.toContain('manager_unresolved');
+    expect(p.steps.map((s) => s.key)).not.toContain('set_manager');
+  });
+
+  // The manager is set on the account this run creates, so it can only run after create_user.
+  it('orders set_manager after the account exists', () => {
+    const keys = planRun({ ...base, answers: withSup, manager: { upn: 'p@x', objectId: 'm' } }).steps.map((s) => s.key);
+    expect(keys.indexOf('create_user')).toBeLessThan(keys.indexOf('set_manager'));
   });
 });

@@ -11,6 +11,7 @@ import {
   addToGroup,
   issueTap,
   graphErrorCode,
+  setManager,
   getCloudPcStatus,
   listGroupsByDisplayName,
   isAlreadyMemberError,
@@ -501,5 +502,28 @@ describe('readTenantState when the TAP policy cannot be read', () => {
     const arg = JSON.stringify(warn.mock.calls[0]);
     expect(arg).toMatch(/Authorization_RequestDenied|403/);
     warn.mockRestore();
+  });
+});
+
+// The manager relationship is a reference, not a property: PUT /users/{id}/manager/$ref with an
+// @odata.id pointing at the manager's directory object. As with addToGroup, the HOST in that
+// reference must match the endpoint the client authenticated against — graph.microsoft.us here,
+// not the commercial graph.microsoft.com — so it is a required parameter rather than a literal.
+describe('setManager', () => {
+  it('PUTs an @odata.id reference on the tenant\'s own Graph host', async () => {
+    const put = vi.fn(async () => null);
+    const g = { put } as any;
+    await setManager(g, 'u1', 'mgr-oid', 'https://graph.microsoft.us');
+    expect(put).toHaveBeenCalledWith('/users/u1/manager/$ref', {
+      '@odata.id': 'https://graph.microsoft.us/v1.0/directoryObjects/mgr-oid',
+    });
+  });
+
+  it('does not double the slash when the endpoint carries a trailing one', async () => {
+    const put = vi.fn(async () => null);
+    await setManager({ put } as any, 'u1', 'm', 'https://graph.microsoft.us/');
+    expect(put.mock.calls[0][1]).toEqual({
+      '@odata.id': 'https://graph.microsoft.us/v1.0/directoryObjects/m',
+    });
   });
 });

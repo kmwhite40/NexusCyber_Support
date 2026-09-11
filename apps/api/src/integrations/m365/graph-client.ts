@@ -36,6 +36,8 @@ export interface GraphClient {
   get: (path: string) => Promise<any>;
   post: (path: string, body: unknown) => Promise<any>;
   patch: (path: string, body: unknown) => Promise<any>;
+  /** Setting a single-valued reference is PUT .../$ref — PATCH does not apply to one. */
+  put: (path: string, body: unknown) => Promise<any>;
   /** Membership removal is DELETE /groups/{g}/members/{u}/$ref — no POST/PATCH equivalent. */
   del: (path: string) => Promise<any>;
 }
@@ -47,7 +49,7 @@ export function createGraphClient(opts: GraphClientOptions): GraphClient {
   const maxRetries = opts.maxRetries ?? 4;
   const fetchImpl = opts.fetchImpl as FetchWithHeaders;
 
-  async function request(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<any> {
+  async function request(method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<any> {
     const version = opts.apiVersion ?? 'v1.0';
     const url = path.startsWith('http') ? path : `${opts.graphEndpoint}/${version}${path}`;
     for (let attempt = 0; ; attempt++) {
@@ -81,6 +83,7 @@ export function createGraphClient(opts: GraphClientOptions): GraphClient {
     get: (path) => request('GET', path),
     post: (path, body) => request('POST', path, body),
     patch: (path, body) => request('PATCH', path, body),
+    put: (path, body) => request('PUT', path, body),
     del: (path) => request('DELETE', path),
   };
 }

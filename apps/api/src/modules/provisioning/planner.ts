@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import type { TenantState } from '../../integrations/m365/provisioning-graph.js';
 
 export type StepKey =
-  | 'create_user' | 'assign_licenses' | 'add_groups'
+  | 'create_user' | 'set_manager' | 'assign_licenses' | 'add_groups'
   | 'assign_cloudpc' | 'issue_tap' | 'await_cloudpc';
 
 export interface PlanStep { key: StepKey; label: string; detail: Record<string, unknown> }
@@ -34,6 +34,10 @@ export interface PlanInput {
    * baseline decides those.
    */
   mirror?: { upn: string; assignable: string[]; roleAssignable: string[]; dynamic: string[] };
+  /** The supervisor, already resolved to a directory object by the caller. Absent when the
+   *  request named one that could not be found in the tenant — which is a blocker, not a
+   *  silently skipped step. */
+  manager?: { upn: string; objectId: string };
   existingUser: { id: string; userPrincipalName: string } | null;
   existingRoleCount: number;
 }
@@ -112,8 +116,54 @@ export function deriveUpn(answers: Record<string, unknown>, upnDomain: string): 
   return `${first}.${last}${suffix}@${upnDomain}`;
 }
 
+/** ISO date (YYYY-MM-DD) -> the instant Graph's employeeHireDate wants, or undefined. */
+function hireDateInstant(v: unknown): string | undefined {
+  const d = str(v).trim();
+  // Deliberately strict. The field is a date picker, so anything else is a pasted or migrated
+  // value of unknown shape, and a hire date that is silently wrong is worse than one that is
+  // absent — it drives retention timers and joiner reporting.
+  return /^\d{4}-\d{2}-\d{2}$/.test(d) ? `${d}T00:00:00Z` : undefined;
+}
+
+/**
+ * The intake answers that belong on the Entra user record, as Graph property names. Pure.
+ *
+ * The account used to be created with a name and nothing else: every other answer the SBS intake
+ * collects was validated, written to the ticket, and then dropped, so the directory record showed
+ * a display name and no job title, department, location, employee id or phone.
+ *
+ * Two things are deliberately NOT here.
+ *
+ * The home address and personal email are captured for HR and marked sensitive. The directory is
+ * readable tenant-wide through the GAL; a field marked sensitive on the way in does not belong on
+ * a record everyone can read.
+ *
+ * "Work location" answers Work from Home / On Site. That is a working arrangement, not a place,
+ * and `officeLocation` is a place — "Duty location" is the field that holds one.
+ *
+ * Blank answers are OMITTED rather than sent as empty strings: the same object fills gaps on an
+ * adopted account, where writing '' would erase a real person's existing value.
+ */
+export function userAttributes(answers: Record<string, unknown>): Record<string, string> {
+  const out: Record<string, string> = {};
+  const put = (key: string, v: unknown) => {
+    const s = str(v).trim();
+    if (s) out[key] = s;
+  };
+  put('jobTitle', answers.job_title);
+  put('department', answers.department);
+  put('officeLocation', answers.duty_location);
+  put('employeeId', answers.employee_id);
+  put('mobilePhone', answers.cell_phone);
+  put('employeeHireDate', hireDateInstant(answers.start_date));
+  // The .ctr UPN suffix already separates contractors in the GAL. employeeType makes the same
+  // distinction available to filters, dynamic group rules and audit exports that never see a UPN.
+  out.employeeType = isContractor(answers) ? 'Contractor' : 'Employee';
+  return out;
+}
+
 export function planRun(input: PlanInput): Plan {
-  const { answers, tenant, upnDomain, baselineSkus, cloudPcSku, usageLocation, mirror, existingUser, existingRoleCount } = input;
+  const { answers, tenant, upnDomain, baselineSkus, cloudPcSku, usageLocation, mirror, manager, existingUser, existingRoleCount } = input;
   const blockers: Blocker[] = [];
   const upn = deriveUpn(answers, upnDomain);
   const first = str(answers.preferred_first_name) || str(answers.legal_first_name);
@@ -237,13 +287,39 @@ export function planRun(input: PlanInput): Plan {
       detail: {
         upn, displayName, adopting: Boolean(existingUser), usageLocation,
         givenName: first, surname: str(answers.legal_last_name),
+        // Everything else the intake collects. Without this the directory record was a display
+        // name and nothing else — no job title, department, location, employee id or phone.
+        attributes: userAttributes(answers),
       },
     },
-    // skuPartNumbers is copied (not aliased to input.baselineSkus): the returned Plan must stay
-    // isolated from the caller's array — a preview taken now must not change if the caller later
-    // mutates the array it passed in.
-    { key: 'assign_licenses', label: `Assign ${skuIds.length} license(s)`, detail: { skuIds, skuPartNumbers: [...baselineSkus] } },
   ];
+  // The Supervisor field carries maps_to='manager', but maps_to links a form field to a TICKET
+  // attribute — nothing ever wrote the Entra relationship, so every provisioned account had an
+  // empty manager, and with it no chain for dynamic groups, approvals or offboarding to follow.
+  //
+  // The resolution itself is the caller's (it needs Graph and the Nexus user table); the planner
+  // stays pure and only decides what to do with the answer. A supervisor who was ASKED FOR and
+  // could not be resolved is a blocker rather than a silently-missing step, and it lands in the
+  // PREVIEW — before the account exists, which is the whole point of previewing.
+  if (str(answers.supervisor).trim()) {
+    if (manager) {
+      steps.push({
+        key: 'set_manager',
+        label: `Set manager to ${manager.upn}`,
+        detail: { managerObjectId: manager.objectId, managerUpn: manager.upn },
+      });
+    } else {
+      blockers.push({
+        code: 'manager_unresolved',
+        message: 'The supervisor on this request could not be matched to an account in the tenant, '
+          + 'so the new user\'s manager will not be set.',
+      });
+    }
+  }
+  // skuPartNumbers is copied (not aliased to input.baselineSkus): the returned Plan must stay
+  // isolated from the caller's array — a preview taken now must not change if the caller later
+  // mutates the array it passed in.
+  steps.push({ key: 'assign_licenses', label: `Assign ${skuIds.length} license(s)`, detail: { skuIds, skuPartNumbers: [...baselineSkus] } });
   // Seam: group NAMES only. A later task (the service layer) resolves these to directory IDs
   // via Graph and writes detail.groupIds before the executor runs. The planner must not do that
   // lookup itself — that would require I/O and break the preview/execute purity guarantee.

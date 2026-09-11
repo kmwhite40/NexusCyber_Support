@@ -429,3 +429,72 @@ describe('given name and surname reach Graph', () => {
     expect(patches).toEqual([]);
   });
 });
+
+// "Most of the fields were not automatically populated under a user profile." The account was
+// created with a name and nothing else, because the create body listed seven properties and the
+// rest of the intake never travelled with the plan.
+describe('the profile attributes on the created account', () => {
+  const attributes = { jobTitle: 'Analyst', department: 'Engineering', officeLocation: 'Chantilly, VA' };
+  const withAttrs: Plan = {
+    ...plan,
+    steps: plan.steps.map((s) => (s.key === 'create_user' ? { ...s, detail: { ...s.detail, attributes } } : s)),
+  };
+
+  it('sends them to Graph on create', async () => {
+    let body: any;
+    await executePlan(withAttrs, ops({ createUser: async (b: any) => { body = b; return { id: 'u1' }; } }));
+    expect(body).toMatchObject(attributes);
+    // The identity fields are still there — the attributes are additive, not a replacement.
+    expect(body.userPrincipalName).toBe('ada.lovelace@sbsfederal.com');
+    expect(body.accountEnabled).toBe(true);
+  });
+
+  // findUser matches ANY account with this UPN, not only one this engine created. Adoption fills
+  // gaps; it must never overwrite a real person's directory record with a form answer.
+  it('fills only the gaps when adopting an existing account', async () => {
+    let patch: any;
+    await executePlan(withAttrs, ops({
+      findUser: async () => ({
+        id: 'existing', userPrincipalName: 'ada.lovelace@sbsfederal.com',
+        jobTitle: 'Principal Engineer', department: null,
+      }) as any,
+      patchUser: async (_id: string, p: any) => { patch = p; return {}; },
+    }));
+    expect(patch.department).toBe('Engineering');
+    expect(patch.officeLocation).toBe('Chantilly, VA');
+    expect('jobTitle' in patch).toBe(false); // already set on the real account — left alone
+  });
+});
+
+describe('set_manager', () => {
+  const withManager: Plan = {
+    ...plan,
+    steps: [
+      plan.steps[0],
+      { key: 'set_manager', label: '', detail: { managerObjectId: 'mgr-oid', managerUpn: 'pat.lee@sbsfederal.com' } },
+      ...plan.steps.slice(1),
+    ],
+  };
+
+  it('writes the manager relationship against the account just created', async () => {
+    const calls: Array<[string, string]> = [];
+    const r = await executePlan(withManager, ops({
+      setManager: async (userId: string, managerId: string) => { calls.push([userId, managerId]); },
+    }));
+    expect(calls).toEqual([['u1', 'mgr-oid']]);
+    expect(r.outcomes.find((o) => o.key === 'set_manager')?.status).toBe('succeeded');
+  });
+
+  // The planner only emits this step once the caller has resolved the supervisor, so an
+  // unresolved id here means the resolution pass did not run. Reporting "succeeded" while the
+  // account quietly has no manager is the failure mode this guards — same reasoning as add_groups.
+  it('refuses to report success when the manager id is missing', async () => {
+    const broken: Plan = {
+      ...withManager,
+      steps: withManager.steps.map((s) => (s.key === 'set_manager' ? { ...s, detail: {} } : s)),
+    };
+    const r = await executePlan(broken, ops({ setManager: async () => {} }));
+    expect(r.status).toBe('failed');
+    expect(r.outcomes.find((o) => o.key === 'set_manager')?.error).toMatch(/managerObjectId/);
+  });
+});

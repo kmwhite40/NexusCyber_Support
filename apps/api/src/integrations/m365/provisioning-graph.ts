@@ -210,6 +210,27 @@ export async function addToGroup(g: GraphClient, groupId: string, userId: string
 }
 
 /**
+ * Sets the user's manager.
+ *
+ * The manager is a single-valued REFERENCE, not a property: PUT /users/{id}/manager/$ref with an
+ * `@odata.id` naming the manager's directory object. As with addToGroup, the host in that
+ * reference must match the endpoint this client authenticated against — graph.microsoft.us in
+ * GCC High — so `graphEndpoint` is a required parameter sourced from the same cloud_environments
+ * row the client was built from, never a literal in this module.
+ *
+ * PUT replaces, so this is idempotent: running it again against the same manager is a no-op, and
+ * a retry after a partial run does not need to know whether the first attempt landed.
+ */
+export async function setManager(
+  g: GraphClient, userId: string, managerObjectId: string, graphEndpoint: string,
+) {
+  const base = graphEndpoint.replace(/\/+$/, '');
+  return g.put(`/users/${userId}/manager/$ref`, {
+    '@odata.id': `${base}/v1.0/directoryObjects/${managerObjectId}`,
+  });
+}
+
+/**
  * Is this Graph failure "the tenant has no Temporary Access Pass policy enabled"?
  *
  * Spec open item #4 defines the fallback for this exact tenant state: `issue_tap` is marked

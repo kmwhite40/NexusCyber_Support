@@ -37,12 +37,16 @@ function plannedRun(securityGroups: string): Plan {
     baselineSkus: ['SPE_E3_USGOV_GCCHIGH'],
     existingUser: null,
     existingRoleCount: 0,
+    // These tests are about the GROUP seam, so the supervisor is pre-resolved: an unresolved one
+    // is a blocker in its own right and would drown out what they are asserting.
+    manager: { upn: 'sup@sbsfederal.com', objectId: 'sup-oid' },
   });
 }
 
 function ops(over: Partial<ProvisioningOps> = {}): ProvisioningOps {
   return {
     findUser: async () => null,
+    setManager: async () => ({}),
     createUser: async () => ({ id: 'u1' }),
     currentLicenses: async () => [],
     assignLicenses: async () => ({}),

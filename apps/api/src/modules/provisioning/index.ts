@@ -47,6 +47,7 @@ import {
   normalizePolicies,
   isTapPolicyDisabledError,
   graphErrorCode,
+  setManager,
   type DirectoryGroup,
 } from '../../integrations/m365/provisioning-graph.js';
 import { planRun, deriveUpn, planFingerprint, normalizeForMatch, type Plan, type PlanInput } from './planner.js';
@@ -310,14 +311,17 @@ async function requireApprovedOnboardingRequest(ticket: TicketRow): Promise<void
  * stores a reference, not a typed name, so the form and the directory lookup point at one person
  * by construction rather than by someone retyping an address.
  */
-async function resolveMirrorUpn(answers: Record<string, unknown>): Promise<string | null> {
-  const ref = answers.copy_from;
+async function upnForUserRef(ref: unknown): Promise<string | null> {
   if (typeof ref !== 'string' || !ref.trim()) return null;
   return withSystemContext(async (sql) => {
     const { rows } = await sql.query('SELECT email FROM users WHERE id = $1', [ref]);
     const email = rows[0]?.email as string | undefined;
     return email ? email.trim().toLowerCase() : null;
   });
+}
+
+async function resolveMirrorUpn(answers: Record<string, unknown>): Promise<string | null> {
+  return upnForUserRef(answers.copy_from);
 }
 
 async function buildPlan(actor: Principal, ticketId: string): Promise<{ plan: Plan; ticket: TicketRow }> {
@@ -356,9 +360,21 @@ async function buildPlan(actor: Principal, ticketId: string): Promise<{ plan: Pl
     // than silently producing a plan that copies nothing.
   }
 
+  // The supervisor, resolved the same way the mirror user is: the answer is a Nexus user
+  // reference, so it becomes an email, and the email becomes the directory object whose id the
+  // manager reference needs. Resolving it HERE means an unresolvable supervisor shows up as a
+  // blocker in the preview, before the account exists — not as a failed step after it does.
+  const supervisorUpn = await upnForUserRef(answers.supervisor);
+  let manager: PlanInput['manager'];
+  if (supervisorUpn) {
+    const sup = await findUserByUpn(g.graph, supervisorUpn);
+    if (sup) manager = { upn: supervisorUpn, objectId: sup.id };
+  }
+
   const planned = planRun({
     answers,
     mirror,
+    manager,
     tenant,
     upnDomain: config.provisioning.upnDomain,
     baselineSkus: config.provisioning.baselineSkus,
@@ -553,6 +569,7 @@ function buildOps(g: ProvisioningGraph, organizationId: string): ProvisioningOps
     // The graph endpoint comes from the same cloud_environments row the client was built from,
     // so the @odata.id host always matches the host we are authenticated against.
     addToGroup: (groupId, userId) => addToGroup(g.graph, groupId, userId, g.graphEndpoint),
+    setManager: (userId, managerObjectId) => setManager(g.graph, userId, managerObjectId, g.graphEndpoint),
     issueTap: async (userId) => {
       // Closes the residual risk parked earlier: if the TAP request fails AFTER Graph has
       // minted a pass server-side, the executor holds no value to redact with. So this adapter
