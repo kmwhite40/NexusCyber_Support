@@ -60,6 +60,10 @@ const h = vi.hoisted(() => {
         baselineSkus: ['SPE_E3_USGOV_GCCHIGH'],
         cloudPcPolicy: 'SBSFederal Cloud PC',
         cloudPcApiVersion: 'beta' as const,
+        // One attempt: the retry is covered directly in provisioning-graph.test.ts, and these
+        // tests assert how a REJECTION is reported — waiting out the real backoff to reach
+        // the same assertion would just make them slow.
+        tapRetryAttempts: 1,
       },
     },
   };

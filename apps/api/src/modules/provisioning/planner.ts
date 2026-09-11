@@ -281,6 +281,10 @@ export function planRun(input: PlanInput): Plan {
     }
   }
 
+  // Only an explicit `false` means "this tenant has no Temporary Access Pass". `undefined` means
+  // the policy could not be read, and the run still ATTEMPTS the pass — so the pass is still the
+  // way in, and the flag below must follow that, not the unknown.
+  const tapDisabled = tenant.tapEnabled === false;
   const steps: PlanStep[] = [
     {
       key: 'create_user',
@@ -295,6 +299,18 @@ export function planRun(input: PlanInput): Plan {
         // Everything else the intake collects. Without this the directory record was a display
         // name and nothing else — no job title, department, location, employee id or phone.
         attributes: userAttributes(answers),
+        // The account is created with a random password that is generated, sent to Graph and
+        // discarded unread — nobody ever learns it, because the Temporary Access Pass is meant to
+        // be the first-sign-in credential. Forcing a password change on top of that is
+        // unsatisfiable: Entra asks for the CURRENT password before accepting a new one, and the
+        // current password is the value nobody has. New starters signed in with the pass, were
+        // asked to change a password they had never been given, typed the pass into the field and
+        // were told it was invalid.
+        //
+        // So the flag follows the credential. It is on only when the tenant has no pass to issue
+        // and an admin therefore sets one out of band — the single case where a forced change at
+        // next sign-in is the right behaviour.
+        forceChangePassword: tapDisabled,
       },
     },
   ];
@@ -350,7 +366,6 @@ export function planRun(input: PlanInput): Plan {
   //
   // Only an explicit `false` pre-skips. `undefined` means the policy could not be read, and
   // pre-skipping on that would silently stop issuing credentials in a tenant where TAP works.
-  const tapDisabled = tenant.tapEnabled === false;
   steps.push({
     key: 'issue_tap',
     label: tapDisabled

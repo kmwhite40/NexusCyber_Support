@@ -376,12 +376,61 @@ export async function listMemberOf(g: GraphClient, userId: string): Promise<Arra
   return (res?.value ?? []) as Array<Record<string, unknown>>;
 }
 
-export async function issueTap(g: GraphClient, userId: string, lifetimeInMinutes: number) {
-  // Single-use regardless of lifetime. A longer window widens the time a pass is live, so
-  // one-shot use is what keeps a 7-day pass from being a 7-day standing credential.
-  return g.post(`/users/${userId}/authentication/temporaryAccessPassMethods`, {
-    isUsableOnce: true, lifetimeInMinutes,
-  });
+/**
+ * Issues a Temporary Access Pass, retrying only while the account is still catching up.
+ *
+ * A production run failed with a Graph 404 here after create_user and assign_licenses had both
+ * succeeded against that same user id. Probing the live GCC High tenant settled which 404 it was:
+ * a GET on the same segment for an ESTABLISHED user returns 200, so v1.0 serves it in this cloud
+ * — the account was simply too new. `/users/{id}/authentication/*` is backed by the
+ * authentication-methods service, a different store from the directory, and it can still 404 for
+ * a user the directory already answers for.
+ *
+ * ONLY 404 IS RETRIED HERE, and that restriction is the safety property rather than a tidiness
+ * choice. A 404 means Graph created nothing, so another attempt cannot mint a second pass. A
+ * dropped connection says the opposite — the request may well have succeeded server-side — and
+ * retrying that would put a second live credential into the tenant with nobody holding it. A
+ * 400/403 is an answer about policy or permission, not about timing; delaying it helps no one.
+ * All of those still fail the run exactly as before.
+ *
+ * Note what this does NOT cover: graph-client.ts retries 429 and 503 underneath this function,
+ * for every call it makes. A 429 is safe — Graph rejected the request without processing it. A
+ * 503 is the one case where a pass could in principle have been minted before the retry, and
+ * this wrapper cannot see it happen. Left as it is deliberately: suppressing it would need a
+ * per-call opt-out on the client, and 503 on a single write almost certainly means the write did
+ * not land. Worth revisiting if a duplicate pass is ever actually observed.
+ */
+export async function issueTap(
+  g: GraphClient,
+  userId: string,
+  lifetimeInMinutes: number,
+  opts: { attempts?: number; sleep?: (ms: number) => Promise<void> } = {},
+) {
+  const attempts = opts.attempts ?? 5;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      // Single-use regardless of lifetime. A longer window widens the time a pass is live, so
+      // one-shot use is what keeps a 7-day pass from being a 7-day standing credential.
+      return await g.post(`/users/${userId}/authentication/temporaryAccessPassMethods`, {
+        isUsableOnce: true, lifetimeInMinutes,
+      });
+    } catch (err) {
+      lastErr = err;
+      if (!(err instanceof GraphError) || err.status !== 404 || attempt === attempts) throw err;
+      // 2s, 4s, 8s, 16s — ~30s in total, which is the order replication actually takes. Longer
+      // would hold a run open for a user who is genuinely never going to appear.
+      const waitMs = 2000 * 2 ** (attempt - 1);
+      logger.warn(
+        { userId, attempt, waitMs },
+        'Temporary Access Pass 404 — the account may not have replicated to the '
+          + 'authentication-methods service yet; retrying',
+      );
+      await sleep(waitMs);
+    }
+  }
+  throw lastErr;
 }
 
 /**

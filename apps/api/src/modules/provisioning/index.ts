@@ -579,7 +579,8 @@ function buildOps(g: ProvisioningGraph, organizationId: string): ProvisioningOps
       // executor needs before it is returned. Nothing else from that payload leaves this scope.
       let res: any;
       try {
-        res = await issueTap(g.graph, userId, config.provisioning.tapLifetimeMinutes);
+        res = await issueTap(g.graph, userId, config.provisioning.tapLifetimeMinutes,
+          { attempts: config.provisioning.tapRetryAttempts });
       } catch (err) {
         // Spec open item #4. The one Graph failure here that is a TENANT CONFIGURATION fact
         // rather than a run failure is "the Temporary Access Pass method is not enabled".

@@ -131,7 +131,14 @@ export async function executePlan(
                 ...(step.detail.givenName ? { givenName: String(step.detail.givenName) } : {}),
                 ...(step.detail.surname ? { surname: String(step.detail.surname) } : {}),
                 passwordProfile: {
-                  forceChangePasswordNextSignIn: true,
+                  // Follows the plan, and defaults to FALSE. The password below is random and
+                  // discarded unread, so a forced change asks the new starter for a value nobody
+                  // has — Entra wants the current password before it will take a new one. That is
+                  // what "the password is invalid on first use" was: the Temporary Access Pass
+                  // typed into a current-password field it could never satisfy. The planner turns
+                  // this on only when the tenant has no pass to issue and an admin sets the
+                  // credential out of band.
+                  forceChangePasswordNextSignIn: step.detail.forceChangePassword === true,
                   // Never read back: assigned to Graph and immediately discarded. See
                   // generateInitialPassword() below for why this exists and why it is safe to
                   // throw away.

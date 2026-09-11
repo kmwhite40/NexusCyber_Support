@@ -644,3 +644,31 @@ describe('security_groups as a list', () => {
     expect(groupsOf(planRun({ ...base, answers: { ...answers, security_groups: [] } }))).toEqual([]);
   });
 });
+
+// Reported from the tenant: new starters are told the password is invalid on first use.
+//
+// The account is created with a RANDOM password that is generated, sent to Graph, and discarded
+// unread — nobody ever learns it, which is the point, because the Temporary Access Pass is meant
+// to be the first-sign-in credential. It was also created with forceChangePasswordNextSignIn.
+// Those two cannot both hold: Entra asks for the CURRENT password before it will accept a new
+// one, and the current password is the value nobody has. The new starter signs in with the pass,
+// is asked to change a password they were never given, types the pass into the field, and is
+// told it is invalid.
+//
+// So the force-change flag follows the credential: off when a pass is being issued (the pass IS
+// the first-sign-in method), on when the tenant has TAP disabled and an admin therefore sets a
+// credential out of band — which is the one case where a forced change at next sign-in is right.
+describe('forceChangePassword tracks how the first sign-in actually happens', () => {
+  const forceOf = (p: ReturnType<typeof planRun>) =>
+    p.steps.find((s) => s.key === 'create_user')?.detail.forceChangePassword;
+
+  it('is off when a Temporary Access Pass will be issued', () => {
+    expect(forceOf(planRun({ ...base, tenant: { ...tenant, tapEnabled: true } }))).toBe(false);
+    // Unknown is not "disabled": the run still attempts the pass, so the pass is still the path in.
+    expect(forceOf(planRun({ ...base, tenant: { ...tenant, tapEnabled: undefined } }))).toBe(false);
+  });
+
+  it('is on when the tenant has no Temporary Access Pass and an admin sets the credential', () => {
+    expect(forceOf(planRun({ ...base, tenant: { ...tenant, tapEnabled: false } }))).toBe(true);
+  });
+});

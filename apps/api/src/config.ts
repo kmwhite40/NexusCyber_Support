@@ -112,6 +112,9 @@ export interface ProvisioningConfig {
    * raising the policy first fails every run at the last step.
    */
   tapLifetimeMinutes: number;
+  /** Attempts for the TAP request, which 404s while a just-created account replicates to the
+   *  authentication-methods service. See issueTap in integrations/m365/provisioning-graph.ts. */
+  tapRetryAttempts: number;
   /**
    * Graph API version for the `/deviceManagement/virtualEndpoint/*` family (Cloud PC status
    * lookups). Whether GCC High specifically requires `beta` there vs `v1.0` is an open item in
@@ -197,6 +200,12 @@ export function parseProvisioningConfig(env: NodeJS.ProcessEnv): ProvisioningCon
       // A garbage value must not reach Graph as NaN, and must not silently become something
       // longer than intended for a credential that bypasses MFA.
       return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 480;
+    })(),
+    tapRetryAttempts: (() => {
+      const raw = Number(env.M365_PROV_TAP_RETRY_ATTEMPTS);
+      // At least one attempt: a zero here would mean the step never calls Graph at all and every
+      // run reports a pass it never issued.
+      return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : 5;
     })(),
     cloudPcApiVersion,
     offboardingEnabled,

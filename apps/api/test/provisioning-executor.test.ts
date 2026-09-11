@@ -498,3 +498,36 @@ describe('set_manager', () => {
     expect(r.outcomes.find((o) => o.key === 'set_manager')?.error).toMatch(/managerObjectId/);
   });
 });
+
+// The account's password is generated, sent to Graph and discarded unread. Demanding a change of
+// it at next sign-in asks the new starter for a value nobody has — which is what "the password is
+// invalid on first use" was: the pass typed into a current-password field it could never satisfy.
+describe('the password change prompt on a new account', () => {
+  const withFlag = (forceChangePassword: boolean): Plan => ({
+    ...plan,
+    steps: plan.steps.map((s) => (s.key === 'create_user' ? { ...s, detail: { ...s.detail, forceChangePassword } } : s)),
+  });
+
+  it('does not demand a change when a Temporary Access Pass is the way in', async () => {
+    let body: any;
+    await executePlan(withFlag(false), ops({ createUser: async (b: any) => { body = b; return { id: 'u1' }; } }));
+    expect(body.passwordProfile.forceChangePasswordNextSignIn).toBe(false);
+    // The password itself is still random and still never returned to anyone.
+    expect(typeof body.passwordProfile.password).toBe('string');
+    expect(body.passwordProfile.password.length).toBeGreaterThan(15);
+  });
+
+  it('demands one when an admin sets the credential out of band instead', async () => {
+    let body: any;
+    await executePlan(withFlag(true), ops({ createUser: async (b: any) => { body = b; return { id: 'u1' }; } }));
+    expect(body.passwordProfile.forceChangePasswordNextSignIn).toBe(true);
+  });
+
+  // A plan from before the flag existed must not silently start forcing a change again. The pass
+  // is the normal path, so the safe default is the one that lets a new starter sign in.
+  it('defaults to not demanding a change when the plan does not say', async () => {
+    let body: any;
+    await executePlan(plan, ops({ createUser: async (b: any) => { body = b; return { id: 'u1' }; } }));
+    expect(body.passwordProfile.forceChangePasswordNextSignIn).toBe(false);
+  });
+});

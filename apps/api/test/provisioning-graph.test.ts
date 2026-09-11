@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   normalizeSkus,
   normalizePolicies,
@@ -580,5 +580,74 @@ describe('listSelectableGroups', () => {
   it('drops entries missing an id or a name — neither can be joined or matched', async () => {
     const g = client([{ value: [{ id: 'a' }, { displayName: 'No Id' }, { id: 'c', displayName: 'Fine' }] }]);
     expect((await listSelectableGroups(g)).groups).toEqual([{ id: 'c', displayName: 'Fine' }]);
+  });
+});
+
+// A real run failed with "issuing the Temporary Access Pass failed (Graph 404)" after create_user
+// and assign_licenses had both succeeded against that same user id. Probe 5 against the live GCC
+// High tenant settled which 404 it was: GET on the same segment for an established user returns
+// 200, so v1.0 DOES serve it here — the account was simply too new. /users/{id}/authentication/*
+// is backed by the authentication-methods service, a different store from the directory, and it
+// can still 404 for a user the directory already answers for.
+//
+// The retry is restricted to 404 ON PURPOSE, and that restriction is the safety property, not a
+// tidiness choice: a 404 means Graph created nothing, so trying again cannot mint a second pass.
+// A 5xx or a dropped connection says the opposite — the request may well have succeeded server
+// side — and retrying THAT would put a second live credential into a tenant with nobody holding
+// it. Those still fail the run, exactly as before.
+describe('issueTap against a just-created account', () => {
+  const slept: number[] = [];
+  const sleep = async (ms: number) => { slept.push(ms); };
+  const notFound = () => new GraphError(404, '{"error":{"code":"ResourceNotFound"}}');
+
+  beforeEach(() => { slept.length = 0; });
+
+  it('retries while the account is still catching up, then succeeds', async () => {
+    let n = 0;
+    const post = vi.fn(async () => {
+      n += 1;
+      if (n < 3) throw notFound();
+      return { temporaryAccessPass: 'abc' };
+    });
+    const out = await issueTap({ post } as any, 'u1', 480, { sleep });
+    expect(out).toEqual({ temporaryAccessPass: 'abc' });
+    expect(post).toHaveBeenCalledTimes(3);
+  });
+
+  it('backs off between attempts instead of hammering', async () => {
+    const post = vi.fn(async () => { throw notFound(); });
+    await expect(issueTap({ post } as any, 'u1', 480, { attempts: 4, sleep })).rejects.toThrow();
+    expect(slept).toEqual([...slept].sort((a, b) => a - b)); // non-decreasing
+    expect(slept.length).toBe(3); // one wait between each pair of attempts, none after the last
+  });
+
+  // Bounded. A user that never appears is a real failure and has to surface as one, still
+  // carrying the Graph status and code the adapter reports.
+  it('gives up and rethrows the Graph error', async () => {
+    const post = vi.fn(async () => { throw notFound(); });
+    await expect(issueTap({ post } as any, 'u1', 480, { attempts: 3, sleep }))
+      .rejects.toMatchObject({ status: 404 });
+    expect(post).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not retry a 400 or a 403 — those are answers, not timing', async () => {
+    for (const status of [400, 403]) {
+      const post = vi.fn(async () => { throw new GraphError(status, '{"error":{"code":"x"}}'); });
+      await expect(issueTap({ post } as any, 'u1', 480, { sleep })).rejects.toMatchObject({ status });
+      expect(post).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  // The one that matters. After a 5xx or a dropped connection the pass may already exist, and
+  // nobody holds it — a retry would mint a second live credential into the tenant. (graph-client
+  // still retries 503 beneath this; see the note on issueTap for why that is left alone.)
+  it('never retries a failure that could have minted a pass', async () => {
+    const post = vi.fn(async () => { throw new GraphError(503, 'unavailable'); });
+    await expect(issueTap({ post } as any, 'u1', 480, { sleep })).rejects.toMatchObject({ status: 503 });
+    expect(post).toHaveBeenCalledTimes(1);
+
+    const boom = vi.fn(async () => { throw new Error('socket hang up'); });
+    await expect(issueTap({ post: boom } as any, 'u1', 480, { sleep })).rejects.toThrow(/socket hang up/);
+    expect(boom).toHaveBeenCalledTimes(1);
   });
 });
