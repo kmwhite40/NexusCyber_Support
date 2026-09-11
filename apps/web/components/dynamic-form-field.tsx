@@ -111,7 +111,14 @@ export function DynamicFormField({
         <Textarea value={(value as string) ?? ''} onChange={(e) => set(e.target.value)} />
       ) : field.data_type === 'select' ? (
         <Select value={(value as string) ?? ''} onChange={(e) => set(e.target.value)}>
-          <option value="" disabled>Select…</option>
+          {/* An OPTIONAL select must offer a way to choose nothing. With a disabled placeholder
+              there was no route back to blank once a value had been picked, which made every
+              optional dropdown mandatory in practice — including Cloud PC, where the choice
+              decides whether the hire consumes one of two remaining Windows 365 licences. A
+              required field keeps the un-choosable prompt so "Select…" cannot be submitted. */}
+          {field.required
+            ? <option value="" disabled>Select…</option>
+            : <option value="">— None —</option>}
           {options.map((o) => <option key={o} value={o}>{o}</option>)}
         </Select>
       ) : field.data_type === 'checkbox' ? (
