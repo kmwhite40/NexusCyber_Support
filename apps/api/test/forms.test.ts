@@ -156,3 +156,42 @@ describe('validateAgainstForm — datetime', () => {
     expect(validateAgainstForm(dtFields, { disable_effective: 'next friday at five' }).ok).toBe(false);
   });
 });
+
+// "Security / distribution groups" was free text, so it was typed from memory and — far more
+// often — left blank. It is now a multi-select over the tenant's real groups, which needs a
+// field type whose answer is a list.
+describe('multiselect fields', () => {
+  const field = (over: Partial<FormField> = {}): FormField => ({
+    key: 'security_groups', label: 'Security / distribution groups', data_type: 'multiselect',
+    required: false, options: ['All Staff', 'Engineering'], maps_to: null, visible_when: null,
+    sensitive: false, options_source: null, ...over,
+  });
+
+  it('accepts a list of values from the options', () => {
+    expect(validateAgainstForm([field()], { security_groups: ['All Staff', 'Engineering'] }).ok).toBe(true);
+  });
+
+  it('rejects a value that is not on the list', () => {
+    const r = validateAgainstForm([field()], { security_groups: ['All Staff', 'Made Up'] });
+    expect(r.ok).toBe(false);
+    expect(r.errors[0].message).toMatch(/Made Up/);
+  });
+
+  it('rejects an answer that is not a list at all', () => {
+    expect(validateAgainstForm([field()], { security_groups: 'All Staff' }).ok).toBe(false);
+  });
+
+  // Exactly the trap the single-select hit: a live-sourced field carries an EMPTY static list by
+  // design, so checking against it could never pass — the form would reject every group the
+  // picker had just offered. What the names refer to is settled downstream, where the planner
+  // raises group_missing against the tenant's actual groups.
+  it('does not check a live-sourced field against its empty static list', () => {
+    const live = field({ options: [], options_source: 'entra_groups' });
+    expect(validateAgainstForm([live], { security_groups: ['Anything At All'] }).ok).toBe(true);
+  });
+
+  it('still enforces required', () => {
+    const r = validateAgainstForm([field({ required: true })], { security_groups: [] });
+    expect(r.ok).toBe(false);
+  });
+});

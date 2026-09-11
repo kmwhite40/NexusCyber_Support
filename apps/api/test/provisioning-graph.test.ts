@@ -12,6 +12,7 @@ import {
   issueTap,
   graphErrorCode,
   setManager,
+  listSelectableGroups,
   getCloudPcStatus,
   listGroupsByDisplayName,
   isAlreadyMemberError,
@@ -525,5 +526,59 @@ describe('setManager', () => {
     expect(put.mock.calls[0][1]).toEqual({
       '@odata.id': 'https://graph.microsoft.us/v1.0/directoryObjects/m',
     });
+  });
+});
+
+// "Security / distribution groups" was a free-text box: the requester typed names from memory,
+// the planner split them on commas, and anything mistyped became a group_missing blocker after
+// the fact — or, far more often, the box was left empty and the hire got no groups at all.
+//
+// Listing the tenant's groups to choose from has one hazard the codebase already knows about:
+// /groups pages, and a "list them all" that ignores @odata.nextLink silently truncates in a
+// large tenant, reporting a perfectly real group as absent. So this pages, and when it hits its
+// own ceiling it SAYS so rather than returning a short list that looks complete.
+describe('listSelectableGroups', () => {
+  function client(pages: any[]) {
+    let i = 0;
+    return { get: vi.fn(async () => pages[i++]) } as any;
+  }
+
+  it('follows @odata.nextLink to the end', async () => {
+    const g = client([
+      { value: [{ id: 'a', displayName: 'All Staff' }], '@odata.nextLink': 'https://graph.microsoft.us/v1.0/groups?$skiptoken=x' },
+      { value: [{ id: 'b', displayName: 'Engineering' }] },
+    ]);
+    const out = await listSelectableGroups(g);
+    expect(out.groups.map((x) => x.displayName)).toEqual(['All Staff', 'Engineering']);
+    expect(out.truncated).toBe(false);
+    expect(g.get).toHaveBeenCalledTimes(2);
+  });
+
+  // Graph REFUSES a manual add to a dynamic group, so offering one is offering a run that fails
+  // at add_groups. Role-assignable groups stay: choosing one here is a deliberate act by someone
+  // reading the list, unlike the mirror flow where they are copied sight-unseen.
+  it('leaves out dynamic groups, which cannot be joined manually', async () => {
+    const g = client([{ value: [
+      { id: 'a', displayName: 'All Staff' },
+      { id: 'b', displayName: 'Auto - Everyone', membershipRule: 'user.accountEnabled -eq true' },
+      { id: 'c', displayName: 'Privileged Ops', isAssignableToRole: true },
+    ] }]);
+    const out = await listSelectableGroups(g);
+    expect(out.groups.map((x) => x.displayName)).toEqual(['All Staff', 'Privileged Ops']);
+  });
+
+  it('says so when it stops at its own ceiling rather than looking complete', async () => {
+    const pages = Array.from({ length: 5 }, (_, i) => ({
+      value: [{ id: `g${i}`, displayName: `Group ${i}` }],
+      '@odata.nextLink': 'https://graph.microsoft.us/v1.0/groups?$skiptoken=x',
+    }));
+    const out = await listSelectableGroups(client(pages), { maxPages: 3 });
+    expect(out.truncated).toBe(true);
+    expect(out.groups).toHaveLength(3);
+  });
+
+  it('drops entries missing an id or a name — neither can be joined or matched', async () => {
+    const g = client([{ value: [{ id: 'a' }, { displayName: 'No Id' }, { id: 'c', displayName: 'Fine' }] }]);
+    expect((await listSelectableGroups(g)).groups).toEqual([{ id: 'c', displayName: 'Fine' }]);
   });
 });

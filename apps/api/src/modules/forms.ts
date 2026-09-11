@@ -57,6 +57,24 @@ export function validateAgainstForm(fields: FormField[], answers: Record<string,
           errors.push({ field: f.key, message: `${f.label} must be one of: ${f.options.join(', ')}` });
         }
         break;
+      case 'multiselect': {
+        // The answer is a LIST of chosen option names. The same live-source exemption the single
+        // select carries applies for the same reason: a field whose options come from the tenant
+        // has an empty static list, so checking against it would reject every value the picker
+        // had just offered. What the names refer to is settled downstream — the provisioning
+        // planner raises group_missing against the tenant's actual groups.
+        if (!Array.isArray(v) || v.some((x) => typeof x !== 'string')) {
+          errors.push({ field: f.key, message: `${f.label} must be a list of choices` });
+          break;
+        }
+        if (!f.options_source) {
+          const unknown = v.filter((x) => !f.options.includes(x));
+          if (unknown.length) {
+            errors.push({ field: f.key, message: `${f.label} contains choices that are not available: ${unknown.join(', ')}` });
+          }
+        }
+        break;
+      }
       case 'checkbox':
         if (typeof v !== 'boolean') errors.push({ field: f.key, message: `${f.label} must be true or false` });
         break;

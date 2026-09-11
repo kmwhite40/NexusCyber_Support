@@ -673,6 +673,16 @@ export async function registerRoutes(app: FastifyInstance) {
     return { data: await provisioning.listCloudPcPolicies(p) };
   });
 
+  // Options provider for the onboarding form's security_groups field
+  // (form_fields.options_source = 'entra_groups'). `truncated` travels with the list so the
+  // picker can say the tenant has more groups than it is showing, rather than presenting a short
+  // list as if it were everything.
+  app.get('/api/v1/provisioning/groups', async (req) => {
+    const p = await requirePrincipal(req);
+    const { names, truncated } = await provisioning.listSelectableGroupNames(p);
+    return { data: names, truncated };
+  });
+
   app.get('/api/v1/attachments/:id', async (req, reply) => {
     const p = await requirePrincipal(req);
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);

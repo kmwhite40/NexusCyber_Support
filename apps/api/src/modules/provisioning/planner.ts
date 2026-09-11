@@ -227,7 +227,12 @@ export function planRun(input: PlanInput): Plan {
     skuIds.push(sku.skuId);
   }
 
-  const groups = str(answers.security_groups).split(/[,\n]/).map((g) => g.trim()).filter(Boolean);
+  // The field is a multi-select over the tenant's real groups, so the answer is an array of
+  // names. Tickets raised before that change hold the old comma/newline free text, and they
+  // still have to plan — so both shapes are read here rather than migrating stored answers.
+  const groups = Array.isArray(answers.security_groups)
+    ? answers.security_groups.map((g) => str(g)).filter(Boolean)
+    : str(answers.security_groups).split(/[,\n]/).map((g) => g.trim()).filter(Boolean);
 
   // Mirrored access. Only the groups that CAN be copied are added; the rest are surfaced so the
   // approver sees them rather than discovering them later.

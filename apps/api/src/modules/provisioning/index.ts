@@ -48,6 +48,7 @@ import {
   isTapPolicyDisabledError,
   graphErrorCode,
   setManager,
+  listSelectableGroups,
   type DirectoryGroup,
 } from '../../integrations/m365/provisioning-graph.js';
 import { planRun, deriveUpn, planFingerprint, normalizeForMatch, type Plan, type PlanInput } from './planner.js';
@@ -927,6 +928,32 @@ async function provisioningOrganizationId(): Promise<string | null> {
  * "no dynamic options" — the field then falls back to its static list, and an empty constant
  * discloses nothing. The action routes (preview/execute) refuse loudly instead.
  */
+/**
+ * Group names for the onboarding form's `security_groups` picker
+ * (form_fields.options_source = 'entra_groups').
+ *
+ * Same gate and same failure posture as listCloudPcPolicies below — read its comment; the
+ * reasoning is identical and deliberately not duplicated here.
+ *
+ * `truncated` is carried out to the caller rather than swallowed. A list that stopped at the
+ * page ceiling but presents itself as the whole tenant is worse than no list: the requester
+ * concludes a group does not exist, and the thing they were given to stop them mistyping a name
+ * becomes the thing that tells them the right name is wrong.
+ */
+export async function listSelectableGroupNames(
+  actor: Principal,
+): Promise<{ names: string[]; truncated: boolean }> {
+  if (!config.provisioning.enabled) return { names: [], truncated: false };
+  const organizationId = await provisioningOrganizationId();
+  if (!organizationId) return { names: [], truncated: false };
+  authorize(actor, 'ticket.create', { organizationId });
+  const g = await getProvisioningGraph();
+  const { groups, truncated } = await listSelectableGroups(g.graph);
+  const names = [...new Set(groups.map((x) => x.displayName).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+  return { names, truncated };
+}
+
 export async function listCloudPcPolicies(actor: Principal): Promise<string[]> {
   if (!config.provisioning.enabled) return [];
   const organizationId = await provisioningOrganizationId();

@@ -133,7 +133,7 @@ export interface FormFieldDef {
   label: string;
   data_type:
     // Mirrors FieldType in apps/api/src/modules/form-fields.ts — keep the two in step.
-    | 'text' | 'textarea' | 'number' | 'select' | 'checkbox' | 'date' | 'datetime'
+    | 'text' | 'textarea' | 'number' | 'select' | 'multiselect' | 'checkbox' | 'date' | 'datetime'
     | 'user' | 'user_multi' | 'attachment' | 'email' | 'phone';
   required: boolean;
   options: string[];

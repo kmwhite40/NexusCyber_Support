@@ -6,6 +6,7 @@
 import * as React from 'react';
 import type { FormFieldDef, VisibleWhen } from '@/lib/api';
 import { Field, Input, Select, Textarea, Checkbox } from '@/components/ui/primitives';
+import { MultiSelect } from '@/components/multi-select';
 import { Paperclip } from 'lucide-react';
 
 export type { VisibleWhen };
@@ -81,6 +82,7 @@ export function groupFieldsBySection(fields: FormFieldDef[]): Array<{ section: s
 
 export function DynamicFormField({
   field, value, answers, options, file, onChange, onFileChange, renderUserPicker, error,
+  optionsTruncated = false,
 }: {
   field: FormFieldDef;
   /** Server-side validation message for THIS field, shown at the control rather than in a
@@ -93,6 +95,9 @@ export function DynamicFormField({
   /** Resolved options for a select field — static field.options, or options_source results
    *  once fetched (callers are responsible for the options_source fetch + fallback). */
   options: string[];
+  /** The options list is known to be short of the full set — a multi-select says so rather than
+   *  presenting what it has as if it were everything. */
+  optionsTruncated?: boolean;
   file?: File | null;
   onChange: (key: string, value: unknown) => void;
   onFileChange?: (file: File | null) => void;
@@ -121,6 +126,15 @@ export function DynamicFormField({
             : <option value="">— None —</option>}
           {options.map((o) => <option key={o} value={o}>{o}</option>)}
         </Select>
+      ) : field.data_type === 'multiselect' ? (
+        // Options come from the same resolution the single select uses — static field.options, or
+        // an options_source list once the caller has fetched it.
+        <MultiSelect
+          options={options}
+          value={Array.isArray(value) ? (value as string[]) : []}
+          onChange={(v) => set(v)}
+          truncated={optionsTruncated}
+        />
       ) : field.data_type === 'checkbox' ? (
         <Checkbox checked={!!value} onChange={(e) => set(e.target.checked)} />
       ) : field.data_type === 'user' ? (

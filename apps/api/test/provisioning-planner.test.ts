@@ -618,3 +618,29 @@ describe('planRun and the manager relationship', () => {
     expect(keys.indexOf('create_user')).toBeLessThan(keys.indexOf('set_manager'));
   });
 });
+
+// security_groups became a multi-select backed by the tenant's real group list, so the answer is
+// now an ARRAY of names. The free-text form stays readable: every request raised before the
+// change is stored as a comma- or newline-separated string, and those tickets still have to plan.
+describe('security_groups as a list', () => {
+  const groupsOf = (p: ReturnType<typeof planRun>) =>
+    (p.steps.find((s) => s.key === 'add_groups')?.detail.groups as string[] | undefined) ?? [];
+
+  it('takes an array of chosen names', () => {
+    expect(groupsOf(planRun({ ...base, answers: { ...answers, security_groups: ['All Staff', 'Engineering'] } })))
+      .toEqual(['All Staff', 'Engineering']);
+  });
+
+  it('still reads a legacy free-text answer', () => {
+    expect(groupsOf(planRun({ ...base, answers: { ...answers, security_groups: 'All Staff, Engineering' } })))
+      .toEqual(['All Staff', 'Engineering']);
+    expect(groupsOf(planRun({ ...base, answers: { ...answers, security_groups: 'All Staff\nEngineering' } })))
+      .toEqual(['All Staff', 'Engineering']);
+  });
+
+  it('ignores blanks and non-strings in either shape', () => {
+    expect(groupsOf(planRun({ ...base, answers: { ...answers, security_groups: ['All Staff', '', '  ', 7 as any] } })))
+      .toEqual(['All Staff']);
+    expect(groupsOf(planRun({ ...base, answers: { ...answers, security_groups: [] } }))).toEqual([]);
+  });
+});

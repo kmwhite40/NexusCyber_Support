@@ -14,6 +14,7 @@ import { useAuth } from '@/components/auth-context';
 /** Form fields whose options come from a live endpoint rather than the form definition. */
 const OPTIONS_SOURCE_ENDPOINTS: Record<string, string> = {
   cloudpc_policies: '/provisioning/cloud-pc-policies',
+  entra_groups: '/provisioning/groups',
 };
 
 export function RequestModal({
@@ -42,6 +43,9 @@ export function RequestModal({
   // field key. Populated by the effect below; falls back to the field's static `options`
   // until (or unless) that fetch succeeds.
   const [dynamicOptions, setDynamicOptions] = React.useState<Record<string, string[]>>({});
+  // Which of those lists the server told us was incomplete. Carried rather than dropped: a short
+  // list presented as the whole tenant tells a requester a real group does not exist.
+  const [optionsTruncated, setOptionsTruncated] = React.useState<Record<string, boolean>>({});
 
   React.useEffect(() => {
     catalog.form(item.key).then((r) => setForm(r.form)).catch(() => setForm(null)).finally(() => setLoaded(true));
@@ -58,8 +62,11 @@ export function RequestModal({
       if (!f.options_source) continue;
       const url = OPTIONS_SOURCE_ENDPOINTS[f.options_source];
       if (!url) continue;
-      api.get<{ data: string[] }>(url)
-        .then((r) => setDynamicOptions((cur) => ({ ...cur, [f.key]: r.data })))
+      api.get<{ data: string[]; truncated?: boolean }>(url)
+        .then((r) => {
+          setDynamicOptions((cur) => ({ ...cur, [f.key]: r.data }));
+          setOptionsTruncated((cur) => ({ ...cur, [f.key]: r.truncated === true }));
+        })
         .catch(() => {});
     }
   }, [form]);
@@ -180,6 +187,7 @@ export function RequestModal({
                     value={answers[f.key]}
                     answers={answers}
                     options={dynamicOptions[f.key] ?? f.options}
+                    optionsTruncated={optionsTruncated[f.key] === true}
                     file={file}
                     onChange={set}
                     onFileChange={setFile}

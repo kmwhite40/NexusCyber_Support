@@ -318,6 +318,53 @@ export function partitionMirrorGroups(memberOf: Array<Record<string, unknown>>):
   return out;
 }
 
+/**
+ * Every group in the tenant a requester may pick from, paged to the end.
+ *
+ * "Security / distribution groups" used to be a free-text box: names were typed from memory, and
+ * a mistyped one became a group_missing blocker after approval — or, far more often, the box was
+ * left empty and the hire got no groups at all.
+ *
+ * PAGING IS THE POINT. /groups returns 100 rows by default and at most 999, and a "list them all"
+ * that ignores @odata.nextLink silently truncates in a large tenant — reporting a group that IS
+ * present as absent, which is the same class of bug as the name matching this module already
+ * guards against. When the page ceiling is reached the result SAYS it is short rather than
+ * looking complete; the caller surfaces that instead of pretending the list is the whole tenant.
+ *
+ * Dynamic groups are left out: Graph refuses a manual add to one, so offering it is offering a
+ * run that fails at add_groups. Role-assignable groups stay — picking one from a list is a
+ * deliberate act by someone reading it, unlike the mirror flow, where they are copied sight
+ * unseen and therefore held back as a blocker.
+ */
+export async function listSelectableGroups(
+  g: GraphClient,
+  opts: { maxPages?: number } = {},
+): Promise<{ groups: DirectoryGroup[]; truncated: boolean }> {
+  const maxPages = opts.maxPages ?? 20; // 20 x 999 — far past any tenant this serves
+  const groups: DirectoryGroup[] = [];
+  let path: string | null =
+    '/groups?$select=id,displayName,membershipRule,isAssignableToRole,groupTypes&$top=999';
+  let pages = 0;
+  let truncated = false;
+  while (path) {
+    if (pages >= maxPages) { truncated = true; break; }
+    const res: any = await g.get(path);
+    pages += 1;
+    for (const raw of res?.value ?? []) {
+      // A group with no id cannot be joined and one with no name cannot be shown or matched, so
+      // neither belongs in a list whose whole purpose is choosing by name.
+      if (typeof raw?.id !== 'string' || typeof raw?.displayName !== 'string') continue;
+      if (raw.membershipRule) continue;
+      groups.push({ id: raw.id, displayName: raw.displayName });
+    }
+    const next: unknown = res?.['@odata.nextLink'];
+    // The client takes paths, not absolute URLs; nextLink is absolute, so keep what follows the
+    // API version segment.
+    path = typeof next === 'string' && next ? next.replace(/^.*\/(?:v1\.0|beta)/, '') : null;
+  }
+  return { groups, truncated };
+}
+
 /** Every group and directory role a user belongs to, for the mirror-access flow. */
 export async function listMemberOf(g: GraphClient, userId: string): Promise<Array<Record<string, unknown>>> {
   // $select must name isAssignableToRole and membershipRule — Graph omits unselected fields
