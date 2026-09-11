@@ -739,14 +739,25 @@ export async function registerRoutes(app: FastifyInstance) {
   });
 
   // ---------------- Posture ----------------
+  // An agent's dashboard is a CROSS-CUSTOMER view and calls this with no organizationId. It used
+  // to answer 400 "organizationId required" on every load, so the Security posture panel sat blank
+  // and read as "nothing to report" rather than "this request failed".
   app.get('/api/v1/posture/score', async (req) => {
     const p = await requirePrincipal(req);
     const q = z.object({ organizationId: z.string().uuid().optional() }).parse(req.query);
     const orgId = p.plane === 'customer' ? p.organizationId! : q.organizationId;
-    if (!orgId) throw Errors.badRequest('organizationId required');
-    authorize(p, 'posture.read', { organizationId: orgId });
-    const score = await computeScore(p, orgId);
-    return { overall_score: score, grade: grade(score) };
+    if (orgId) {
+      authorize(p, 'posture.read', { organizationId: orgId });
+      const score = await computeScore(p, orgId);
+      return { overall_score: score, grade: grade(score), organizations: 1, worst_organization_id: orgId };
+    }
+    // Skip orgs this principal cannot read rather than failing the whole tile: one customer out
+    // of scope should narrow the answer, not blank it.
+    const orgs = (await posture.readableOrganizations(p))
+      .filter((o) => can(p, 'posture.read', { organizationId: o }));
+    const scores = [];
+    for (const o of orgs) scores.push({ orgId: o, score: await computeScore(p, o) });
+    return posture.summarizeScores(scores);
   });
 
   app.get('/api/v1/posture/findings', async (req) => {
@@ -755,8 +766,11 @@ export async function registerRoutes(app: FastifyInstance) {
       .object({ organizationId: z.string().uuid().optional(), severity: z.string().optional(), status: z.string().optional() })
       .parse(req.query);
     const orgId = p.plane === 'customer' ? p.organizationId! : q.organizationId;
-    if (!orgId) throw Errors.badRequest('organizationId required');
-    const data = await posture.listFindings(p, orgId, q);
+    if (orgId) return { data: await posture.listFindings(p, orgId, q) };
+    // Same reason as the score above: no org means "every customer I look after".
+    const orgs = (await posture.readableOrganizations(p))
+      .filter((o) => can(p, 'posture.read', { organizationId: o }));
+    const data = (await Promise.all(orgs.map((o) => posture.listFindings(p, o, q)))).flat();
     return { data };
   });
 

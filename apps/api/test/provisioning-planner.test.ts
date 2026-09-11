@@ -423,3 +423,37 @@ describe('create_user carries the real given name and surname', () => {
     expect(step.detail.surname).toBe('Lovelace');
   });
 });
+
+// SBS convention: contractors carry a .ctr suffix on the UPN, so the account itself says what the
+// person is. Without it, a contractor is indistinguishable from staff in the directory, in the
+// GAL, and in every audit export — the distinction the suffix exists to make is exactly the one
+// an auditor asks about.
+describe('contractor UPNs', () => {
+  const contractor = (over: Record<string, unknown> = {}) => ({ ...answers, ...over });
+
+  it('appends .ctr for an employment type of Contractor', () => {
+    expect(deriveUpn(contractor({ employment_type: 'Contractor' }), 'sbsfederal.com'))
+      .toBe('ada.lovelace.ctr@sbsfederal.com');
+  });
+
+  // Two fields can say "not an employee" — the form asks both, and either answer counts.
+  it('appends .ctr for a hire type of Consultant', () => {
+    expect(deriveUpn(contractor({ hire_type: 'Consultant' }), 'sbsfederal.com'))
+      .toBe('ada.lovelace.ctr@sbsfederal.com');
+  });
+
+  it('leaves permanent staff alone', () => {
+    expect(deriveUpn(contractor({ employment_type: 'Full-time', hire_type: 'Direct Hire' }), 'sbsfederal.com'))
+      .toBe('ada.lovelace@sbsfederal.com');
+  });
+
+  it('does not double the suffix', () => {
+    expect(deriveUpn(contractor({ employment_type: 'Contractor', hire_type: 'Consultant' }), 'sbsfederal.com'))
+      .toBe('ada.lovelace.ctr@sbsfederal.com');
+  });
+
+  it('still uses the preferred first name', () => {
+    expect(deriveUpn(contractor({ preferred_first_name: 'Addy', employment_type: 'Contractor' }), 'sbsfederal.com'))
+      .toBe('addy.lovelace.ctr@sbsfederal.com');
+  });
+});

@@ -81,10 +81,29 @@ export function normalizeForMatch(value: string): string {
  *  worse than stopping and asking a human to supply an ASCII-transliterated name. */
 const slug = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, '');
 
+/**
+ * Answers that mean "this person is not an employee".
+ *
+ * The intake asks two overlapping questions — employment type and hire type — and either can
+ * carry the answer. Matching on both is deliberate: a contractor recorded only under hire type
+ * would otherwise get a staff UPN, and the whole point of the suffix is that the account itself
+ * says what the person is.
+ */
+const CONTRACTOR_ANSWERS = new Set(['contractor', 'consultant', 'temporary', 'subcontractor']);
+
+export function isContractor(answers: Record<string, unknown>): boolean {
+  return [answers.employment_type, answers.hire_type]
+    .some((v) => CONTRACTOR_ANSWERS.has(str(v).trim().toLowerCase()));
+}
+
 export function deriveUpn(answers: Record<string, unknown>, upnDomain: string): string {
   const first = slug(str(answers.preferred_first_name) || str(answers.legal_first_name));
   const last = slug(str(answers.legal_last_name));
-  return `${first}.${last}@${upnDomain}`;
+  // first.last.ctr for contractors — SBS convention. Without it a contractor is indistinguishable
+  // from staff in the directory, the GAL and every audit export, which is precisely the
+  // distinction the suffix exists to make.
+  const suffix = isContractor(answers) ? '.ctr' : '';
+  return `${first}.${last}${suffix}@${upnDomain}`;
 }
 
 export function planRun(input: PlanInput): Plan {

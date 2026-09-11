@@ -1,6 +1,6 @@
 // Posture database (docs/nexus/05 §I). Findings, scoring, and the finding->ticket
 // bridge with a remediation SLA. First-class system-of-record linked to tickets.
-import { withOrgContext } from '../db/pool.js';
+import { withSystemContext, withOrgContext } from '../db/pool.js';
 import { orgContextFor } from '../auth/principal.js';
 import { authorize } from '../authz/pdp.js';
 import { audit } from './audit.js';
@@ -38,6 +38,59 @@ export function grade(score: number): 'A' | 'B' | 'C' | 'D' | 'F' {
   if (score >= 70) return 'C';
   if (score >= 60) return 'D';
   return 'F';
+}
+
+
+
+/**
+ * Which organizations this principal may read posture for.
+ *
+ * An agent scoped to specific customers gets those; one with an all-orgs grant or the superuser
+ * wildcard gets every active organization. Returns [] rather than throwing when a principal has no
+ * scope at all — the caller then reports "nothing measured", which is the truth.
+ */
+export async function readableOrganizations(actor: Principal): Promise<string[]> {
+  if (actor.plane === 'customer') return actor.organizationId ? [actor.organizationId] : [];
+  if (!actor.allOrgs && !actor.permissions.includes('admin.superuser') && actor.assignedOrgs.length) {
+    return actor.assignedOrgs;
+  }
+  return withSystemContext(async (sql) => {
+    const { rows } = await sql.query("SELECT id FROM organizations WHERE status = 'active' ORDER BY name");
+    return rows.map((r: { id: string }) => r.id as string);
+  });
+}
+
+export interface OrgScore { orgId: string; score: number }
+
+export interface PostureSummary {
+  /** Null means NOTHING WAS MEASURED — not a perfect score. See below. */
+  overall_score: number | null;
+  grade: 'A' | 'B' | 'C' | 'D' | 'F' | null;
+  organizations: number;
+  worst_organization_id: string | null;
+}
+
+/**
+ * Roll several customers' posture into the one number an agent's dashboard shows.
+ *
+ * Reports the WORST customer, not the average. An average of 98, 88 and 31 reads as 72 and hides
+ * the tenant that is actually in trouble; on a desk whose job is noticing trouble, a single number
+ * that averages away a failing customer is worse than no number at all.
+ *
+ * With nothing assigned it returns null rather than 100. "Nothing measured" and "nothing wrong"
+ * are different claims, and a stat tile should not make the confident one on no evidence.
+ */
+export function summarizeScores(scores: OrgScore[]): PostureSummary {
+  if (scores.length === 0) {
+    return { overall_score: null, grade: null, organizations: 0, worst_organization_id: null };
+  }
+  const worst = scores.reduce((a, b) => (b.score < a.score ? b : a));
+  return {
+    overall_score: worst.score,
+    grade: grade(worst.score),
+    organizations: scores.length,
+    worst_organization_id: worst.orgId,
+  };
 }
 
 export async function listFindings(actor: Principal, orgId: string, filter: { severity?: string; status?: string } = {}) {
