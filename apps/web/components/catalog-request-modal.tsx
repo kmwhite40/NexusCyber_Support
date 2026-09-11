@@ -8,6 +8,7 @@ import { UserPicker } from '@/components/user-picker';
 import { DynamicFormField, isFieldVisible, groupFieldsBySection } from '@/components/dynamic-form-field';
 import { Button, Input, Textarea, Field, Select } from '@/components/ui/primitives';
 import { Dialog } from '@/components/ui/dialog';
+import { clearFieldError } from '@/lib/ticket-actions';
 import { useAuth } from '@/components/auth-context';
 
 /** Form fields whose options come from a live endpoint rather than the form definition. */
@@ -64,7 +65,13 @@ export function RequestModal({
   }, [form]);
 
   const searchOrg = isAgent ? orgId : me?.organization_id ?? undefined;
-  const set = (key: string, v: unknown) => setAnswers((a) => ({ ...a, [key]: v }));
+  const set = (key: string, v: unknown) => {
+    setAnswers((a) => ({ ...a, [key]: v }));
+    // Clear this field's server error the moment it is edited. Leaving it up meant a date the
+    // operator had just filled in still read "Start date is required", so the form appeared to
+    // reject correct input and there was no way to tell which complaints were still live.
+    setFieldErrors((e) => clearFieldError(e, key));
+  };
   const renderUserPicker = (f: FormFieldDef, multi: boolean) =>
     multi ? (
       <UserPicker value={(answers[f.key] as string[]) ?? []} onChange={(v) => set(f.key, v)} organizationId={searchOrg} multiple />

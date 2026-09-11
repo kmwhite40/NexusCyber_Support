@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { describe, it, expect } from 'vitest';
-import { orderTransitions, REVERSING_STATES } from '@/lib/ticket-actions';
+import { orderTransitions, REVERSING_STATES, clearFieldError } from '@/lib/ticket-actions';
 
 // Reported three times: "tickets still say in progress when I resolved them." The event log shows
 // resolved -> reopened -> in_progress within 1-2 seconds, attributed to the operator — which for a
@@ -34,5 +34,25 @@ describe('transition action ordering', () => {
 
   it('leaves a single-option row alone', () => {
     expect(orderTransitions(['in_progress'])).toEqual(['in_progress']);
+  });
+});
+
+// A filled-in field that still says "is required" makes the form look broken and hides which
+// complaints are still live. Errors retract as soon as the field is edited.
+describe('clearFieldError', () => {
+  it('removes only the field that was edited', () => {
+    const out = clearFieldError({ start_date: 'Start date is required', on_behalf_of: 'required' }, 'start_date');
+    expect(out).toEqual({ on_behalf_of: 'required' });
+  });
+
+  it('returns the same object when there is nothing to clear, avoiding a pointless re-render', () => {
+    const errs = { start_date: 'Start date is required' };
+    expect(clearFieldError(errs, 'legal_first_name')).toBe(errs);
+  });
+
+  it('does not mutate the errors it was given', () => {
+    const errs = { a: 'x', b: 'y' };
+    clearFieldError(errs, 'a');
+    expect(errs).toEqual({ a: 'x', b: 'y' });
   });
 });

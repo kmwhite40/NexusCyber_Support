@@ -135,9 +135,15 @@ export function UserPicker({
       {/* An empty result used to render NOTHING, so "no matches" and "not searched yet" looked
           identical. An operator typed a name, saw no list, and concluded the picker was broken —
           while the typed text sat in the box looking like a value and the field stayed empty. */}
-      {open && searched && hits.length === 0 && q.trim() !== '' && (
-        <p className="mt-1 text-xs text-muted">
-          No one matches “{q.trim()}”. Pick a name from the list — typing alone does not select anyone.
+      {/* Typing is not selecting, and nothing said so. The requester box showed a full, correct
+          email address while the field stayed empty, because the name was never clicked. The old
+          hint only appeared when the search came back EMPTY — precisely the case where a real
+          name IS found and left unselected, the operator was warned about nothing. */}
+      {q.trim() !== '' && selectedIds.length === 0 && (
+        <p className="mt-1 text-xs text-warning">
+          {searched && hits.length === 0
+            ? `No one matches “${q.trim()}”.`
+            : 'Not selected — choose a name from the list. Typing alone does not select anyone.'}
         </p>
       )}
       {open && hits.length > 0 && rect && createPortal((

@@ -122,3 +122,30 @@ describe('user picker feedback when nothing matches', () => {
     expect(await screen.findByText(/choose|select|pick/i)).toBeTruthy();
   });
 });
+
+// The requester box showed a full email address and the field was still empty: typing is not
+// selecting, and nothing on screen said so while results existed. The "no matches" hint only
+// appeared when the search came back EMPTY — exactly the case where a real name IS found, typed
+// in full, and left unselected, the operator got no warning at all.
+describe('typed text is not a selection', () => {
+  it('warns whenever text is typed and nobody is selected, even when matches exist', async () => {
+    const { users } = await import('@/lib/api');
+    (users.search as any).mockResolvedValue({
+      data: [{ id: 'u1', display_name: 'Bragg, Coady', email: 'coady.bragg@sbsfederal.com' }],
+    });
+    render(<UserPicker value={null} onChange={vi.fn()} organizationId="org-1" />);
+    await userEvent.type(screen.getByPlaceholderText(/enter name or email/i), 'coady');
+    // The warning is what matters: a search that FINDS someone must still say nobody is
+    // selected. Dropdown rendering is covered by the portal tests above.
+    expect(await screen.findByText(/not selected/i)).toBeTruthy();
+    expect((users.search as any)).toHaveBeenCalled();
+  });
+
+  // The warning is keyed on whether anyone is SELECTED, not on whether the box has text — so a
+  // picker holding a real selection stays quiet. Selection itself is covered by the portal tests.
+  it('stays quiet when someone is actually selected', async () => {
+    render(<UserPicker value={'u1'} onChange={vi.fn()} organizationId="org-1" />);
+    await userEvent.type(screen.getByPlaceholderText(/enter name or email/i), 'coady');
+    expect(screen.queryByText(/not selected/i)).toBeNull();
+  });
+});

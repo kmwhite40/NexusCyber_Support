@@ -33,3 +33,23 @@ export function orderTransitions(states: string[]): string[] {
     return ra - rb;
   });
 }
+
+/**
+ * Drop one field's validation error.
+ *
+ * Per-field errors are only useful while they are TRUE. They used to survive until the next
+ * submit, so a date the operator had just filled in still read "Start date is required" — the form
+ * appearing to reject correct input, with no way to tell which complaints were still live.
+ *
+ * Returns the SAME object when there is nothing to remove, so editing an untouched field does not
+ * trigger a re-render for no reason.
+ */
+export function clearFieldError(
+  errors: Record<string, string>,
+  key: string,
+): Record<string, string> {
+  if (!(key in errors)) return errors;
+  const next = { ...errors };
+  delete next[key];
+  return next;
+}
