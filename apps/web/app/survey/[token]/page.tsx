@@ -19,8 +19,11 @@ import { Button, Textarea } from '@/components/ui/primitives';
 type Question = { key: 'overall' | 'timeliness' | 'technician'; label: string };
 type State = 'loading' | 'ok' | 'answered' | 'expired' | 'unknown' | 'sent' | 'error';
 
-export default function SurveyPage({ params }: { params: { token: string } }) {
-  const token = params.token;
+// `params` is a Promise in Next 15's App Router, unwrapped with React.use(). Typing it as a
+// plain object compiles locally against stale generated route types and then fails the real
+// build — which is exactly how this shipped broken the first time.
+export default function SurveyPage({ params }: { params: Promise<{ token: string }> }) {
+  const { token } = React.use(params);
   const [state, setState] = React.useState<State>('loading');
   const [ticketNumber, setTicketNumber] = React.useState<string | null>(null);
   const [questions, setQuestions] = React.useState<Question[]>([]);
