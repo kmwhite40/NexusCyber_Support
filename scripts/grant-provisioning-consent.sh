@@ -2,7 +2,7 @@
 #
 # grant-provisioning-consent.sh
 #
-# Grants admin consent for the Anchor-Provisioning app's five application permissions.
+# Grants admin consent for the Anchor-Provisioning app's application permissions.
 #
 # WHY THIS EXISTS: `az ad app permission admin-consent` answers
 #   "This command is not yet supported on sovereign clouds"
@@ -91,7 +91,7 @@ done
 echo
 
 if [ "${#TO_GRANT[@]}" -eq 0 ]; then
-  echo "✓ Nothing to do — all five are already consented."
+  echo "✓ Nothing to do — all ${#PERMS[@]} are already consented."
   exit 0
 fi
 
