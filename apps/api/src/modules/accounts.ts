@@ -13,6 +13,7 @@ import { publish } from '../events/bus.js';
 import { config } from '../config.js';
 import { Errors } from '../errors.js';
 import { authorize } from '../authz/pdp.js';
+import { releaseCustomerTwin } from './platform-users.js';
 import type { OidcIdentity, OidcCustomerIdentity } from '../auth/oidc.js';
 import type { Principal, SessionClaims } from '../types.js';
 
@@ -130,8 +131,12 @@ export async function loginLocal(email: string, password: string): Promise<AuthR
          FROM users u
          LEFT JOIN role_assignments ra ON ra.user_id = u.id
          LEFT JOIN roles r ON r.id = ra.role_id
-        WHERE u.email = $1
-        GROUP BY u.id`,
+        WHERE u.email = $1 AND u.password_hash IS NOT NULL AND u.status <> 'deleted'
+        GROUP BY u.id
+        -- The same email can exist once per plane (an SBS staffer is also a roster-synced
+        -- customer). Without an order this picked either row arbitrarily; the password-less
+        -- customer twin then made a correct staff password fail. Staff account wins.
+        ORDER BY (u.plane = 'nexus') DESC, (u.status = 'active') DESC`,
       [e],
     );
     return rows[0];
@@ -202,7 +207,10 @@ export async function loginOrProvisionAgentOidc(identity: OidcIdentity): Promise
   // Map "Anchor.SecurityAnalyst" -> role key "SecurityAnalyst".
   const roleKeys = [...new Set(grantedAppRoles.map((r) => r.replace(/^Anchor\./, '')))];
 
+  let releasedTwin: { id: string } | null = null;
   const user = await withSystemContext(async (sql) => {
+   await sql.query('BEGIN');
+   try {
     // 1) Match by stable Entra oid.
     let row = (
       await sql.query(
@@ -219,6 +227,13 @@ export async function loginOrProvisionAgentOidc(identity: OidcIdentity): Promise
           [email],
         )
       ).rows[0];
+      if (!byEmail && roleKeys.length === 0) {
+        throw Errors.forbidden('no Anchor app role assigned for this user');
+      }
+      // The tenant roster sync gives SBS staff a customer-plane row carrying this same oid, and
+      // external_id is globally UNIQUE: linking or inserting would fail the whole sign-in with a
+      // unique violation. Staff sign-in wins — move the identity here, suspend the customer twin.
+      releasedTwin = await releaseCustomerTwin(sql, { oid: identity.oid });
       if (byEmail) {
         row = byEmail;
         if (!byEmail.external_id) {
@@ -227,11 +242,8 @@ export async function loginOrProvisionAgentOidc(identity: OidcIdentity): Promise
       }
     }
 
-    // 3) JIT-provision a new agent — only if the token grants an allowed role.
+    // 3) JIT-provision a new agent — only if the token grants an allowed role (checked above).
     if (!row) {
-      if (roleKeys.length === 0) {
-        throw Errors.forbidden('no Anchor app role assigned for this user');
-      }
       row = (
         await sql.query(
           `INSERT INTO users (plane, organization_id, email, display_name, external_id)
@@ -257,8 +269,21 @@ export async function loginOrProvisionAgentOidc(identity: OidcIdentity): Promise
         }
       }
     }
+    await sql.query('COMMIT');
     return row;
+   } catch (err) {
+    await sql.query('ROLLBACK');
+    throw err;
+   }
   });
+  if (releasedTwin) {
+    await audit(null, {
+      action: 'admin.users.manage',
+      resourceType: 'user',
+      resourceId: (releasedTwin as { id: string }).id,
+      detail: { op: 'suspend_customer_twin', staff_user: user.id, moved_entra_identity: true, via: 'staff_sso' },
+    });
+  }
 
   const claims: Omit<SessionClaims, 'iat' | 'exp'> = {
     sub: user.id,

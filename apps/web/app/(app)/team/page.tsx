@@ -9,7 +9,7 @@ import { Dialog } from '@/components/ui/dialog';
 import { DataTable, EmptyState, Skeleton } from '@/components/ui/data';
 
 export default function TeamPage() {
-  const { can } = useAuth();
+  const { can, me } = useAuth();
   const canManage = can('admin.users.manage');
   const isSuper = can('admin.superuser');
 
@@ -19,6 +19,7 @@ export default function TeamPage() {
   const [editing, setEditing] = React.useState<PlatformUser | null>(null);
   const [creating, setCreating] = React.useState(false);
   const [err, setErr] = React.useState<string | null>(null);
+  const [notice, setNotice] = React.useState<string | null>(null);
 
   const refresh = React.useCallback(() => {
     platformUsersApi.list().then((r) => { setUsers(r.data); setAssignable(r.assignable_roles); }).catch(() => setUsers([]));
@@ -44,6 +45,7 @@ export default function TeamPage() {
         <Button onClick={() => { setErr(null); setCreating(true); }}>New platform user</Button>
       </div>
       {err && <p className="text-sm text-danger">{err}</p>}
+      {notice && <p className="text-sm text-success">{notice}</p>}
 
       <Card><CardBody>
         {users === null ? <Skeleton className="h-12" /> : (
@@ -62,7 +64,12 @@ export default function TeamPage() {
                 : u.org_ids.length
                   ? <span className="text-sm">{u.org_ids.length === 1 ? orgName(u.org_ids[0]) : `${u.org_ids.length} orgs`}</span>
                   : <span className="text-muted">No orgs</span> },
-              { key: 'signin', header: 'Sign-in', render: (u) => u.has_password ? <Badge tone="neutral">local + SSO</Badge> : <Badge tone="neutral">SSO only</Badge> },
+              { key: 'signin', header: 'Sign-in', render: (u) => (
+                <span className="flex flex-wrap gap-1">
+                  {u.sso_linked ? <Badge tone="success">Entra linked</Badge> : <Badge tone="neutral">SSO not yet used</Badge>}
+                  {u.has_password && <Badge tone="warning">local password</Badge>}
+                </span>
+              ) },
               { key: 'status', header: 'Status', render: (u) => <Badge tone={u.status === 'active' ? 'success' : 'warning'}>{u.status}</Badge> },
             ]}
             empty={<EmptyState title="No platform users" />}
@@ -77,8 +84,7 @@ export default function TeamPage() {
           orgs={orgs}
           isSuper={isSuper}
           onClose={() => setCreating(false)}
-          onSaved={() => { setCreating(false); refresh(); }}
-          onError={setErr}
+          onSaved={(msg) => { setCreating(false); setErr(null); setNotice(msg ?? null); refresh(); }}
         />
       )}
       {editing && (
@@ -88,9 +94,9 @@ export default function TeamPage() {
           assignable={assignable}
           orgs={orgs}
           isSuper={isSuper}
+          isSelf={editing.id === me?.id}
           onClose={() => setEditing(null)}
-          onSaved={() => { setEditing(null); refresh(); }}
-          onError={setErr}
+          onSaved={(msg) => { setEditing(null); setErr(null); setNotice(msg ?? null); refresh(); }}
         />
       )}
     </div>
@@ -98,16 +104,16 @@ export default function TeamPage() {
 }
 
 function UserModal({
-  mode, user, assignable, orgs, isSuper, onClose, onSaved, onError,
+  mode, user, assignable, orgs, isSuper, isSelf = false, onClose, onSaved,
 }: {
   mode: 'create' | 'edit';
   user?: PlatformUser;
   assignable: string[];
   orgs: OrgSummary[];
   isSuper: boolean;
+  isSelf?: boolean;
   onClose: () => void;
-  onSaved: () => void;
-  onError: (m: string) => void;
+  onSaved: (message?: string) => void;
 }) {
   const [email, setEmail] = React.useState(user?.email ?? '');
   const [displayName, setDisplayName] = React.useState(user?.display_name ?? '');
@@ -117,6 +123,8 @@ function UserModal({
   const [orgIds, setOrgIds] = React.useState<string[]>(user?.org_ids ?? []);
   const [status, setStatus] = React.useState<'active' | 'suspended'>((user?.status as 'active' | 'suspended') ?? 'active');
   const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = React.useState(false);
 
   const scope: OrgScope = scopeMode === 'all' ? { mode: 'all' } : { mode: 'orgs', orgIds };
   const toggleRole = (r: string) => setRoles((s) => s.includes(r) ? s.filter((x) => x !== r) : [...s, r]);
@@ -124,27 +132,49 @@ function UserModal({
 
   async function save() {
     setBusy(true);
+    setError(null);
     try {
       if (mode === 'create') {
-        await platformUsersApi.create({
+        const r = await platformUsersApi.create({
           email: email.trim(),
           displayName: displayName.trim() || undefined,
           roleKeys: roles,
           password: password.trim() || undefined,
           scope,
         });
+        onSaved(r.releasedCustomerAccount
+          ? `Created. ${email.trim()} also had a customer-portal account; it was suspended and its Microsoft sign-in moved to this staff account.`
+          : undefined);
       } else if (user) {
+        // Roles + scope first, in one transaction: if that is refused (e.g. an empty scope),
+        // nothing else has changed either.
+        await platformUsersApi.setAccess(user.id, roles, scope);
         await platformUsersApi.update(user.id, {
           status,
           displayName: displayName.trim() || undefined,
           password: password.trim() || undefined,
         });
-        await platformUsersApi.setRoles(user.id, roles);
-        await platformUsersApi.setScope(user.id, scope);
+        onSaved();
       }
-      onSaved();
-    } catch (e) { onError(e instanceof ApiError ? e.detail : 'Save failed'); onClose(); }
-    finally { setBusy(false); }
+    } catch (e) {
+      // Keep the dialog open with what was typed — closing it threw the edits away.
+      setError(e instanceof ApiError ? e.detail : 'Save failed');
+    } finally { setBusy(false); }
+  }
+
+  async function remove() {
+    if (!user) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await platformUsersApi.remove(user.id);
+      onSaved(r.mode === 'deleted'
+        ? `${user.email} was deleted.`
+        : `${user.email} was deleted. Their tickets and history are kept under "${user.display_name ?? user.email} (deleted)".`);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.detail : 'Delete failed');
+      setConfirmDelete(false);
+    } finally { setBusy(false); }
   }
 
   return (
@@ -215,7 +245,22 @@ function UserModal({
         )}
       </div>
 
-      <div className="flex justify-end gap-2 pt-1">
+      {error && <p className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">{error}</p>}
+
+      <div className="flex items-center justify-end gap-2 pt-1">
+        {mode === 'edit' && !isSelf && (
+          confirmDelete ? (
+            <div className="mr-auto flex items-center gap-2 text-sm">
+              <span className="text-danger">Delete this account? This can&apos;t be undone.</span>
+              <Button variant="danger" onClick={remove} disabled={busy}>{busy ? 'Deleting…' : 'Delete'}</Button>
+              <Button variant="outline" onClick={() => setConfirmDelete(false)} disabled={busy}>Keep</Button>
+            </div>
+          ) : (
+            <Button variant="outline" className="mr-auto border-danger/40 text-danger" onClick={() => setConfirmDelete(true)} disabled={busy}>
+              Delete account
+            </Button>
+          )
+        )}
         <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
         <Button onClick={save} disabled={busy || !email.includes('@') || roles.length === 0 || (scopeMode === 'orgs' && orgIds.length === 0)}>
           {busy ? 'Saving…' : mode === 'create' ? 'Create' : 'Save'}

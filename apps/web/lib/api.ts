@@ -511,6 +511,8 @@ export interface PlatformUser {
   display_name: string | null;
   status: string;
   has_password: boolean;
+  /** Linked to an Entra identity (Microsoft sign-in lands on this account). */
+  sso_linked: boolean;
   roles: string[];
   all_orgs: boolean;
   org_ids: string[];
@@ -570,11 +572,14 @@ export const entraApi = {
 export const platformUsersApi = {
   list: () => api.get<{ data: PlatformUser[]; assignable_roles: string[] }>('/platform/users'),
   create: (b: { email: string; displayName?: string; roleKeys?: string[]; password?: string; scope?: OrgScope }) =>
-    api.post<{ id: string }>('/platform/users', b),
+    api.post<{ id: string; releasedCustomerAccount?: boolean }>('/platform/users', b),
   update: (id: string, b: { status?: 'active' | 'suspended'; displayName?: string; password?: string }) =>
     api.patch<{ id: string }>(`/platform/users/${id}`, b),
   setRoles: (id: string, roleKeys: string[]) => api.put<{ id: string }>(`/platform/users/${id}/roles`, { roleKeys }),
   setScope: (id: string, scope: OrgScope) => api.put<{ id: string }>(`/platform/users/${id}/scope`, scope),
+  setAccess: (id: string, roleKeys: string[], scope: OrgScope) =>
+    api.put<{ id: string }>(`/platform/users/${id}/access`, { roleKeys, scope }),
+  remove: (id: string) => api.del<{ id: string; mode: 'deleted' | 'tombstoned' }>(`/platform/users/${id}`),
 };
 
 export interface Delivery {

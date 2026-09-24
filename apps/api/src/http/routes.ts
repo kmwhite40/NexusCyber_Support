@@ -438,6 +438,22 @@ export async function registerRoutes(app: FastifyInstance) {
     return platformUsers.setPlatformUserScope(p, id, scope);
   });
 
+  // Roles + scope in one transaction (the edit dialog's save).
+  app.put('/api/v1/platform/users/:id/access', async (req) => {
+    const p = await requirePrincipal(req);
+    authorize(p, 'admin.users.manage');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ roleKeys: z.array(z.string()).min(1), scope: scopeSchema }).parse(req.body);
+    return platformUsers.setPlatformUserAccess(p, id, body);
+  });
+
+  app.delete('/api/v1/platform/users/:id', async (req) => {
+    const p = await requirePrincipal(req);
+    authorize(p, 'admin.users.manage');
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return platformUsers.deletePlatformUser(p, id);
+  });
+
   // ---------------- Tickets ----------------
   app.post('/api/v1/tickets', async (req, reply) => {
     const p = await requirePrincipal(req);
