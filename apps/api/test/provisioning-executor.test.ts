@@ -164,6 +164,64 @@ describe('executePlan', () => {
     expect(r.status).toBe('succeeded');
   });
 
+  it('attempts every group before failing, and names the ones Graph refused', async () => {
+    const withGroups: Plan = {
+      ...plan,
+      steps: [
+        plan.steps[0],
+        {
+          key: 'add_groups', label: '',
+          detail: { groups: ['A', 'B', 'C'], groupIds: ['g-a', 'g-b', 'g-c'], groupNamesById: { 'g-a': 'A', 'g-b': 'B', 'g-c': 'C' } },
+        },
+      ],
+    };
+    const added: string[] = [];
+    const r = await executePlan(withGroups, ops({
+      addToGroup: async (groupId) => {
+        if (groupId === 'g-b') {
+          throw Object.assign(new Error('Graph request failed: 403'), {
+            status: 403, body: JSON.stringify({ error: { message: 'Insufficient privileges to complete the operation.' } }),
+          });
+        }
+        added.push(groupId);
+        return {};
+      },
+    }));
+    expect(added).toEqual(['g-a', 'g-c']); // C is still attempted after B fails
+    const out = r.outcomes.find((o) => o.key === 'add_groups');
+    expect(out?.status).toBe('failed');
+    expect(out?.error).toBe('add_groups: 1 of 3 group(s) failed: B (Graph 403: Insufficient privileges to complete the operation.)');
+  });
+
+  it('succeeds with a note when the only leftovers are distribution lists for Exchange', async () => {
+    const withGroups: Plan = {
+      ...plan,
+      steps: [
+        plan.steps[0],
+        {
+          key: 'add_groups', label: '',
+          detail: { groups: ['CPC Users', 'DL-Chantilly'], groupIds: ['g-cpc'], exchangeOnlyGroups: ['DL-Chantilly'] },
+        },
+      ],
+    };
+    const r = await executePlan(withGroups, ops());
+    const out = r.outcomes.find((o) => o.key === 'add_groups');
+    expect(out?.status).toBe('succeeded');
+    expect(out?.note).toMatch(/Exchange admin center.*DL-Chantilly/);
+  });
+
+  it('does not mistake an all-distribution-list request for unresolved groups', async () => {
+    const onlyDls: Plan = {
+      ...plan,
+      steps: [
+        plan.steps[0],
+        { key: 'add_groups', label: '', detail: { groups: ['DL-FED'], groupIds: [], exchangeOnlyGroups: ['DL-FED'] } },
+      ],
+    };
+    const r = await executePlan(onlyDls, ops());
+    expect(r.outcomes.find((o) => o.key === 'add_groups')?.status).toBe('succeeded');
+  });
+
   it('returns status succeeded (not awaiting_cloudpc) when the plan has no await_cloudpc step', async () => {
     const noCloudPc: Plan = { ...plan, steps: [plan.steps[0]] };
     const r = await executePlan(noCloudPc, ops());

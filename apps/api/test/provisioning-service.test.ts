@@ -57,15 +57,48 @@ function ops(over: Partial<ProvisioningOps> = {}): ProvisioningOps {
   };
 }
 
+describe('resolveGroupIds — groups Graph cannot write (STRA-000007)', () => {
+  // The real shapes from the SBS tenant: DL-* are classic distribution lists (mailEnabled,
+  // not security, no groupTypes). Sending one to members/$ref is a 400 that used to fail the
+  // whole add_groups step and skip Cloud PC and the TAP behind it.
+  const tenant = [
+    { id: 'cpc', displayName: 'CPC Users', mailEnabled: false, securityEnabled: true, groupTypes: [] },
+    { id: 'dl1', displayName: 'DL-Chantilly', mailEnabled: true, securityEnabled: false, groupTypes: [] },
+    { id: 'mesg', displayName: 'Mail Sec', mailEnabled: true, securityEnabled: true, groupTypes: [] },
+    { id: 'm365', displayName: 'Team Site', mailEnabled: true, securityEnabled: false, groupTypes: ['Unified'] },
+    { id: 'dyn', displayName: 'All Users', mailEnabled: false, securityEnabled: true, groupTypes: ['DynamicMembership'] },
+  ];
+
+  it('keeps distribution lists and mail-enabled security groups away from Graph', () => {
+    const r = resolveGroupIds(['CPC Users', 'DL-Chantilly', 'Mail Sec', 'Team Site', 'All Users'], tenant);
+    expect(r.groupIds).toEqual(['cpc', 'm365']);
+    expect(r.exchangeOnly).toEqual(['DL-Chantilly', 'Mail Sec']);
+    expect(r.dynamic).toEqual(['All Users']);
+    expect(r.missing).toEqual([]);
+    expect(r.namesById).toEqual({ cpc: 'CPC Users', m365: 'Team Site' });
+  });
+
+  it('writes the split onto the plan without turning distribution lists into blockers', () => {
+    const plan = {
+      upn: 'new@x', displayName: 'New', blockers: [],
+      steps: [{ key: 'add_groups' as const, label: 'Add to 2 group(s)', detail: { groups: ['CPC Users', 'DL-Chantilly'] } }],
+    };
+    const out = applyGroupResolution(plan, tenant);
+    expect(out.blockers).toEqual([]);
+    expect(out.steps[0].detail).toMatchObject({ groupIds: ['cpc'], exchangeOnlyGroups: ['DL-Chantilly'] });
+    expect(out.steps[0].label).toMatch(/1 distribution list\(s\) to add in Exchange/);
+  });
+});
+
 describe('resolveGroupIds', () => {
   it('maps group names to ids', () => {
     expect(resolveGroupIds(['All Staff', 'Engineering'], directory))
-      .toEqual({ groupIds: ['g1', 'g2'], missing: [] });
+      .toMatchObject({ groupIds: ['g1', 'g2'], missing: [] });
   });
 
   it('reports names that do not resolve rather than silently dropping them', () => {
     expect(resolveGroupIds(['All Staff', 'Ghost'], directory))
-      .toEqual({ groupIds: ['g1'], missing: ['Ghost'] });
+      .toMatchObject({ groupIds: ['g1'], missing: ['Ghost'] });
   });
 
   it('is case-insensitive', () => {
@@ -78,7 +111,7 @@ describe('resolveGroupIds', () => {
 
   it('does not add the same group twice when a name repeats', () => {
     expect(resolveGroupIds(['All Staff', 'all staff'], directory))
-      .toEqual({ groupIds: ['g1'], missing: [] });
+      .toMatchObject({ groupIds: ['g1'], missing: [] });
   });
 
   // Same class of landmine as the SKU part-number match in planner.test.ts: a zero-width space

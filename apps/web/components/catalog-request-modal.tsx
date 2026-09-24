@@ -46,6 +46,7 @@ export function RequestModal({
   // Which of those lists the server told us was incomplete. Carried rather than dropped: a short
   // list presented as the whole tenant tells a requester a real group does not exist.
   const [optionsTruncated, setOptionsTruncated] = React.useState<Record<string, boolean>>({});
+  const [optionsFailed, setOptionsFailed] = React.useState<Record<string, boolean>>({});
 
   React.useEffect(() => {
     catalog.form(item.key).then((r) => setForm(r.form)).catch(() => setForm(null)).finally(() => setLoaded(true));
@@ -67,7 +68,9 @@ export function RequestModal({
           setDynamicOptions((cur) => ({ ...cur, [f.key]: r.data }));
           setOptionsTruncated((cur) => ({ ...cur, [f.key]: r.truncated === true }));
         })
-        .catch(() => {});
+        // Still falls back to the static options, but SAYS so: an empty group picker that
+        // looks like "this tenant has no groups" is how onboarding requests went in with none.
+        .catch(() => setOptionsFailed((cur) => ({ ...cur, [f.key]: true })));
     }
   }, [form]);
 
@@ -180,8 +183,8 @@ export function RequestModal({
                   </h3>
                 )}
                 {group.fields.map((f: FormFieldDef) => (
+                  <React.Fragment key={f.key}>
                   <DynamicFormField
-                    key={f.key}
                     error={fieldErrors[f.key]}
                     field={f}
                     value={answers[f.key]}
@@ -193,6 +196,12 @@ export function RequestModal({
                     onFileChange={setFile}
                     renderUserPicker={renderUserPicker}
                   />
+                  {optionsFailed[f.key] && (
+                    <p className="-mt-2 mb-3 text-xs text-danger">
+                      Couldn&apos;t load the list of options for &ldquo;{f.label}&rdquo;. Close and reopen this form, or name them in the notes.
+                    </p>
+                  )}
+                  </React.Fragment>
                 ))}
               </section>
             ))}

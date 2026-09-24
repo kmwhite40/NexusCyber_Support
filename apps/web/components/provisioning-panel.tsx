@@ -211,7 +211,7 @@ export function ProvisioningPanel({ ticketId, canProvision }: { ticketId: string
                   This run cannot proceed
                 </div>
                 <ul className="list-disc space-y-0.5 pl-5 text-sm text-danger/90">
-                  {plan.blockers.map((b) => <li key={b.code}>{b.message}</li>)}
+                  {plan.blockers.map((b, i) => <li key={`${b.code}-${i}`}>{b.message}</li>)}
                 </ul>
               </div>
             )}

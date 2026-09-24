@@ -389,11 +389,18 @@ export async function listSelectableGroups(
 export async function listMemberOf(g: GraphClient, userId: string): Promise<Array<Record<string, unknown>>> {
   // $select must name isAssignableToRole and membershipRule — Graph omits unselected fields
   // silently, and without them every group would look ordinary and copyable.
-  const res = await g.get(
-    `/users/${encodeURIComponent(userId)}/memberOf`
-    + '?$select=id,displayName,membershipRule,isAssignableToRole,groupTypes,securityEnabled,mailEnabled',
-  );
-  return (res?.value ?? []) as Array<Record<string, unknown>>;
+  // Paged to the end: memberOf returns 100 per page, and an unpaged read silently dropped every
+  // membership after the first hundred from a mirrored hire.
+  const out: Array<Record<string, unknown>> = [];
+  let path: string | null = `/users/${encodeURIComponent(userId)}/memberOf`
+    + '?$select=id,displayName,membershipRule,isAssignableToRole,groupTypes,securityEnabled,mailEnabled';
+  for (let page = 0; path && page < 50; page++) {
+    const res = await g.get(path);
+    out.push(...((res?.value ?? []) as Array<Record<string, unknown>>));
+    const next: unknown = res?.['@odata.nextLink'];
+    path = typeof next === 'string' && next ? next.replace(/^.*\/(?:v1\.0|beta)/, '') : null;
+  }
+  return out;
 }
 
 /**
@@ -465,7 +472,30 @@ export async function getCloudPcStatus(g: GraphClient, upn: string): Promise<str
   return res?.value?.[0]?.status ?? null;
 }
 
-export interface DirectoryGroup { id: string; displayName: string }
+export interface DirectoryGroup {
+  id: string;
+  displayName: string;
+  mailEnabled?: boolean;
+  securityEnabled?: boolean;
+  groupTypes?: string[];
+}
+
+/**
+ * How membership of this group can be written. Pure.
+ *  - 'graph'    ordinary security groups and Microsoft 365 (Unified) groups: members/$ref works.
+ *  - 'exchange' classic distribution lists and mail-enabled security groups. Graph REFUSES to
+ *               change their membership (400 "Cannot Update a mail-enabled security groups and
+ *               or distribution list"); only Exchange Online can. Sending one to members/$ref
+ *               failed the whole add_groups step (STRA-000007) and skipped Cloud PC and TAP.
+ *  - 'dynamic'  membership is computed by a rule; nobody can add a member.
+ * Unknown metadata (older callers) is treated as 'graph' — the historical behaviour.
+ */
+export function groupMembershipWriter(g: DirectoryGroup): 'graph' | 'exchange' | 'dynamic' {
+  const types = g.groupTypes ?? [];
+  if (types.includes('DynamicMembership')) return 'dynamic';
+  if (g.mailEnabled === true && !types.includes('Unified')) return 'exchange';
+  return 'graph';
+}
 
 /** Pure. Reduces a `/groups` payload to id/displayName pairs, dropping any entry missing
  *  either half — a group with no id cannot be joined and one with no name cannot be matched
@@ -473,7 +503,13 @@ export interface DirectoryGroup { id: string; displayName: string }
 export function normalizeGroups(res: any): DirectoryGroup[] {
   return (res?.value ?? [])
     .filter((g: any) => typeof g?.id === 'string' && typeof g?.displayName === 'string')
-    .map((g: any) => ({ id: g.id, displayName: g.displayName }));
+    .map((g: any) => ({
+      id: g.id,
+      displayName: g.displayName,
+      ...(typeof g.mailEnabled === 'boolean' ? { mailEnabled: g.mailEnabled } : {}),
+      ...(typeof g.securityEnabled === 'boolean' ? { securityEnabled: g.securityEnabled } : {}),
+      ...(Array.isArray(g.groupTypes) ? { groupTypes: g.groupTypes.map(String) } : {}),
+    }));
 }
 
 /**
@@ -499,7 +535,7 @@ export async function listGroupsByDisplayName(
       .slice(i, i + chunkSize)
       .map((n) => `displayName eq ${odataStringLiteral(n)}`)
       .join(' or ');
-    const res = await g.get(`/groups?$filter=${encodeURIComponent(filter)}&$select=id,displayName`);
+    const res = await g.get(`/groups?$filter=${encodeURIComponent(filter)}&$select=id,displayName,mailEnabled,securityEnabled,groupTypes`);
     out.push(...normalizeGroups(res));
   }
   return out;

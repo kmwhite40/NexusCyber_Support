@@ -51,6 +51,7 @@ import {
   setPassword,
   listSelectableGroups,
   type DirectoryGroup,
+  groupMembershipWriter,
 } from '../../integrations/m365/provisioning-graph.js';
 import { planRun, deriveUpn, planFingerprint, normalizeForMatch, type Plan, type PlanInput } from './planner.js';
 import {
@@ -77,29 +78,39 @@ import type { Principal } from '../../types.js';
 export function resolveGroupIds(
   names: string[],
   directory: DirectoryGroup[],
-): { groupIds: string[]; missing: string[] } {
-  const byName = new Map(directory.map((g) => [normalizeForMatch(g.displayName), g.id]));
+): { groupIds: string[]; missing: string[]; exchangeOnly: string[]; dynamic: string[]; namesById: Record<string, string> } {
+  const byName = new Map(directory.map((g) => [normalizeForMatch(g.displayName), g]));
   const groupIds: string[] = [];
   const missing: string[] = [];
+  const exchangeOnly: string[] = [];
+  const dynamic: string[] = [];
+  const namesById: Record<string, string> = {};
   for (const n of names) {
-    const id = byName.get(normalizeForMatch(n));
-    if (!id) { missing.push(n); continue; }
+    const g = byName.get(normalizeForMatch(n));
+    if (!g) { missing.push(n); continue; }
+    // Graph cannot write distribution-list / mail-enabled-security membership, nor dynamic
+    // groups. Those are REPORTED (a manual Exchange task, a note) — never sent to members/$ref,
+    // where one refusal used to fail the step and skip Cloud PC and the TAP behind it.
+    const writer = groupMembershipWriter(g);
+    if (writer === 'exchange') { if (!exchangeOnly.includes(g.displayName)) exchangeOnly.push(g.displayName); continue; }
+    if (writer === 'dynamic') { if (!dynamic.includes(g.displayName)) dynamic.push(g.displayName); continue; }
     // The same group can be named twice (e.g. "All Staff" and "all staff" on one form).
     // Adding a member twice is an error in Graph, so de-duplicate here rather than in the
     // executor, which should only ever see a clean list.
-    if (!groupIds.includes(id)) groupIds.push(id);
+    if (!groupIds.includes(g.id)) groupIds.push(g.id);
+    namesById[g.id] = g.displayName;
   }
-  return { groupIds, missing };
+  return { groupIds, missing, exchangeOnly, dynamic, namesById };
 }
 
 /**
  * THE SEAM between the pure planner (Task 11) and the executor (Task 13). Pure.
  *
  * The planner cannot do I/O, so its `add_groups` step carries group *names*. The executor
- * consumes group *ids* — and, as of its latest revision, throws outright if names are present
- * with no ids, precisely so this step can never be skipped by accident. This function is the
- * bridge: it writes `detail.groupIds`, and turns every unresolved name into a `group_missing`
- * blocker (which the executor then refuses to run at all).
+ * consumes group *ids* — and throws outright if Graph-writable names are present with no ids,
+ * precisely so this step can never be skipped by accident. This function is the bridge: it
+ * writes `detail.groupIds` (Graph-writable only), `detail.exchangeOnlyGroups` and
+ * `detail.dynamicGroups`, and turns every unresolved name into a `group_missing` blocker.
  *
  * Returns a NEW plan rather than mutating the input: a Plan is the record of what an admin
  * approved, and something that has been handed out should not change under the holder.
@@ -110,11 +121,28 @@ export function applyGroupResolution(plan: Plan, directory: DirectoryGroup[]): P
   const names = Array.isArray(groupStep.detail.groups)
     ? (groupStep.detail.groups as unknown[]).map(String)
     : [];
-  const { groupIds, missing } = resolveGroupIds(names, directory);
+  const { groupIds, missing, exchangeOnly, dynamic, namesById } = resolveGroupIds(names, directory);
+  const extras = [
+    exchangeOnly.length ? `${exchangeOnly.length} distribution list(s) to add in Exchange` : '',
+    dynamic.length ? `${dynamic.length} dynamic group(s) skipped` : '',
+  ].filter(Boolean);
+  const label = `Add to ${groupIds.length} group(s)${extras.length ? ` — ${extras.join('; ')}` : ''}`;
   return {
     ...plan,
     steps: plan.steps.map((s) =>
-      s === groupStep ? { ...s, detail: { ...s.detail, groupIds } } : s,
+      s === groupStep
+        ? {
+            ...s,
+            label,
+            detail: {
+              ...s.detail,
+              groupIds,
+              groupNamesById: namesById,
+              ...(exchangeOnly.length ? { exchangeOnlyGroups: exchangeOnly } : {}),
+              ...(dynamic.length ? { dynamicGroups: dynamic } : {}),
+            },
+          }
+        : s,
     ),
     blockers: [
       ...plan.blockers,
@@ -358,9 +386,10 @@ async function buildPlan(actor: Principal, ticketId: string): Promise<{ plan: Pl
         dynamic: p.dynamic.map((x) => x.displayName).filter(Boolean),
       };
     }
-    // A mirror user who is not in the tenant is reported by the planner as a blocker below rather
-    // than silently producing a plan that copies nothing.
   }
+  // A mirror user who is not in the tenant is a BLOCKER, not a plan that silently copies
+  // nothing. (The comment here used to promise the planner did this; nothing did.)
+  const mirrorMissing = !!mirrorUpn && !mirror;
 
   // The supervisor, resolved the same way the mirror user is: the answer is a Nexus user
   // reference, so it becomes an email, and the email becomes the directory object whose id the
@@ -391,7 +420,17 @@ async function buildPlan(actor: Principal, ticketId: string): Promise<{ plan: Pl
   // the size of the tenant's directory is irrelevant and there is no pagination to truncate.
   const names = requestedGroupNames(planned);
   const directory = names.length ? await listGroupsByDisplayName(g.graph, names) : [];
-  return { plan: applyGroupResolution(planned, directory), ticket };
+  const resolved = applyGroupResolution(planned, directory);
+  if (mirrorMissing) {
+    resolved.blockers = [
+      ...resolved.blockers,
+      {
+        code: 'mirror_missing',
+        message: `"Copy access from" user ${mirrorUpn} was not found in the directory, so no access would be copied. Fix or clear that answer.`,
+      },
+    ];
+  }
+  return { plan: resolved, ticket };
 }
 
 /** A previewed plan plus the token that binds it to the run the admin then approves. */
@@ -774,6 +813,35 @@ async function noteRunOutcome(
 }
 
 /**
+ * Distribution lists can only be joined in Exchange, so once the account exists (add_groups was
+ * reached) they become a fulfillment task on the ticket — an item someone ticks off, not a line
+ * buried in a comment. One pending task per ticket: a re-run must not stack duplicates.
+ * Best-effort for the same reason as the outcome note.
+ */
+async function queueExchangeGroupTask(ticket: TicketRow, plan: Plan, outcomes: StepOutcome[]): Promise<void> {
+  const step = plan.steps.find((s) => s.key === 'add_groups');
+  const lists = (step?.detail.exchangeOnlyGroups as string[] | undefined) ?? [];
+  if (!lists.length || !outcomes.some((o) => o.key === 'add_groups')) return;
+  try {
+    await withSystemContext(async (sql) => {
+      const dup = await sql.query(
+        `SELECT 1 FROM service_request_tasks WHERE ticket_id = $1 AND step_key = 'exchange_dl_membership' AND status = 'pending'`,
+        [ticket.id],
+      );
+      if (dup.rows.length) return;
+      await sql.query(
+        `INSERT INTO service_request_tasks (organization_id, ticket_id, step_key, label, assignee_role, position, automatable)
+         VALUES ($1, $2, 'exchange_dl_membership', $3, 'Tier2',
+                 COALESCE((SELECT max(position) + 1 FROM service_request_tasks WHERE ticket_id = $2), 0), false)`,
+        [ticket.organization_id, ticket.id, `Exchange admin center: add ${plan.upn} to ${lists.join(', ')}`],
+      );
+    });
+  } catch (err) {
+    logger.warn({ err, ticketId: ticket.id }, 'failed to queue the Exchange distribution-list task');
+  }
+}
+
+/**
  * Executes the plan.
  *
  * `approvedFingerprint` is the value `preview` returned for the plan the admin actually read
@@ -850,6 +918,7 @@ export async function provision(
 
   await recordOutcomes(runId, outcomes, status);
   await noteRunOutcome(ticket, actor.id, status, outcomes);
+  await queueExchangeGroupTask(ticket, plan, outcomes);
 
   // Org-scoped like every other audited action here: an org-NULL row would orphan the record
   // of a directory write. `detail` carries the step verdicts and the UPN — never the TAP, never

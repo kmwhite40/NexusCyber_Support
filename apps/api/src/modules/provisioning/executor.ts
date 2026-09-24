@@ -226,18 +226,47 @@ export async function executePlan(
           // preview/execute purity guarantee the planner depends on.
           const groupNames = (step.detail.groups as string[] | undefined) ?? [];
           const groupIds = (step.detail.groupIds as string[] | undefined) ?? [];
+          const exchangeOnly = (step.detail.exchangeOnlyGroups as string[] | undefined) ?? [];
+          const dynamicGroups = (step.detail.dynamicGroups as string[] | undefined) ?? [];
+          const namesById = (step.detail.groupNamesById as Record<string, string> | undefined) ?? {};
           // The planner (planner.ts) only ever emits an add_groups step when it has group
-          // names to add, so an add_groups step with names present but no ids means Task 15's
-          // resolution pass did not run (or silently produced nothing). Failing loudly here
-          // beats reporting "succeeded" while the user quietly never gets the access.
-          if (groupNames.length > 0 && groupIds.length === 0) {
+          // names to add, so names present but no ids — once the Exchange-only and dynamic ones
+          // the resolver set aside are discounted — means Task 15's resolution pass did not run
+          // (or silently produced nothing). Failing loudly beats reporting "succeeded" while
+          // the user quietly never gets the access.
+          const graphWritable = groupNames.length - exchangeOnly.length - dynamicGroups.length;
+          if (graphWritable > 0 && groupIds.length === 0) {
             throw new Error(
               `add_groups: detail.groupIds is empty but detail.groups has ${groupNames.length} name(s) ` +
                 '— group id resolution did not run; refusing to silently skip group membership.',
             );
           }
-          for (const groupId of groupIds) await ops.addToGroup(groupId, userId);
-          outcomes.push({ key: step.key, status: 'succeeded' });
+          // Attempt EVERY group, then report. Stopping at the first refusal left every later
+          // group unattempted with nothing saying which ones the user did and did not get.
+          const failed: string[] = [];
+          for (const groupId of groupIds) {
+            try {
+              await ops.addToGroup(groupId, userId);
+            } catch (err) {
+              failed.push(`${namesById[groupId] ?? groupId} (${describeGraphFailure(err)})`);
+            }
+          }
+          const notes: string[] = [];
+          if (exchangeOnly.length) {
+            notes.push(
+              `Distribution lists NOT added (Graph cannot change their membership — add in the Exchange admin center): ${exchangeOnly.join(', ')}.`,
+            );
+          }
+          if (dynamicGroups.length) {
+            notes.push(`Dynamic groups skipped (membership is rule-based): ${dynamicGroups.join(', ')}.`);
+          }
+          if (failed.length) {
+            throw Object.assign(
+              new Error(`add_groups: ${failed.length} of ${groupIds.length} group(s) failed: ${failed.join('; ')}`),
+              { note: notes.join(' ') || undefined },
+            );
+          }
+          outcomes.push({ key: step.key, status: 'succeeded', ...(notes.length ? { note: notes.join(' ') } : {}) });
           break;
         }
         case 'assign_cloudpc': {
@@ -336,12 +365,34 @@ export async function executePlan(
         }
       }
     } catch (err) {
-      outcomes.push({ key: step.key, status: 'failed', error: toErrorMessage(err) });
+      const note = (err as { note?: unknown })?.note;
+      outcomes.push({
+        key: step.key,
+        status: 'failed',
+        error: toErrorMessage(err),
+        ...(typeof note === 'string' && note ? { note } : {}),
+      });
       return { outcomes, status: 'failed' }; // stop at the first failure — never run later steps
     }
   }
 
   return { outcomes, status: awaiting ? 'awaiting_cloudpc' : 'succeeded' };
+}
+
+/**
+ * Status plus Graph's own one-line reason for a failed group add ("Cannot Update a mail-enabled
+ * security groups and or distribution list.", "Insufficient privileges…"), bounded. A bare
+ * "Graph request failed: 400" told nobody which group or why. Group-membership errors carry no
+ * credential; this is used ONLY for add_groups.
+ */
+function describeGraphFailure(err: unknown): string {
+  const e = err as { status?: number; body?: unknown; message?: string };
+  let reason = '';
+  if (typeof e?.body === 'string') {
+    try { reason = String(JSON.parse(e.body)?.error?.message ?? ''); } catch { /* not JSON */ }
+  }
+  const head = typeof e?.status === 'number' ? `Graph ${e.status}` : toErrorMessage(err);
+  return (reason ? `${head}: ${reason}` : head).slice(0, 200);
 }
 
 function toErrorMessage(err: unknown): string {
