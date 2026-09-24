@@ -21,6 +21,17 @@ function emailDomain(email: string): string {
   return email.split('@')[1]?.toLowerCase() ?? '';
 }
 
+/**
+ * A CUSTOMER-plane role id. Customer user management (provisionUser, updateOrgUserAdmin) must
+ * never hand out a staff role: `roleKey` is caller-supplied, and before this check an OrgAdmin
+ * of a self-registered org could PATCH themselves to 'SuperAdmin' and hold admin.superuser.
+ */
+async function customerRoleId(sql: import('../db/pool.js').Sql, key: string): Promise<string> {
+  const { rows } = await sql.query(`SELECT id FROM roles WHERE key = $1 AND plane = 'customer'`, [key]);
+  if (!rows[0]) throw Errors.validation(`${key} is not a customer role`);
+  return rows[0].id;
+}
+
 async function roleId(sql: import('../db/pool.js').Sql, key: string): Promise<string> {
   const { rows } = await sql.query('SELECT id FROM roles WHERE key = $1', [key]);
   if (!rows[0]) throw Errors.validation(`role ${key} not seeded`);
@@ -42,6 +53,10 @@ export interface AuthResult {
 
 /** Self-service signup: create a customer organization and its first Org Admin. */
 export async function registerCustomer(input: RegisterInput): Promise<AuthResult> {
+  // Public, unauthenticated org creation. Production onboards tenants deliberately (SSO tenant
+  // mapping on /customers); open signup there only created attack surface — every new org is an
+  // OrgAdmin nobody vetted, and signup auto-claims the email domain that mail ingest routes by.
+  if (!config.selfSignupEnabled) throw Errors.forbidden('self-service signup is disabled');
   const email = input.email.trim().toLowerCase();
   const domain = emailDomain(email);
   if (!domain) throw Errors.validation('valid email required');
@@ -393,6 +408,9 @@ export async function provisionUser(
       [email],
     );
     if (dup.rows.length) throw Errors.conflict('user already exists');
+    // Resolve (and validate) the role BEFORE writing anything: there is no transaction here, and
+    // a refused role used to leave a role-less user behind.
+    const role = await customerRoleId(sql, input.roleKey ?? 'EndUser');
 
     const pw = input.password ? await hashPassword(input.password) : null;
     const user = await sql.query(
@@ -401,7 +419,6 @@ export async function provisionUser(
       [orgId, email, input.displayName ?? email, pw],
     );
     const userId = user.rows[0].id as string;
-    const role = await roleId(sql, input.roleKey ?? 'EndUser');
     await sql.query(
       `INSERT INTO role_assignments (user_id, role_id, organization_id) VALUES ($1,$2,$3)`,
       [userId, role, orgId],
@@ -657,10 +674,11 @@ export async function updateOrgUserAdmin(
   return withSystemContext(async (sql) => {
     const u = (await sql.query(`SELECT id, email FROM users WHERE id = $1 AND organization_id = $2`, [userId, orgId])).rows[0];
     if (!u) throw Errors.notFound('user not found');
+    // Validate first: a refused role used to run AFTER the existing role was deleted.
+    const rid = input.roleKey ? await customerRoleId(sql, input.roleKey) : null;
     if (input.status) await sql.query(`UPDATE users SET status = $1 WHERE id = $2`, [input.status, userId]);
-    if (input.roleKey) {
+    if (rid) {
       await sql.query(`DELETE FROM role_assignments WHERE user_id = $1 AND organization_id = $2`, [userId, orgId]);
-      const rid = await roleId(sql, input.roleKey);
       await sql.query(
         `INSERT INTO role_assignments (user_id, role_id, organization_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
         [userId, rid, orgId],

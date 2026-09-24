@@ -13,6 +13,8 @@ export interface Config {
   webOrigin: string[];
   enclave: Enclave;
   isProduction: boolean;
+  /** Public self-service org signup (POST /auth/register). Off in production unless SELF_SIGNUP_ENABLED=true. */
+  selfSignupEnabled: boolean;
   m365: M365Config;
   oidc: OidcConfig;
   oidcCustomer: OidcCustomerConfig;
@@ -316,6 +318,9 @@ export const config: Config = {
   webOrigin: (process.env.WEB_ORIGIN ?? 'http://localhost:3000').split(','),
   enclave: (process.env.ENCLAVE as Enclave) ?? 'commercial',
   isProduction: process.env.NODE_ENV === 'production',
+  selfSignupEnabled: process.env.SELF_SIGNUP_ENABLED
+    ? process.env.SELF_SIGNUP_ENABLED === 'true'
+    : process.env.NODE_ENV !== 'production',
   m365: parseM365Config(process.env),
   oidc: parseOidcConfig(process.env),
   oidcCustomer: parseOidcCustomerConfig(process.env),

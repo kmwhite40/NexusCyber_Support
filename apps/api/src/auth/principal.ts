@@ -33,7 +33,11 @@ export async function loadPrincipal(claims: SessionClaims): Promise<Principal> {
       `SELECT r.key AS role_key, ra.organization_id
          FROM role_assignments ra
          JOIN roles r ON r.id = ra.role_id
+         JOIN users u ON u.id = ra.user_id
         WHERE ra.user_id = $1
+          -- A role only ever confers its permissions on a user of its own plane. Defence in
+          -- depth: a customer user holding a staff role (e.g. SuperAdmin) gets nothing from it.
+          AND r.plane = u.plane
           AND (ra.expires_at IS NULL OR ra.expires_at > now())`,
       [claims.sub],
     );
