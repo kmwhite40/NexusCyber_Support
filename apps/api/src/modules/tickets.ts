@@ -285,7 +285,7 @@ export async function listTickets(actor: Principal, filter: ListFilter) {
 }
 
 export async function getTicket(actor: Principal, id: string) {
-  return withOrgContext(orgContextFor(actor), async (sql) => {
+  const t = await withOrgContext(orgContextFor(actor), async (sql) => {
     const { rows } = await sql.query('SELECT * FROM tickets WHERE id = $1', [id]);
     const ticket = rows[0];
     if (!ticket) throw Errors.notFound('ticket not found'); // RLS already scoped it
@@ -308,6 +308,26 @@ export async function getTicket(actor: Principal, id: string) {
     const links = await linksForTicket(sql, id);
     return { ...ticket, comments, events, slas, tasks, approvals, links };
   });
+  // Outside the org-context transaction so the name lookup never holds a second pool connection
+  // while the first is still checked out.
+  return actor.plane === 'nexus' ? { ...t, ...(await ticketPeople(t)) } : t;
+}
+
+/** Names for the requester / affected-user columns, for staff views. Resolved in system context
+ *  because users are org-scoped under RLS and a requester can be a platform (org-NULL) user; the
+ *  caller has already passed getTicket's access checks for this ticket. */
+async function ticketPeople(ticket: { requester_id?: string | null; affected_user_id?: string | null }) {
+  const ids = [ticket.requester_id, ticket.affected_user_id].filter((x): x is string => !!x);
+  if (ids.length === 0) return { requester: null, affected_user: null };
+  const rows = await withSystemContext(async (s) =>
+    (await s.query('SELECT id, display_name, email FROM users WHERE id = ANY($1::uuid[])', [ids])).rows,
+  );
+  const ref = (uid?: string | null) => {
+    if (!uid) return null;
+    const u = rows.find((r: { id: string }) => r.id === uid);
+    return { id: uid, name: u?.display_name ?? null, email: u?.email ?? null };
+  };
+  return { requester: ref(ticket.requester_id), affected_user: ref(ticket.affected_user_id) };
 }
 
 /**

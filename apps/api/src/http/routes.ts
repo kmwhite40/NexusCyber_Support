@@ -37,6 +37,7 @@ import * as channels from '../modules/channels.js';
 import * as dashboards from '../modules/dashboards.js';
 import * as forms from '../modules/forms.js';
 import * as sensitiveFields from '../modules/sensitive-fields.js';
+import * as ticketForm from '../modules/ticket-form.js';
 import * as escalationPolicies from '../modules/escalation-policies.js';
 import * as provisioning from '../modules/provisioning/index.js';
 import * as offboarding from '../modules/offboarding/index.js';
@@ -600,6 +601,17 @@ export async function registerRoutes(app: FastifyInstance) {
     const p = await requirePrincipal(req);
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     return { data: await sensitiveFields.readSensitive(p, id) };
+  });
+
+  // The submitted catalog form, reassembled for staff working the ticket. Sensitive answers are
+  // withheld unless the caller holds pii.view AND passes ?include_pii=1; a reveal goes through
+  // readSensitive, so it is audited exactly like the route above.
+  app.get('/api/v1/tickets/:id/form', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const q = z.object({ include_pii: z.enum(['0', '1', 'true', 'false']).optional() }).parse(req.query);
+    const includePii = q.include_pii === '1' || q.include_pii === 'true';
+    return { data: await ticketForm.getTicketForm(p, id, { includePii }) };
   });
 
   // ---------------- Entra account provisioning (onboarding fulfillment) ----------------

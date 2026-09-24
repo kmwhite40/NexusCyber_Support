@@ -1,7 +1,7 @@
 'use client';
 import * as React from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { api, oncall, ApiError, type Ticket, TIER_GROUPS, LINK_TYPES } from '@/lib/api';
+import { api, oncall, ApiError, type Ticket, TIER_GROUPS, LINK_TYPES, userDisplay } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
 import { orderTransitions, REVERSING_STATES } from '@/lib/ticket-actions';
 import { Card, CardHeader, CardTitle, CardBody, Button, Input, Textarea, Badge, Select } from '@/components/ui/primitives';
@@ -11,6 +11,7 @@ import { PriorityBadge, StatusBadge, SlaBadge } from '@/components/ui/badges';
 import { TicketAttachments } from '@/components/ticket-attachments';
 import { ProvisioningPanel } from '@/components/provisioning-panel';
 import { OffboardingPanel } from '@/components/offboarding-panel';
+import { SubmittedForm } from '@/components/submitted-form';
 
 export default function TicketDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -256,6 +257,11 @@ export default function TicketDetailPage() {
 
           <LinkedTickets ticket={ticket} isAgent={isAgent} canUpdate={can('ticket.update')} onChange={load} />
 
+          {/* The catalog form this request was filed with — staff only. */}
+          {isAgent && ticket.custom_fields?._form && (
+            <SubmittedForm ticketId={id} canViewPii={can('pii.view')} />
+          )}
+
           <Card>
             <CardHeader><CardTitle>Description</CardTitle></CardHeader>
             <CardBody><p className="whitespace-pre-wrap text-sm text-fg/90">{ticket.description || 'No description provided.'}</p></CardBody>
@@ -319,6 +325,8 @@ export default function TicketDetailPage() {
               <Row k="Priority" v={ticket.priority} />
               <Row k="Status" v={ticket.status.replace(/_/g, ' ')} />
               <Row k="Created" v={new Date(ticket.created_at).toLocaleString()} />
+              {isAgent && userDisplay(ticket.requester) && <Row k="Requester" v={userDisplay(ticket.requester)!} />}
+              {isAgent && userDisplay(ticket.affected_user) && <Row k="Affected user" v={userDisplay(ticket.affected_user)!} />}
               {ticket.tags?.length ? <Row k="Tags" v={ticket.tags.join(', ')} /> : null}
             </CardBody>
           </Card>

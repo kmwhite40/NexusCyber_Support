@@ -105,6 +105,50 @@ export interface Ticket {
   approvals?: Array<{ id: string; status: string }>;
   parent_ticket_id?: string | null;
   links?: Array<{ id: string; direction: 'outgoing' | 'incoming'; label: string; link_type: string; other_id: string; other_number: string; other_subject: string }>;
+  /** Catalog-form answers that are not PII. `_form` names the form they came from. */
+  custom_fields?: Record<string, unknown> & { _form?: string | null };
+  requester_id?: string | null;
+  affected_user_id?: string | null;
+  /** Resolved names for the two columns above. Staff (nexus-plane) reads only. */
+  requester?: UserRef | null;
+  affected_user?: UserRef | null;
+}
+
+export interface UserRef { id: string; name: string | null; email: string | null }
+
+/** GET /tickets/:id/form — the submitted catalog form, reassembled for staff. */
+export interface SubmittedFormField {
+  key: string;
+  label: string;
+  data_type: string;
+  value: unknown;
+  /** Human-readable answer; arrays render as chips. Null = unanswered, withheld or purged. */
+  display: string | string[] | null;
+  sensitive: boolean;
+}
+export interface SubmittedForm {
+  form_key: string | null;
+  form_name: string | null;
+  sections: Array<{ section: string | null; fields: SubmittedFormField[] }>;
+  requester: UserRef | null;
+  affected_user: UserRef | null;
+  approvers: Array<{ name: string | null; email: string | null; status: string }>;
+  notes: string | null;
+  /** included: PII values present. withheld: held back (not asked for, or no pii.view).
+   *  purged: deleted at resolution. none: this request captured no PII. */
+  pii: 'included' | 'withheld' | 'purged' | 'none';
+}
+
+export const ticketForm = {
+  /** includePii reveals sensitive answers for pii.view holders — every reveal is audited. */
+  get: (ticketId: string, includePii = false) =>
+    api.get<{ data: SubmittedForm }>(`/tickets/${ticketId}/form${includePii ? '?include_pii=1' : ''}`),
+};
+
+export function userDisplay(u: UserRef | null | undefined): string | null {
+  if (!u) return null;
+  if (u.name && u.email) return `${u.name} <${u.email}>`;
+  return u.name ?? u.email ?? null;
 }
 
 export const LINK_TYPES = ['related_to', 'duplicate_of', 'caused_by', 'blocks', 'child_of'] as const;

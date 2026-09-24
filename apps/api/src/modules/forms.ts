@@ -135,6 +135,7 @@ async function loadFields(sql: import('../db/pool.js').Sql, formId: string): Pro
     key: r.key, label: r.label, data_type: r.data_type, required: r.required,
     options: (r.options as string[]) ?? [], maps_to: r.maps_to ?? null,
     visible_when: r.visible_when ?? null, sensitive: r.sensitive ?? false, options_source: r.options_source ?? null,
+    section: r.section ?? null,
   }));
 }
 

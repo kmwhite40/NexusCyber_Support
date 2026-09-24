@@ -22,6 +22,9 @@ export interface FormField {
   visible_when: VisibleWhen | null;
   sensitive: boolean;
   options_source: string | null;
+  /** Heading this field groups under when rendered (0077). Optional so hand-built field lists
+   *  (tests, fixtures) need not set it; null/absent = ungrouped. Presentation only. */
+  section?: string | null;
 }
 
 /** Is this field shown, given the current answers? Fields with no condition are always shown.
