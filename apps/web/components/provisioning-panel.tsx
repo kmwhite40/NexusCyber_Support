@@ -175,7 +175,9 @@ export function ProvisioningPanel({ ticketId, canProvision }: { ticketId: string
         )}
 
         {runsLoaded && accountCreated && !featureOff && (
-          <ResendCredentials ticketId={ticketId} disabled={inFlight || executing} />
+          // Only an actively RUNNING run blocks a re-send (the server refuses exactly that). A run
+          // parked in awaiting_cloudpc already created the account, so the credential can go out.
+          <ResendCredentials ticketId={ticketId} disabled={latestRun?.status === 'running' || executing} />
         )}
 
         {featureOff && (
