@@ -12,18 +12,24 @@ export function UserPicker({
   organizationId,
   multiple = false,
   placeholder = 'Enter name or email…',
+  labels,
 }: {
   value: string | string[] | null;
   onChange: (v: string | string[] | null) => void;
   organizationId?: string;
   multiple?: boolean;
   placeholder?: string;
+  /** Display names for ids already in `value` (e.g. an answer being edited). Without them a
+   *  pre-filled picker can only show the raw UUID until the person is picked again. */
+  labels?: Record<string, string>;
 }) {
   const [q, setQ] = React.useState('');
   const [hits, setHits] = React.useState<UserHit[]>([]);
   const [searched, setSearched] = React.useState(false);
   const [open, setOpen] = React.useState(false);
-  const [chosen, setChosen] = React.useState<Record<string, UserHit>>({});
+  const [chosen, setChosen] = React.useState<Record<string, UserHit>>(() =>
+    Object.fromEntries(Object.entries(labels ?? {}).map(([id, name]) => [id, { id, display_name: name, email: '' }])),
+  );
   const boxRef = React.useRef<HTMLDivElement>(null);
   const listRef = React.useRef<HTMLUListElement>(null);
   const [rect, setRect] = React.useState<{ left: number; top: number; width: number; above: boolean } | null>(null);

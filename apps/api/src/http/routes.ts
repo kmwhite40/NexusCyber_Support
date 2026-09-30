@@ -38,6 +38,7 @@ import * as dashboards from '../modules/dashboards.js';
 import * as forms from '../modules/forms.js';
 import * as sensitiveFields from '../modules/sensitive-fields.js';
 import * as ticketForm from '../modules/ticket-form.js';
+import * as ticketFormEdit from '../modules/ticket-form-edit.js';
 import * as escalationPolicies from '../modules/escalation-policies.js';
 import * as provisioning from '../modules/provisioning/index.js';
 import * as offboarding from '../modules/offboarding/index.js';
@@ -612,6 +613,25 @@ export async function registerRoutes(app: FastifyInstance) {
     const q = z.object({ include_pii: z.enum(['0', '1', 'true', 'false']).optional() }).parse(req.query);
     const includePii = q.include_pii === '1' || q.include_pii === 'true';
     return { data: await ticketForm.getTicketForm(p, id, { includePii }) };
+  });
+
+  // Correct the answers on a submitted catalog request. Partial: only the keys sent change, each
+  // validated against the ticket's own form. Needs ticket.form.edit (and pii.view for PII fields);
+  // refused (409) on resolved/closed tickets and while a provisioning/offboarding run is in
+  // flight. Writes an internal comment + a ticket.form.edited audit entry. Returns the refreshed
+  // form, same shape as the GET (?include_pii=1 keeps revealed PII revealed — audited as usual).
+  app.patch('/api/v1/tickets/:id/form', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const q = z.object({ include_pii: z.enum(['0', '1', 'true', 'false']).optional() }).parse(req.query);
+    const body = z
+      .object({
+        answers: z.record(z.unknown()).refine((a) => Object.keys(a).length > 0, 'answers must change at least one field'),
+        reason: z.string().max(2000).optional(),
+      })
+      .parse(req.body);
+    const includePii = q.include_pii === '1' || q.include_pii === 'true';
+    return { data: await ticketFormEdit.editTicketForm(p, id, body.answers, { reason: body.reason, includePii }) };
   });
 
   // ---------------- Entra account provisioning (onboarding fulfillment) ----------------

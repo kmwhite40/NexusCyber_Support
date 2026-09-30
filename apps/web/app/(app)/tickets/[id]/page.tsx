@@ -259,7 +259,14 @@ export default function TicketDetailPage() {
 
           {/* The catalog form this request was filed with — staff only. */}
           {isAgent && ticket.custom_fields?._form && (
-            <SubmittedForm ticketId={id} canViewPii={can('pii.view')} />
+            <SubmittedForm
+              ticketId={id}
+              canViewPii={can('pii.view')}
+              canEdit={can('ticket.form.edit')}
+              ticketStatus={ticket.status}
+              organizationId={ticket.organization_id}
+              onSaved={load}
+            />
           )}
 
           <Card>

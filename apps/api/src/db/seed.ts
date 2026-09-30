@@ -78,6 +78,8 @@ const PERMISSIONS: Array<[string, string]> = [
   // depend on migration order (role_permissions.permission_key is a foreign key).
   ['pii.view', 'ticketing'],
   ['provisioning.execute', 'integration'],
+  // Created by migration 0080; repeated here for the same reason as the two above.
+  ['ticket.form.edit', 'ticket'],
 ];
 
 // ---- Roles -> permission keys ----
@@ -109,7 +111,9 @@ const ROLES: Record<string, { plane: 'nexus' | 'customer'; perms: string[] }> = 
       // Granted by migrations 0053 (pii.view) and 0056 (provisioning.execute). Listed here too
       // because this loop DELETEs and rebuilds role_permissions: omitting them meant every re-seed
       // silently stripped the grants those migrations made.
-      'pii.view', 'provisioning.execute'],
+      'pii.view', 'provisioning.execute',
+      // Granted by migration 0080 — correcting a submitted request's answers. Same dual-write rule.
+      'ticket.form.edit'],
   },
   // Customer plane
   OrgAdmin: { plane: 'customer', perms: ['ticket.create', 'ticket.read.organization', 'ticket.comment', 'posture.read', 'posture.request_exception', 'customer.admin.manage_users', 'report.read.customer', 'audit.read', 'compliance.read', 'kb.read', 'kb.author', 'kb.publish', 'integration.manage'] },

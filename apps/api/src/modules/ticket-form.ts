@@ -31,6 +31,10 @@ export interface FieldDef {
   visible_when: any;
   sensitive: boolean;
   section: string | null;
+  /** Needed by the edit path (validation) and the edit UI; optional so hand-built fixtures
+   *  need not set them. */
+  required?: boolean;
+  options_source?: string | null;
 }
 
 export interface UserRef { id: string; name: string | null; email: string | null }
@@ -50,10 +54,38 @@ export interface SubmittedField {
 
 export interface SubmittedSection { section: string | null; fields: SubmittedField[] }
 
+/** A field definition as the edit UI needs it — the same shape the catalog form endpoint returns,
+ *  plus whether (and why not) THIS ticket lets it be changed. */
+export interface EditableFieldDef {
+  key: string;
+  label: string;
+  data_type: string;
+  required: boolean;
+  options: string[];
+  options_source: string | null;
+  visible_when: any;
+  sensitive: boolean;
+  section: string | null;
+  maps_to: string | null;
+  /** Null when editable; otherwise the reason it is not. */
+  locked: string | null;
+}
+
+/** Whether the answers can be edited right now, and which fields are pinned. */
+export interface EditState {
+  /** Null when edits are allowed; otherwise the reason the whole form is frozen. */
+  blocked: string | null;
+  /** key -> reason, for fields that cannot be changed on this ticket. */
+  locked: Record<string, string>;
+}
+
 export interface SubmittedForm {
   form_key: string | null;
   form_name: string | null;
   sections: SubmittedSection[];
+  /** Field definitions for the edit UI, in form order. */
+  fields: EditableFieldDef[];
+  edit: EditState;
   requester: UserRef | null;
   affected_user: UserRef | null;
   approvers: Array<{ name: string | null; email: string | null; status: string }>;
@@ -68,6 +100,105 @@ const MULTI_TYPES = new Set(['multiselect', 'user_multi']);
 const ALWAYS_MULTI_KEYS = new Set(['security_groups']);
 const USER_TYPES = new Set(['user', 'user_multi']);
 const TERMINAL = new Set(['resolved', 'closed']);
+
+// ---------------------------------------------------------------- edit guards (pure)
+// Kept here, beside the reader, so GET can tell the UI what is editable using exactly the rule the
+// PATCH enforces (ticket-form-edit.ts imports these; nothing imports back).
+
+/** Onboarding run statuses during which the answers are being acted on. Mirrors
+ *  IN_FLIGHT_RUN_STATUSES in modules/provisioning/index.ts (not imported: that module is owned
+ *  by another change and pulls in the Graph client). */
+export const ONBOARDING_INFLIGHT = new Set(['running', 'awaiting_cloudpc']);
+/** Offboarding run statuses during which the answers are armed or being acted on. Mirrors
+ *  IN_FLIGHT_OFFBOARD_STATUSES in modules/offboarding/index.ts. */
+export const OFFBOARDING_INFLIGHT = new Set(['scheduled', 'running']);
+/** Offboarding statuses meaning the teardown has already touched the departing account. */
+const OFFBOARDING_RAN = new Set(['needs_review', 'succeeded']);
+/** Answers the onboarding planner derives the UPN and display name from (planner.ts deriveUpn). */
+export const IDENTITY_KEYS = new Set(['legal_first_name', 'legal_last_name', 'preferred_first_name']);
+
+export interface RunRow {
+  kind: string;
+  status: string;
+  /** True when this run's create_user step succeeded — the account exists even if the run
+   *  later failed. */
+  account_created?: boolean;
+}
+
+export const APPROVERS_LOCKED =
+  'Approvers cannot be changed after submission: approval decisions already recorded would silently change.';
+
+/** Decide whether a ticket's answers may be edited, and which fields are pinned. Pure. */
+export function editGuards(
+  ticketStatus: string,
+  runs: RunRow[],
+  fields: Array<Pick<FieldDef, 'key' | 'maps_to' | 'data_type'>>,
+): EditState {
+  let blocked: string | null = null;
+  if (TERMINAL.has(ticketStatus)) {
+    blocked = `This request is ${ticketStatus}; its answers can no longer be edited.`;
+  } else if (runs.some((r) => r.kind === 'onboarding' && ONBOARDING_INFLIGHT.has(r.status))) {
+    blocked = 'Account provisioning is in progress for this request. Edit the answers after the run finishes.';
+  } else if (runs.some((r) => r.kind === 'offboarding' && OFFBOARDING_INFLIGHT.has(r.status))) {
+    blocked = runs.some((r) => r.kind === 'offboarding' && r.status === 'scheduled')
+      ? 'An offboarding run is scheduled for this request. Cancel it before changing the answers.'
+      : 'An offboarding run is in progress for this request. Edit the answers after it finishes.';
+  }
+
+  const locked: Record<string, string> = {};
+  const accountExists = runs.some(
+    (r) => r.kind === 'onboarding' && (r.status === 'succeeded' || r.account_created === true),
+  );
+  const offboardRan = runs.some((r) => r.kind === 'offboarding' && OFFBOARDING_RAN.has(r.status));
+  for (const f of fields) {
+    if (f.maps_to === 'approvers') locked[f.key] = APPROVERS_LOCKED;
+    else if (f.data_type === 'attachment' || f.maps_to === 'attachment') locked[f.key] = 'Attachments are managed in the attachments panel.';
+    else if (accountExists && IDENTITY_KEYS.has(f.key)) {
+      locked[f.key] =
+        'The account has already been created, and its sign-in name was derived from this name. Rename the user in Entra instead; changing it here would not rename the account.';
+    } else if (offboardRan && f.maps_to === 'affected') {
+      locked[f.key] = 'The offboarding has already run against this person, so who it is about can no longer be changed.';
+    }
+  }
+  return { blocked, locked };
+}
+
+/**
+ * Guard for the legacy POST /tickets/:id/form-answers. That route merged ANY form's answers into
+ * any ticket for a mere ticket.update holder — enough for a Tier1 to re-point an armed
+ * offboarding's departing_user. It now only ATTACHES a form to a ticket that has none, and only
+ * the form the ticket's catalog item names (if any); correcting a submitted form goes through
+ * PATCH /tickets/:id/form (ticket-form-edit.ts), with its permission, guards and audit trail. Pure.
+ */
+export function formAnswersRefusal(input: {
+  ticketStatus: string;
+  existingForm: string | null;
+  formId: string;
+  formKey: string | null;
+  catalogFormKey: string | null;
+  runs: Array<{ kind: string; status: string }>;
+}): string | null {
+  if (input.existingForm) {
+    return 'this ticket already has a submitted request form; correct its answers with PATCH /tickets/:id/form';
+  }
+  if (input.catalogFormKey && input.catalogFormKey !== input.formKey) {
+    return `this ticket's catalog item uses the ${input.catalogFormKey} form; a different form cannot be attached`;
+  }
+  const g = editGuards(input.ticketStatus, input.runs, []);
+  return g.blocked;
+}
+
+/** Load the provisioning/offboarding runs that bear on editing a ticket's answers. */
+export async function loadRunsForEdit(sql: Sql, ticketId: string): Promise<RunRow[]> {
+  const { rows } = await sql.query(
+    `SELECT r.kind, r.status,
+            EXISTS (SELECT 1 FROM provisioning_steps s
+                     WHERE s.run_id = r.id AND s.step_key = 'create_user' AND s.status = 'succeeded') AS account_created
+       FROM provisioning_runs r WHERE r.ticket_id = $1`,
+    [ticketId],
+  );
+  return rows as RunRow[];
+}
 
 export function isEmpty(v: unknown): boolean {
   return v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0);
@@ -128,6 +259,8 @@ export interface ShapeInput {
   sensitiveKeys: string[];
   /** Values, present only when the caller was allowed to and asked to see them. */
   sensitiveValues: Record<string, string> | null;
+  /** Provisioning/offboarding runs for this ticket (drives `edit`). Absent = none. */
+  runs?: RunRow[];
 }
 
 /** Decide the PII state. Pure. */
@@ -207,11 +340,19 @@ export function shapeSubmittedForm(input: ShapeInput): SubmittedForm {
 
   const ref = (id: string | null): UserRef | null => (id ? input.users.get(id) ?? { id, name: null, email: null } : null);
   const hasNotesField = input.fields.some((f) => f.maps_to === 'description');
+  const edit = editGuards(input.ticket.status, input.runs ?? [], input.fields);
 
   return {
     form_key: input.formKey,
     form_name: input.formName,
     sections,
+    fields: input.fields.map((f) => ({
+      key: f.key, label: f.label, data_type: String(f.data_type), required: !!f.required,
+      options: f.options ?? [], options_source: f.options_source ?? null, visible_when: f.visible_when ?? null,
+      sensitive: !!f.sensitive, section: f.section ?? null, maps_to: f.maps_to ?? null,
+      locked: edit.locked[f.key] ?? null,
+    })),
+    edit,
     requester: ref(input.ticket.requester_id),
     affected_user: ref(input.ticket.affected_user_id),
     approvers: input.approvers.map((a) => ({ name: a.name, email: a.email, status: a.status })),
@@ -235,7 +376,10 @@ export function userIdsToResolve(fields: FieldDef[], ticket: ShapeInput['ticket'
   return [...ids];
 }
 
-async function loadFormDefs(sql: Sql, formRef: string | null, category: string | null, orgId: string) {
+/** Resolve the form a ticket was submitted with. `_form` wins; else the catalog item's form. An
+ *  org's own form of that key wins over the global one. Shared with the edit path so a PATCH
+ *  validates against exactly the definition GET displays. */
+export async function loadFormDefs(sql: Sql, formRef: string | null, category: string | null, orgId: string) {
   let key = formRef;
   if (!key && category) {
     key = (await sql.query('SELECT form_key FROM service_catalog_items WHERE key=$1', [category])).rows[0]?.form_key ?? null;
@@ -251,17 +395,18 @@ async function loadFormDefs(sql: Sql, formRef: string | null, category: string |
       [key, orgId],
     )
   ).rows[0];
-  if (!form) return { key, name: null as string | null, fields: [] as FieldDef[] };
+  if (!form) return { id: null as string | null, key, name: null as string | null, fields: [] as FieldDef[] };
   const { rows } = await sql.query(
-    `SELECT key, label, data_type, options, maps_to, visible_when, sensitive, section
+    `SELECT key, label, data_type, options, maps_to, visible_when, sensitive, section, required, options_source
        FROM form_fields WHERE form_id=$1 ORDER BY position`,
     [form.id],
   );
   const fields: FieldDef[] = rows.map((r: any) => ({
     key: r.key, label: r.label, data_type: r.data_type, options: r.options ?? [], maps_to: r.maps_to ?? null,
     visible_when: r.visible_when ?? null, sensitive: !!r.sensitive, section: r.section ?? null,
+    required: !!r.required, options_source: r.options_source ?? null,
   }));
-  return { key: form.key as string, name: form.name as string, fields };
+  return { id: form.id as string, key: form.key as string, name: form.name as string, fields };
 }
 
 /**
@@ -309,7 +454,8 @@ export async function getTicketForm(
     const sensitiveKeys = (
       await sql.query('SELECT key FROM ticket_sensitive_fields WHERE ticket_id=$1', [ticketId])
     ).rows.map((r: { key: string }) => r.key);
-    return { form, fields, approvers, users, sensitiveKeys };
+    const runs = await loadRunsForEdit(sql, ticketId);
+    return { form, fields, approvers, users, sensitiveKeys, runs };
   });
 
   let sensitiveValues: Record<string, string> | null = null;
@@ -330,5 +476,6 @@ export async function getTicketForm(
     users: loaded.users,
     sensitiveKeys: loaded.sensitiveKeys,
     sensitiveValues,
+    runs: loaded.runs,
   });
 }

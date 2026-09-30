@@ -7,6 +7,7 @@ import { audit } from './audit.js';
 import { Errors } from '../errors.js';
 import { splitSensitiveAnswers, storeSensitive } from './sensitive-fields.js';
 import { isFieldVisible as isVisible, type FieldType, type FormField } from './form-fields.js';
+import { formAnswersRefusal, loadRunsForEdit } from './ticket-form.js';
 import type { Principal } from '../types.js';
 
 // Field shape + visibility predicate now live in the leaf module `form-fields.ts` so that
@@ -290,12 +291,38 @@ export function customFieldsFor(
 }
 
 /** Validate answers against a form and merge the non-sensitive ones into a ticket's
- *  custom_fields; sensitive answers are persisted separately via storeSensitive (Task 3). */
+ *  custom_fields; sensitive answers are persisted separately via storeSensitive (Task 3).
+ *
+ *  ATTACH ONLY. This used to merge ANY form's answers into ANY ticket for a ticket.update holder,
+ *  which let a Tier1 overwrite a submitted request — e.g. re-point an armed offboarding's
+ *  departing_user. It now refuses a ticket that already has a form (corrections go through
+ *  PATCH /tickets/:id/form: ticket.form.edit, run guards, comment + audit), refuses a form other
+ *  than the one the ticket's catalog item names, and refuses resolved/closed tickets and tickets
+ *  with a provisioning/offboarding run in flight (formAnswersRefusal). */
 export async function submitAnswers(actor: Principal, ticketId: string, formId: string, answers: Record<string, unknown>) {
   return withOrgContext(orgContextFor(actor), async (sql) => {
-    const t = (await sql.query('SELECT organization_id, custom_fields FROM tickets WHERE id=$1', [ticketId])).rows[0];
+    const t = (
+      await sql.query('SELECT organization_id, status, category, custom_fields FROM tickets WHERE id=$1 FOR UPDATE', [ticketId])
+    ).rows[0];
     if (!t) throw Errors.notFound('ticket not found');
     authorize(actor, 'ticket.update', { organizationId: t.organization_id });
+    // Form + catalog config are global (org-NULL) rows; read them outside tenant RLS.
+    const { formKey, catalogFormKey } = await withSystemContext(async (s) => ({
+      formKey: ((await s.query('SELECT key FROM request_forms WHERE id=$1', [formId])).rows[0]?.key ?? null) as string | null,
+      catalogFormKey: (t.category
+        ? (await s.query('SELECT form_key FROM service_catalog_items WHERE key=$1', [t.category])).rows[0]?.form_key ?? null
+        : null) as string | null,
+    }));
+    const existing = t.custom_fields?._form;
+    const refusal = formAnswersRefusal({
+      ticketStatus: t.status,
+      existingForm: typeof existing === 'string' && existing ? existing : null,
+      formId,
+      formKey,
+      catalogFormKey,
+      runs: await loadRunsForEdit(sql, ticketId),
+    });
+    if (refusal) throw Errors.conflict(refusal);
     const fields = await loadFields(sql, formId);
     if (fields.length === 0) throw Errors.notFound('form not found or has no fields');
     const result = validateAgainstForm(fields, answers);

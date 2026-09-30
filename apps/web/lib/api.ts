@@ -137,12 +137,30 @@ export interface SubmittedForm {
   /** included: PII values present. withheld: held back (not asked for, or no pii.view).
    *  purged: deleted at resolution. none: this request captured no PII. */
   pii: 'included' | 'withheld' | 'purged' | 'none';
+  /** Field definitions, in form order, for the edit UI. */
+  fields: SubmittedFormFieldDef[];
+  /** blocked: why the whole form cannot be edited now (null = editable). locked: per-field reasons. */
+  edit: { blocked: string | null; locked: Record<string, string> };
+}
+
+/** A form field definition as returned with the submitted form — FormFieldDef plus where the answer
+ *  maps and, when it cannot be edited on this ticket, why not. */
+export interface SubmittedFormFieldDef extends FormFieldDef {
+  maps_to: string | null;
+  locked: string | null;
 }
 
 export const ticketForm = {
   /** includePii reveals sensitive answers for pii.view holders — every reveal is audited. */
   get: (ticketId: string, includePii = false) =>
     api.get<{ data: SubmittedForm }>(`/tickets/${ticketId}/form${includePii ? '?include_pii=1' : ''}`),
+  /** PATCH /tickets/:id/form — correct individual answers (ticket.form.edit). Only the keys sent
+   *  change. Returns the refreshed form; includePii keeps already-revealed PII revealed. */
+  edit: (ticketId: string, answers: Record<string, unknown>, reason?: string, includePii = false) =>
+    api.patch<{ data: SubmittedForm }>(
+      `/tickets/${ticketId}/form${includePii ? '?include_pii=1' : ''}`,
+      { answers, ...(reason ? { reason } : {}) },
+    ),
 };
 
 export function userDisplay(u: UserRef | null | undefined): string | null {
