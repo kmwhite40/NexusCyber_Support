@@ -12,6 +12,7 @@ import { TicketAttachments } from '@/components/ticket-attachments';
 import { ProvisioningPanel } from '@/components/provisioning-panel';
 import { OffboardingPanel } from '@/components/offboarding-panel';
 import { SubmittedForm } from '@/components/submitted-form';
+import { CardBoundary } from '@/components/card-boundary';
 
 export default function TicketDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -215,13 +216,19 @@ export default function TicketDetailPage() {
         </Card>
       )}
 
-      {approvalsPassed && <ProvisioningPanel ticketId={id} canProvision={can('provisioning.execute')} />}
+      {approvalsPassed && (
+        <CardBoundary name="Provisioning">
+          <ProvisioningPanel ticketId={id} canProvision={can('provisioning.execute')} />
+        </CardBoundary>
+      )}
 
       {/* Offboarding is driven from the user.offboarding catalog request, and only after its
           approvals pass — the server enforces both, this just avoids showing a panel that could
           only refuse. */}
       {approvalsPassed && ticket.category === 'user.offboarding' && (
-        <OffboardingPanel ticketId={id} canOffboard={can('provisioning.execute')} />
+        <CardBoundary name="Offboarding">
+          <OffboardingPanel ticketId={id} canOffboard={can('provisioning.execute')} />
+        </CardBoundary>
       )}
 
       <div className="grid gap-6 lg:grid-cols-3">
@@ -259,14 +266,16 @@ export default function TicketDetailPage() {
 
           {/* The catalog form this request was filed with — staff only. */}
           {isAgent && ticket.custom_fields?._form && (
-            <SubmittedForm
-              ticketId={id}
-              canViewPii={can('pii.view')}
-              canEdit={can('ticket.form.edit')}
-              ticketStatus={ticket.status}
-              organizationId={ticket.organization_id}
-              onSaved={load}
-            />
+            <CardBoundary name="Submitted form">
+              <SubmittedForm
+                ticketId={id}
+                canViewPii={can('pii.view')}
+                canEdit={can('ticket.form.edit')}
+                ticketStatus={ticket.status}
+                organizationId={ticket.organization_id}
+                onSaved={load}
+              />
+            </CardBoundary>
           )}
 
           <Card>

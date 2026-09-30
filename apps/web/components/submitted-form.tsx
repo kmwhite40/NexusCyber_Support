@@ -96,7 +96,7 @@ export function SubmittedForm({
   }
 
   const byKey = React.useMemo(
-    () => new Map((form?.sections ?? []).flatMap((s) => s.fields).map((f) => [f.key, f] as const)),
+    () => new Map((form?.sections ?? []).flatMap((s) => s.fields ?? []).map((f) => [f.key, f] as const)),
     [form],
   );
   // Names for people already in the answers, so pre-filled pickers show names rather than UUIDs.
@@ -120,7 +120,8 @@ export function SubmittedForm({
   };
 
   const terminal = ticketStatus ? TERMINAL.has(ticketStatus) : false;
-  const hasFields = !!form && form.fields.some((f) => f.data_type !== 'attachment');
+  // `fields` arrived with the edit feature; an API that predates it (e.g. mid-deploy) omits it.
+  const hasFields = !!form && (form.fields ?? []).some((f) => f.data_type !== 'attachment');
   const showEdit = canEdit && !terminal && hasFields && !editing;
   const blocked = form?.edit?.blocked ?? null;
 
@@ -251,8 +252,8 @@ export function SubmittedForm({
           />
         ) : (
           <>
-            {form && form.sections.length === 0 && <p className="text-sm text-muted">No answers were recorded for this request.</p>}
-            {form?.sections.map((s) => (
+            {form && (form.sections ?? []).length === 0 && <p className="text-sm text-muted">No answers were recorded for this request.</p>}
+            {(form?.sections ?? []).map((s) => (
               <section key={s.section ?? '_'} className="space-y-2">
                 {s.section && (
                   <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted">{s.section}</h4>
@@ -313,7 +314,7 @@ function EditBody({
   onChange: (key: string, v: unknown) => void;
   renderUserPicker: (f: { key: string }, multi: boolean) => React.ReactNode;
 }) {
-  const fields = form.fields.filter((f) => f.data_type !== 'attachment') as SubmittedFormFieldDef[];
+  const fields = (form.fields ?? []).filter((f) => f.data_type !== 'attachment') as SubmittedFormFieldDef[];
   // Error messages for keys that have no control here (unknown/removed fields) still need showing.
   const orphanErrors = Object.entries(fieldErrors).filter(([k]) => !fields.some((f) => f.key === k));
   return (
