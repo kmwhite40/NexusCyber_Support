@@ -21,6 +21,8 @@ interface Plan {
   displayName: string;
   steps: PlanStep[];
   blockers: Blocker[];
+  /** Shown to the approver but do NOT stop the run (e.g. mirrored role-assignable groups). */
+  warnings?: Blocker[];
   /** Binds this exact preview to the run it authorises — see provision() below. */
   fingerprint: string;
 }
@@ -203,6 +205,18 @@ export function ProvisioningPanel({ ticketId, canProvision }: { ticketId: string
             <ol className="list-decimal space-y-1 pl-5 text-sm text-fg/90">
               {plan.steps.map((s) => <li key={s.key}>{s.label}</li>)}
             </ol>
+
+            {(plan.warnings?.length ?? 0) > 0 && (
+              <div className="rounded-md border border-warning/30 bg-warning/10 p-3">
+                <div className="mb-1 flex items-center gap-1.5 text-sm font-medium text-warning">
+                  <Info className="h-4 w-4" strokeWidth={1.75} />
+                  Review before running
+                </div>
+                <ul className="list-disc space-y-0.5 pl-5 text-sm">
+                  {plan.warnings!.map((w, i) => <li key={`${w.code}-${i}`}>{w.message}</li>)}
+                </ul>
+              </div>
+            )}
 
             {blocked && (
               <div id="provisioning-blockers" className="rounded-md border border-danger/30 bg-danger/10 p-3">

@@ -474,13 +474,25 @@ describe('mirrored access', () => {
     expect(step.detail.groups).toEqual(expect.arrayContaining(['DL-FED', 'Ember Hawk']));
   });
 
-  // Held back, not copied. The blocker forces the approver to look at the name.
-  it('refuses to copy a role-assignable group without it being seen', () => {
+  // Held back, not copied — and shown to the approver as a WARNING. As a blocker it stopped the
+  // whole onboarding (Mike Baldwin, mirroring dominic.rohan in SBS_Dev_Users) with no way to
+  // acknowledge it short of deleting the mirror answer.
+  it('does not copy a role-assignable group, warns, and still lets the run proceed', () => {
     const p = withMirror({ upn: 'mike.rohan@sbsfederal.com', assignable: ['DL-FED'], roleAssignable: ['SBS_Dev_Users'], dynamic: [] });
-    expect(p.blockers.map((b) => b.code)).toContain('mirror_privileged_group');
-    expect(p.blockers.find((b) => b.code === 'mirror_privileged_group')!.message).toContain('SBS_Dev_Users');
+    expect(p.blockers.map((b) => b.code)).not.toContain('mirror_privileged_group');
+    const w = p.warnings?.find((x) => x.code === 'mirror_privileged_group');
+    expect(w?.message).toContain('SBS_Dev_Users');
+    expect(w?.items).toEqual(['SBS_Dev_Users']);
     const step = p.steps.find((s) => s.key === 'add_groups')!;
     expect(step.detail.groups).not.toContain('SBS_Dev_Users');
+  });
+
+  it('fingerprints a warning, and leaves warning-free plans fingerprinted as before', () => {
+    const plain = withMirror({ upn: 'm@x', assignable: ['DL-FED'], roleAssignable: [], dynamic: [] });
+    const warned = withMirror({ upn: 'm@x', assignable: ['DL-FED'], roleAssignable: ['SBS_Dev_Users'], dynamic: [] });
+    expect(plain.warnings).toBeUndefined();
+    expect(planFingerprint(warned)).not.toBe(planFingerprint({ ...warned, warnings: undefined }));
+    expect(planFingerprint(plain)).toBe(planFingerprint({ ...plain, warnings: [] }));
   });
 
   // Not a blocker: nothing is wrong, the membership simply cannot be copied and saying so beats

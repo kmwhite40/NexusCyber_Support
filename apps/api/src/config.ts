@@ -114,6 +114,12 @@ export interface ProvisioningConfig {
    * raising the policy first fails every run at the last step.
    */
   tapLifetimeMinutes: number;
+  /**
+   * Mailboxes copied on the supervisor's credential email (Temporary Access Pass / temporary
+   * password), so IT holds a record of every handover. M365_PROV_CREDENTIAL_CC is a comma list;
+   * set it to an empty string to copy nobody.
+   */
+  credentialCc: string[];
   /** Attempts for the TAP request, which 404s while a just-created account replicates to the
    *  authentication-methods service. See issueTap in integrations/m365/provisioning-graph.ts. */
   tapRetryAttempts: number;
@@ -199,6 +205,8 @@ export function parseProvisioningConfig(env: NodeJS.ProcessEnv): ProvisioningCon
     cloudPcPolicy: env.M365_PROV_CLOUDPC_POLICY ?? 'SBSFederal Cloud PC',
     cloudPcSku: env.M365_PROV_CLOUDPC_SKU ?? '',
     usageLocation: (env.M365_PROV_USAGE_LOCATION ?? 'US').trim().toUpperCase(),
+    credentialCc: (env.M365_PROV_CREDENTIAL_CC ?? 'it@sbsfederal.com')
+      .split(',').map((s) => s.trim().toLowerCase()).filter((s) => /^[^@\s]+@[^@\s]+$/.test(s)),
     tapLifetimeMinutes: (() => {
       const raw = Number(env.M365_PROV_TAP_LIFETIME_MINUTES);
       // A garbage value must not reach Graph as NaN, and must not silently become something

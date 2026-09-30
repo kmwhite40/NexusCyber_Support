@@ -36,6 +36,9 @@ export function createGraphAdapter(opts: GraphAdapterOptions): NotificationAdapt
             subject: env.subject,
             body: { contentType: 'HTML', content: env.html },
             toRecipients: [{ emailAddress: { address: env.to } }],
+            ...(env.cc?.length
+              ? { ccRecipients: env.cc.map((address) => ({ emailAddress: { address } })) }
+              : {}),
             from: env.fromName
               ? { emailAddress: { address: opts.serviceMailbox, name: env.fromName } }
               : undefined,

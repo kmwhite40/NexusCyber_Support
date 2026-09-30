@@ -577,8 +577,12 @@ async function deliverCredentialToSupervisor(
   // layer; one layer is not a control. Rethrow a fixed string, and log the real error where a
   // log is the sink rather than a step row and a ticket note.
   let result: DeliveryResult;
+  let cc: string[] = [];
   try {
-    result = await adapter.sendEmail({ to: supervisor.email, subject, html, text });
+    // IT is copied on every credential handover (config.provisioning.credentialCc) so there is a
+    // record of who received a pass for which account. Never the supervisor twice.
+    cc = (config.provisioning.credentialCc ?? []).filter((a) => a !== supervisor.email.toLowerCase());
+    result = await adapter.sendEmail({ to: supervisor.email, cc, subject, html, text });
   } catch (err) {
     logger.error({ err, organizationId, kind }, 'sending the credential to the supervisor threw');
     throw new Error(`sending the ${noun} to the supervisor failed`);
@@ -594,6 +598,15 @@ async function deliverCredentialToSupervisor(
       [organizationId, supervisor.email, result.status, result.providerMessageId ?? null,
         isTap ? 'provisioning.tap_delivered' : 'provisioning.password_delivered'],
     );
+    for (const addr of cc) {
+      await sql.query(
+        `INSERT INTO notification_deliveries
+           (organization_id, event_type, channel, recipient, status, provider_message_id)
+         VALUES ($1,$5,'email',$2,$3,$4)`,
+        [organizationId, addr, result.status, result.providerMessageId ?? null,
+          isTap ? 'provisioning.tap_delivered_cc' : 'provisioning.password_delivered_cc'],
+      );
+    }
   });
 
   if (result.status !== 'sent') {
@@ -601,7 +614,7 @@ async function deliverCredentialToSupervisor(
     // provider output, and this string ends up in a step row and a ticket note.
     throw new Error(`sending the ${noun} to the supervisor failed`);
   }
-  return { recipient: supervisor.email };
+  return { recipient: cc.length ? `${supervisor.email} (cc ${cc.join(', ')})` : supervisor.email };
 }
 
 function escapeHtml(s: string): string {
@@ -786,6 +799,7 @@ async function noteRunOutcome(
   actorId: string,
   status: string,
   outcomes: StepOutcome[],
+  warnings?: Plan['warnings'],
 ): Promise<void> {
   const lines = [`Provisioning run ${status}: ${outcomes.map((o) => `${o.key}=${o.status}`).join(', ')}`];
   // A skipped issue_tap means the account exists and is licensed but NOBODY CAN SIGN INTO IT.
@@ -798,6 +812,7 @@ async function noteRunOutcome(
   // instance. The ticket is where someone answers "was this handed over?"; the value itself
   // never appears here, only the fact and the recipient.
   for (const o of outcomes) if (o.note) lines.push('', o.note);
+  for (const w of warnings ?? []) lines.push('', `Note: ${w.message}`);
   const body = lines.join('\n');
   try {
     await withSystemContext(async (sql) => {
@@ -838,6 +853,34 @@ async function queueExchangeGroupTask(ticket: TicketRow, plan: Plan, outcomes: S
     });
   } catch (err) {
     logger.warn({ err, ticketId: ticket.id }, 'failed to queue the Exchange distribution-list task');
+  }
+}
+
+/**
+ * Role-assignable groups a mirror user holds are never copied (planner warning
+ * `mirror_privileged_group`). Once the account exists, leave a task so someone decides — one
+ * pending task per ticket, best-effort like the Exchange task above.
+ */
+async function queueRoleAssignableTask(ticket: TicketRow, plan: Plan, outcomes: StepOutcome[]): Promise<void> {
+  const items = plan.warnings?.find((x) => x.code === 'mirror_privileged_group')?.items ?? [];
+  if (!items.length || !outcomes.some((o) => o.key === 'create_user' && o.status === 'succeeded')) return;
+  try {
+    await withSystemContext(async (sql) => {
+      const dup = await sql.query(
+        `SELECT 1 FROM service_request_tasks WHERE ticket_id = $1 AND step_key = 'review_role_assignable_groups' AND status = 'pending'`,
+        [ticket.id],
+      );
+      if (dup.rows.length) return;
+      await sql.query(
+        `INSERT INTO service_request_tasks (organization_id, ticket_id, step_key, label, assignee_role, position, automatable)
+         VALUES ($1, $2, 'review_role_assignable_groups', $3, 'ServiceDeskManager',
+                 COALESCE((SELECT max(position) + 1 FROM service_request_tasks WHERE ticket_id = $2), 0), false)`,
+        [ticket.organization_id, ticket.id,
+          `Decide on role-assignable groups not copied to ${plan.upn}: ${items.join(', ')} (grant manually only if needed)`],
+      );
+    });
+  } catch (err) {
+    logger.warn({ err, ticketId: ticket.id }, 'failed to queue the role-assignable group review task');
   }
 }
 
@@ -917,8 +960,9 @@ export async function provision(
   }
 
   await recordOutcomes(runId, outcomes, status);
-  await noteRunOutcome(ticket, actor.id, status, outcomes);
+  await noteRunOutcome(ticket, actor.id, status, outcomes, plan.warnings);
   await queueExchangeGroupTask(ticket, plan, outcomes);
+  await queueRoleAssignableTask(ticket, plan, outcomes);
 
   // Org-scoped like every other audited action here: an org-NULL row would orphan the record
   // of a directory write. `detail` carries the step verdicts and the UPN — never the TAP, never

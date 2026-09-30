@@ -4,6 +4,8 @@
 
 export interface EmailEnvelope {
   to: string;
+  /** Carbon-copy recipients. Optional; adapters that cannot copy must still deliver to `to`. */
+  cc?: string[];
   subject: string;
   html: string;
   text: string;

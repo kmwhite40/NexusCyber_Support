@@ -64,6 +64,7 @@ const h = vi.hoisted(() => {
         // tests assert how a REJECTION is reported — waiting out the real backoff to reach
         // the same assertion would just make them slow.
         tapRetryAttempts: 1,
+        credentialCc: ['it@sbsfederal.com'],
       },
     },
   };
@@ -437,6 +438,16 @@ describe('Temporary Access Pass containment across the write paths', () => {
     expect(env.to).toBe(WORK_EMAIL);
     expect(JSON.stringify(env)).not.toContain(PERSONAL_EMAIL);
     expect(env.text).toContain(TAP); // the body is the ONE place the pass is allowed to be
+  });
+
+  it('copies IT on the credential email and records the copy in the ledger', async () => {
+    await provisionApproved();
+    const env = h.sendEmail.mock.calls[0][0] as any;
+    expect(env.cc).toEqual(['it@sbsfederal.com']);
+    const recs = find(/INSERT INTO notification_deliveries/);
+    expect(recs.map((r: any) => r.params[1])).toEqual([WORK_EMAIL, 'it@sbsfederal.com']);
+    expect(recs[1].params[4]).toBe('provisioning.tap_delivered_cc');
+    expect(JSON.stringify(recs.map((r: any) => r.params))).not.toContain(TAP);
   });
 
   it('never lets the pass reach the database, the audit detail, or the run plan', async () => {

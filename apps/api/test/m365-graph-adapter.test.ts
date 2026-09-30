@@ -14,6 +14,15 @@ describe('graph adapter — email', () => {
     expect(body.message.subject).toBe('S');
   });
 
+  it('sends cc recipients as ccRecipients, and omits the field when there are none', async () => {
+    const post = vi.fn(async () => null);
+    const a = createGraphAdapter({ graphClient: { get: vi.fn(), post } as any, serviceMailbox: 'svc@agency.gov', teamsEnabled: false });
+    await a.sendEmail({ to: 'u@x.gov', cc: ['it@x.gov'], subject: 'S', html: 'h', text: 'h' });
+    await a.sendEmail({ to: 'u@x.gov', subject: 'S', html: 'h', text: 'h' });
+    expect((post.mock.calls[0][1] as any).message.ccRecipients).toEqual([{ emailAddress: { address: 'it@x.gov' } }]);
+    expect((post.mock.calls[1][1] as any).message).not.toHaveProperty('ccRecipients');
+  });
+
   it('returns failed when the graph call throws', async () => {
     const graphClient = { get: vi.fn(), post: vi.fn(async () => { throw new Error('boom'); }) } as any;
     const a = createGraphAdapter({ graphClient, serviceMailbox: 'svc@agency.gov', teamsEnabled: false });

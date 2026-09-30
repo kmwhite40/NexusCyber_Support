@@ -11,6 +11,14 @@ describe('parseProvisioningConfig', () => {
     expect(c.baselineSkus).toEqual(['SPE_E3_USGOV_GCCHIGH', 'MDATP_XPLAT']);
   });
 
+  it('copies it@sbsfederal.com on credential emails by default; overridable and disableable', () => {
+    expect(parseProvisioningConfig({}).credentialCc).toEqual(['it@sbsfederal.com']);
+    expect(parseProvisioningConfig({ M365_PROV_CREDENTIAL_CC: ' IT@x.gov , sec@x.gov,' }).credentialCc)
+      .toEqual(['it@x.gov', 'sec@x.gov']);
+    expect(parseProvisioningConfig({ M365_PROV_CREDENTIAL_CC: '' }).credentialCc).toEqual([]);
+    expect(parseProvisioningConfig({ M365_PROV_CREDENTIAL_CC: 'not-an-address' }).credentialCc).toEqual([]);
+  });
+
   it('refuses to report enabled when required settings are missing', () => {
     expect(parseProvisioningConfig({ M365_PROV_ENABLED: 'true' }).enabled).toBe(false);
   });

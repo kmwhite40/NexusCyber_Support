@@ -22,7 +22,9 @@ export type InitialCredential = 'tap' | 'password';
 
 export interface PlanStep { key: StepKey; label: string; detail: Record<string, unknown> }
 export interface Blocker { code: string; message: string }
-export interface Plan { upn: string; displayName: string; steps: PlanStep[]; blockers: Blocker[] }
+/** Something the approver must see that does NOT stop the run; `items` names what it is about. */
+export interface PlanWarning { code: string; message: string; items?: string[] }
+export interface Plan { upn: string; displayName: string; steps: PlanStep[]; blockers: Blocker[]; warnings?: PlanWarning[] }
 
 export interface PlanInput {
   answers: Record<string, unknown>;
@@ -179,6 +181,7 @@ export function planRun(input: PlanInput): Plan {
   const { answers, tenant, upnDomain, baselineSkus, cloudPcSku, usageLocation, mirror, manager, existingUser, existingRoleCount } = input;
   const initialCredential: InitialCredential = input.initialCredential ?? 'tap';
   const blockers: Blocker[] = [];
+  const warnings: PlanWarning[] = [];
   const upn = deriveUpn(answers, upnDomain);
   const first = str(answers.preferred_first_name) || str(answers.legal_first_name);
   const displayName = [first, str(answers.legal_last_name)].filter(Boolean).join(' ');
@@ -253,13 +256,16 @@ export function planRun(input: PlanInput): Plan {
   if (mirror) {
     for (const g of mirror.assignable) if (!groups.includes(g)) groups.push(g);
     if (mirror.roleAssignable.length) {
-      // A blocker, not a silent copy: these groups can carry a directory role, and the request
-      // was approved by someone who read "copy access from <name>", not the list of what that
-      // person actually holds.
-      blockers.push({
+      // NOT copied: these groups can carry a directory role, and the request was approved by
+      // someone who read "copy access from <name>", not the list of what that person holds.
+      // A WARNING, not a blocker: as a blocker it stopped the entire onboarding with no way to
+      // acknowledge it short of deleting the mirror answer (and every group it would copy).
+      // The run proceeds without them and a follow-up task is left on the ticket.
+      warnings.push({
         code: 'mirror_privileged_group',
-        message: `${mirror.upn} belongs to role-assignable group(s) that will NOT be copied automatically: `
-          + `${mirror.roleAssignable.join(', ')}. Grant them deliberately if this hire needs them.`,
+        message: `${mirror.upn} belongs to role-assignable group(s) that will NOT be copied: `
+          + `${mirror.roleAssignable.join(', ')}. A follow-up task is added to the ticket to grant them deliberately if this hire needs them.`,
+        items: [...mirror.roleAssignable],
       });
     }
   }
@@ -403,7 +409,7 @@ export function planRun(input: PlanInput): Plan {
   });
   if (policyGroupId) steps.push({ key: 'await_cloudpc', label: 'Wait for the Cloud PC to finish building', detail: { policyName } });
 
-  return { upn, displayName, steps, blockers };
+  return { upn, displayName, steps, blockers, ...(warnings.length ? { warnings } : {}) };
 }
 
 // ---------------------------------------------------------------------------
@@ -462,6 +468,8 @@ export function planFingerprint(plan: Plan): string {
     blockers: [...plan.blockers].sort((a, b) =>
       a.code === b.code ? (a.message < b.message ? -1 : a.message > b.message ? 1 : 0)
         : a.code < b.code ? -1 : 1),
+    // Only when present, so a plan without warnings fingerprints exactly as it always did.
+    ...(plan.warnings?.length ? { warnings: plan.warnings.map((w) => ({ code: w.code, message: w.message })) } : {}),
   };
   return createHash('sha256').update(canonicalJson(canonical)).digest('hex');
 }
