@@ -263,7 +263,7 @@ export function SubmittedForm({
                     <div key={f.key} className={WIDE_TYPES.has(f.data_type) ? 'sm:col-span-2' : undefined}>
                       <dt className="text-xs text-muted">{f.label}</dt>
                       <dd className="mt-0.5 text-sm text-fg">
-                        <Answer field={f} pii={form.pii} />
+                        <Answer field={f} pii={form?.pii ?? 'none'} />
                       </dd>
                     </div>
                   ))}
