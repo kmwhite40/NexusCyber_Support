@@ -609,24 +609,51 @@ describe('set_password', () => {
     ...over,
   });
 
-  it('sets a password on the account and sends it to the supervisor', async () => {
+  const EXISTING = { findUser: async () => ({ id: 'existing', userPrincipalName: plan.upn }) };
+
+  // A NEW account is created WITH the password that is handed over: no separate passwordProfile
+  // PATCH, which app-only needs User-PasswordProfile.ReadWrite.All for and which 403'd in prod.
+  it('creates a new account with the password it sends, and never PATCHes it', async () => {
+    let createdWith: any;
+    let sent: string | undefined;
+    let patched = false;
+    const r = await executePlan(pwPlan, pwOps({
+      createUser: async (body: any) => { createdWith = body.passwordProfile; return { id: 'u1' }; },
+      setPassword: async () => { patched = true; },
+      deliverPassword: async (_sup: string, _upn: string, pw: string) => { sent = pw; return { recipient: 'sup@x' }; },
+    }));
+    expect(r.outcomes.find((o) => o.key === 'set_password')?.status).toBe('succeeded');
+    expect(patched).toBe(false);
+    expect(sent).toBe(createdWith.password);
+    expect(sent!.length).toBeGreaterThan(15);
+  });
+
+  it('sets a password on an ADOPTED account (its current one is unknown) and sends that', async () => {
     let set: string | undefined;
     let sent: string | undefined;
     const r = await executePlan(pwPlan, pwOps({
+      ...EXISTING,
       setPassword: async (_id: string, pw: string) => { set = pw; },
       deliverPassword: async (_sup: string, _upn: string, pw: string) => { sent = pw; return { recipient: 'sup@x' }; },
     }));
     expect(r.outcomes.find((o) => o.key === 'set_password')?.status).toBe('succeeded');
     expect(set).toBeTruthy();
-    expect(sent).toBe(set); // the value delivered is the value that was set
-    expect(set!.length).toBeGreaterThan(15);
+    expect(sent).toBe(set);
+  });
+
+  it('explains the missing permission when setting an adopted account\'s password is refused', async () => {
+    const r = await executePlan(pwPlan, pwOps({
+      ...EXISTING,
+      setPassword: async () => { throw Object.assign(new Error('Graph request failed: 403'), { status: 403 }); },
+    }));
+    expect(r.outcomes.find((o) => o.key === 'set_password')?.error).toMatch(/User-PasswordProfile\.ReadWrite\.All/);
   });
 
   // Generated per run, never reused, never derived from anything on the request.
   it('mints a different password every time', async () => {
     const seen = new Set<string>();
     for (let i = 0; i < 5; i++) {
-      await executePlan(pwPlan, pwOps({ setPassword: async (_id: string, pw: string) => { seen.add(pw); } }));
+      await executePlan(pwPlan, pwOps({ deliverPassword: async (_s: string, _u: string, pw: string) => { seen.add(pw); return { recipient: 'x' }; } }));
     }
     expect(seen.size).toBe(5);
   });
@@ -634,7 +661,7 @@ describe('set_password', () => {
   it('keeps the password out of the outcomes, whatever happens', async () => {
     let minted = '';
     const r = await executePlan(pwPlan, pwOps({
-      setPassword: async (_id: string, pw: string) => { minted = pw; },
+      createUser: async (body: any) => { minted = body.passwordProfile.password; return { id: 'u1' }; },
       // A mail adapter that echoes the message it failed to send — the message body IS the value.
       deliverPassword: async (_s: string, _u: string, pw: string) => { throw new Error(`SMTP 550: ${pw}`); },
     }));
@@ -646,6 +673,7 @@ describe('set_password', () => {
   it('does not leak it through a failure to set it either', async () => {
     let minted = '';
     const r = await executePlan(pwPlan, pwOps({
+      ...EXISTING,
       setPassword: async (_id: string, pw: string) => { minted = pw; throw new Error(`Graph rejected: ${pw}`); },
     }));
     expect(r.status).toBe('failed');
@@ -656,7 +684,7 @@ describe('set_password', () => {
   it('records who received it, and not the value', async () => {
     let minted = '';
     const r = await executePlan(pwPlan, pwOps({
-      setPassword: async (_id: string, pw: string) => { minted = pw; },
+      createUser: async (body: any) => { minted = body.passwordProfile.password; return { id: 'u1' }; },
     }));
     const out = r.outcomes.find((o) => o.key === 'set_password')!;
     expect(out.note).toMatch(/sup@sbsfederal\.com/);

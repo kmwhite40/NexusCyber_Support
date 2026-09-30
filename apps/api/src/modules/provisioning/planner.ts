@@ -46,7 +46,7 @@ export interface PlanInput {
    * copied. Absent when no mirror user was named. Licences are deliberately NOT mirrored — the
    * baseline decides those.
    */
-  mirror?: { upn: string; assignable: string[]; roleAssignable: string[]; dynamic: string[] };
+  mirror?: { upn: string; assignable: string[]; roleAssignable: string[]; dynamic: string[]; distributionLists?: string[] };
   /** The supervisor, already resolved to a directory object by the caller. Absent when the
    *  request named one that could not be found in the tenant — which is a blocker, not a
    *  silently skipped step. */
@@ -374,6 +374,7 @@ export function planRun(input: PlanInput): Plan {
         ...(mirror ? { mirroredFrom: mirror.upn } : {}),
         // Saying what could not be copied beats a silent omission the requester finds later.
         ...(mirror?.dynamic.length ? { mirrorSkippedDynamic: mirror.dynamic } : {}),
+        ...(mirror?.distributionLists?.length ? { mirrorSkippedDistributionLists: mirror.distributionLists } : {}),
       },
     });
   }

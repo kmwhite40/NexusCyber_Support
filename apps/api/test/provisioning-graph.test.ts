@@ -555,6 +555,20 @@ describe('listSelectableGroups', () => {
     expect(g.get).toHaveBeenCalledTimes(2);
   });
 
+  // SBS decision 2026-09-30: distribution lists are not offered on onboarding. Graph cannot add
+  // members to them (or to mail-enabled security groups); Microsoft 365 groups stay.
+  it('leaves out distribution lists and mail-enabled security groups', async () => {
+    const g = client([{ value: [
+      { id: 'a', displayName: 'CPC Users', mailEnabled: false, securityEnabled: true, groupTypes: [] },
+      { id: 'b', displayName: 'DL-Chantilly', mailEnabled: true, securityEnabled: false, groupTypes: [] },
+      { id: 'c', displayName: 'Mail Sec', mailEnabled: true, securityEnabled: true, groupTypes: [] },
+      { id: 'd', displayName: 'Team Site', mailEnabled: true, securityEnabled: false, groupTypes: ['Unified'] },
+    ] }]);
+    const out = await listSelectableGroups(g);
+    expect(out.groups.map((x) => x.displayName)).toEqual(['CPC Users', 'Team Site']);
+    expect(String(g.get.mock.calls[0][0])).toContain('mailEnabled');
+  });
+
   // Graph REFUSES a manual add to a dynamic group, so offering one is offering a run that fails
   // at add_groups. Role-assignable groups stay: choosing one here is a deliberate act by someone
   // reading the list, unlike the mirror flow where they are copied sight-unseen.

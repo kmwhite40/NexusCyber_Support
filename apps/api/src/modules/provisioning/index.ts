@@ -385,6 +385,7 @@ async function buildPlan(actor: Principal, ticketId: string): Promise<{ plan: Pl
         assignable: p.assignable.map((x) => x.displayName).filter(Boolean),
         roleAssignable: p.roleAssignable.map((x) => x.displayName).filter(Boolean),
         dynamic: p.dynamic.map((x) => x.displayName).filter(Boolean),
+        distributionLists: p.distributionLists.map((x) => x.displayName).filter(Boolean),
       };
     }
   }

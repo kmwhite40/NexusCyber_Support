@@ -300,8 +300,10 @@ export function graphErrorCode(err: unknown): string | undefined {
 export interface MirrorGroup { id: string; displayName: string }
 
 export interface MirrorPartition {
-  /** Safe to copy: ordinary security groups and distribution lists. */
+  /** Safe to copy: ordinary security groups and Microsoft 365 groups. */
   assignable: MirrorGroup[];
+  /** Distribution lists / mail-enabled security groups. Exchange-only, so never copied. */
+  distributionLists: MirrorGroup[];
   /** Groups that can carry a directory role. Never copied silently — the approver must see them. */
   roleAssignable: MirrorGroup[];
   /** Dynamic groups. Graph refuses a manual add, so attempting one fails the run. */
@@ -326,13 +328,20 @@ export interface MirrorPartition {
  *    reads like a permissions problem rather than a category error.
  */
 export function partitionMirrorGroups(memberOf: Array<Record<string, unknown>>): MirrorPartition {
-  const out: MirrorPartition = { assignable: [], roleAssignable: [], dynamic: [], directoryRoles: [] };
+  const out: MirrorPartition = { assignable: [], distributionLists: [], roleAssignable: [], dynamic: [], directoryRoles: [] };
   for (const m of memberOf ?? []) {
     const entry: MirrorGroup = { id: String(m.id ?? ''), displayName: String(m.displayName ?? '') };
     const type = String(m['@odata.type'] ?? '');
     if (type.endsWith('directoryRole')) { out.directoryRoles.push(entry); continue; }
     if (m.membershipRule) { out.dynamic.push(entry); continue; }
     if (m.isAssignableToRole === true) { out.roleAssignable.push(entry); continue; }
+    // SBS decision (2026-09-30): distribution lists are not part of onboarding. Graph cannot add
+    // members to them anyway, and they turned every mirrored run into an Exchange follow-up.
+    if (groupMembershipWriter({
+      id: entry.id, displayName: entry.displayName,
+      mailEnabled: m.mailEnabled === true,
+      groupTypes: Array.isArray(m.groupTypes) ? (m.groupTypes as unknown[]).map(String) : [],
+    }) === 'exchange') { out.distributionLists.push(entry); continue; }
     out.assignable.push(entry);
   }
   return out;
@@ -363,7 +372,7 @@ export async function listSelectableGroups(
   const maxPages = opts.maxPages ?? 20; // 20 x 999 — far past any tenant this serves
   const groups: DirectoryGroup[] = [];
   let path: string | null =
-    '/groups?$select=id,displayName,membershipRule,isAssignableToRole,groupTypes&$top=999';
+    '/groups?$select=id,displayName,membershipRule,isAssignableToRole,groupTypes,mailEnabled,securityEnabled&$top=999';
   let pages = 0;
   let truncated = false;
   while (path) {
@@ -375,6 +384,12 @@ export async function listSelectableGroups(
       // neither belongs in a list whose whole purpose is choosing by name.
       if (typeof raw?.id !== 'string' || typeof raw?.displayName !== 'string') continue;
       if (raw.membershipRule) continue;
+      // Distribution lists and mail-enabled security groups are not offered: Graph cannot add
+      // members to them, so every pick became a manual Exchange task (SBS decision, 2026-09-30).
+      if (groupMembershipWriter({
+        id: raw.id, displayName: raw.displayName, mailEnabled: raw.mailEnabled === true,
+        groupTypes: Array.isArray(raw.groupTypes) ? raw.groupTypes.map(String) : [],
+      }) === 'exchange') continue;
       groups.push({ id: raw.id, displayName: raw.displayName });
     }
     const next: unknown = res?.['@odata.nextLink'];

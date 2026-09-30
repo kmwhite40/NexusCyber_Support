@@ -91,6 +91,12 @@ export async function executePlan(
 
   const outcomes: StepOutcome[] = [];
   let userId = '';
+  // Password mode, NEW account: the password the account is CREATED with is the one handed over.
+  // Setting it afterwards is a PATCH of passwordProfile, which app-only needs
+  // User-PasswordProfile.ReadWrite.All for — not granted, and it 403'd in production. Creating
+  // the user with it needs only what create_user already uses. Held in this function's scope,
+  // exactly like the TAP; empty for an adopted account.
+  let creationPassword = '';
   let awaiting = false;
 
   for (const step of plan.steps) {
@@ -189,6 +195,7 @@ export async function executePlan(
               throw new Error(redactSecret(toErrorMessage(err), password));
             }
             userId = created.id;
+            if (plan.steps.some((s) => s.key === 'set_password')) creationPassword = password;
           }
           outcomes.push({ key: step.key, status: 'succeeded', graphObjectId: userId, ...(adoptionNote ? { note: adoptionNote } : {}) });
           break;
@@ -287,14 +294,28 @@ export async function executePlan(
           // Minted here and held in this scope only. Same containment as issue_tap below: Graph
           // and mail adapters both routinely echo what they were given back in their error text,
           // and a StepOutcome ends up in a ticket note and an audit detail blob.
-          const password = generateInitialPassword();
+          // New account: deliver the password it was created with (no extra Graph write).
+          // Adopted account: its password is unknown, so one must be set — that PATCH needs
+          // User-PasswordProfile.ReadWrite.All.
+          const password = creationPassword || generateInitialPassword();
           let recipient: string;
           try {
-            await ops.setPassword(userId, password);
+            if (!creationPassword) {
+              try {
+                await ops.setPassword(userId, password);
+              } catch (err) {
+                const status = (err as { status?: number })?.status;
+                throw new Error(status === 403
+                  ? 'setting a password on an existing account needs the User-PasswordProfile.ReadWrite.All '
+                    + 'permission (not granted); reset it in Entra and hand it over manually'
+                  : toErrorMessage(err));
+              }
+            }
             ({ recipient } = await ops.deliverPassword(String(step.detail.supervisor ?? ''), plan.upn, password));
           } catch (err) {
             throw new Error(redactSecret(toErrorMessage(err), password));
           }
+          creationPassword = '';
           // The recipient, never the value — that is what makes the ticket able to answer "was
           // this handed over, and to whom?" without becoming a place the credential is stored.
           outcomes.push({

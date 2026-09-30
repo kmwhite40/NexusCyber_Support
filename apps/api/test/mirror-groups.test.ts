@@ -48,6 +48,15 @@ describe('partitionMirrorGroups', () => {
 
   it('handles a user who belongs to nothing', () => {
     const p = partitionMirrorGroups([]);
-    expect(p).toEqual({ assignable: [], roleAssignable: [], dynamic: [], directoryRoles: [] });
+    expect(p).toEqual({ assignable: [], distributionLists: [], roleAssignable: [], dynamic: [], directoryRoles: [] });
+  });
+
+  it('never copies a mirror user\'s distribution lists', () => {
+    const p = partitionMirrorGroups([
+      { id: '1', displayName: 'CPC Users', mailEnabled: false, securityEnabled: true, groupTypes: [] },
+      { id: '2', displayName: 'DL-FED', mailEnabled: true, securityEnabled: false, groupTypes: [] },
+    ]);
+    expect(p.assignable.map((x) => x.displayName)).toEqual(['CPC Users']);
+    expect(p.distributionLists.map((x) => x.displayName)).toEqual(['DL-FED']);
   });
 });
