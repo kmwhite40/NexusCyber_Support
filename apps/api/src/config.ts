@@ -120,6 +120,8 @@ export interface ProvisioningConfig {
    * set it to an empty string to copy nobody.
    */
   credentialCc: string[];
+  /** SBS IT Service Desk contact details printed in the new-user onboarding guide. Empty = line omitted. */
+  helpdesk: { email: string; phone: string; portal: string; hours: string };
   /** Attempts for the TAP request, which 404s while a just-created account replicates to the
    *  authentication-methods service. See issueTap in integrations/m365/provisioning-graph.ts. */
   tapRetryAttempts: number;
@@ -205,6 +207,12 @@ export function parseProvisioningConfig(env: NodeJS.ProcessEnv): ProvisioningCon
     cloudPcPolicy: env.M365_PROV_CLOUDPC_POLICY ?? 'SBSFederal Cloud PC',
     cloudPcSku: env.M365_PROV_CLOUDPC_SKU ?? '',
     usageLocation: (env.M365_PROV_USAGE_LOCATION ?? 'US').trim().toUpperCase(),
+    helpdesk: {
+      email: (env.M365_PROV_HELPDESK_EMAIL ?? 'anchor-support@sbsfederal.com').trim(),
+      phone: (env.M365_PROV_HELPDESK_PHONE ?? '').trim(),
+      portal: (env.M365_PROV_HELPDESK_PORTAL ?? 'https://anchor.azurewebsites.us').trim(),
+      hours: (env.M365_PROV_HELPDESK_HOURS ?? '').trim(),
+    },
     credentialCc: (env.M365_PROV_CREDENTIAL_CC ?? 'it@sbsfederal.com')
       .split(',').map((s) => s.trim().toLowerCase()).filter((s) => /^[^@\s]+@[^@\s]+$/.test(s)),
     tapLifetimeMinutes: (() => {
