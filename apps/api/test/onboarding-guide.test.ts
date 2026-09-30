@@ -74,6 +74,10 @@ describe('SBS onboarding guide', () => {
     expect(text).not.toContain('Support Hours:');
   });
 
+  it('declares UTF-8 so the checkboxes and dashes do not render as mojibake', () => {
+    expect(renderOnboardingGuide(base).html).toMatch(/^<!doctype html><html><head><meta charset="utf-8">/);
+  });
+
   it('tells the supervisor not to forward it', () => {
     const { text } = renderOnboardingGuide(base);
     expect(text).toMatch(/For Mike Rohan:.*Do not forward this email/s);

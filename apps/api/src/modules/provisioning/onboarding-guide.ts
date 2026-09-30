@@ -343,7 +343,11 @@ export function renderOnboardingGuide(d: OnboardingGuideInput): RenderedEmail {
     + '<div style="font-size:12px;letter-spacing:2px;">STRATEGIC BUSINESS SYSTEMS</div>'
     + '<div style="font-size:20px;font-weight:bold;margin-top:4px;">Microsoft 365 New User Onboarding Guide</div>'
     + '<div style="font-size:13px;margin-top:2px;opacity:.85;">SBS Information Technology</div></div>';
-  const html = '<!doctype html><html><body style="margin:0;background:#f4f6f8;">'
+  // Declared explicitly: without it a client (or a browser opening a saved copy) may guess
+  // Windows-1252 and turn ☐ ☒ — into mojibake like "â˜".
+  const html = '<!doctype html><html><head><meta charset="utf-8">'
+    + '<meta http-equiv="Content-Type" content="text/html; charset=utf-8"></head>'
+    + '<body style="margin:0;background:#f4f6f8;">'
     + '<div style="max-width:720px;margin:0 auto;background:#fff;font-family:Segoe UI,Arial,sans-serif;font-size:14px;line-height:1.5;color:#1f2933;">'
     + header
     + `<div style="padding:8px 22px 24px;">${blocksHtml(blocks)}</div></div></body></html>`;
