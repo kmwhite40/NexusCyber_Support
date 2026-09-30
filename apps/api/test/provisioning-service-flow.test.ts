@@ -837,3 +837,68 @@ describe('a Temporary Access Pass request Graph rejects', () => {
     expect(blob).not.toContain(TAP);
   });
 });
+
+describe('re-sending the onboarding credentials', () => {
+  const UPN = 'ada.lovelace@sbsfederal.com';
+  const createdRun = (over: any = {}) => ({
+    plan: { upn: UPN, displayName: 'Ada Lovelace', blockers: [], steps: [{ key: 'create_user' }, { key: 'assign_cloudpc' }] },
+    graph_object_id: 'u-new',
+    ...over,
+  });
+  const rows = (run: any[] | null, extra: (t: string) => any[] | undefined = () => undefined) => {
+    const base = defaultRows();
+    return (text: string, params: unknown[]) => {
+      const e = extra(text);
+      if (e) return e;
+      if (/JOIN provisioning_steps s ON s.run_id = r.id AND s.step_key = 'create_user'/.test(text)) return run ?? [];
+      if (/status = 'running'/.test(text)) return [];
+      return base(text, params as any);
+    };
+  };
+  const accountExists = () => {
+    const orig = g.graph.get.getMockImplementation()!;
+    g.graph.get.mockImplementation(async (path: string) =>
+      (path.startsWith('/users?$filter=') && path.includes(encodeURIComponent(UPN)))
+        ? { value: [{ id: 'u-new', userPrincipalName: UPN }] }
+        : orig(path));
+  };
+
+  it('resets the password and mails the onboarding guide to the supervisor, IT copied', async () => {
+    h.setDbRows(rows([createdRun()]));
+    accountExists();
+    const r = await provisioning.resendCredentials(actor, TICKET);
+    expect(r.recipient).toContain(WORK_EMAIL);
+    const set = g.graph.patch.mock.calls.find((c: any[]) => String(c[0]).includes('u-new'));
+    const pw = set![1].passwordProfile.password as string;
+    expect(set![1].passwordProfile.forceChangePasswordNextSignIn).toBe(true);
+    const env = h.sendEmail.mock.calls[0][0] as any;
+    expect(env.to).toBe(WORK_EMAIL);
+    expect(env.cc).toEqual(['it@sbsfederal.com']);
+    expect(env.subject).toContain('Onboarding Guide');
+    expect(env.text).toContain(pw);
+    // Recorded, never the value.
+    expect(JSON.stringify(h.queries.map((q) => q.params))).not.toContain(pw);
+    expect(JSON.stringify(h.audit.mock.calls)).not.toContain(pw);
+    expect(h.audit.mock.calls.some((c: any[]) => c[1].action === 'provisioning.credentials_resent')).toBe(true);
+  });
+
+  it('refuses before any account exists', async () => {
+    h.setDbRows(rows(null));
+    await expect(provisioning.resendCredentials(actor, TICKET)).rejects.toMatchObject({ status: 409 });
+    expect(h.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('refuses a ticket that is not an onboarding request', async () => {
+    h.setDbRows(rows([createdRun()], (t) => (/FROM tickets WHERE id/.test(t)
+      ? [{ id: TICKET, organization_id: TICKET_ORG, category: 'user.offboarding', custom_fields: {} }] : undefined)));
+    await expect(provisioning.resendCredentials(actor, TICKET)).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('names the missing Graph permission when the reset is refused, without leaking the password', async () => {
+    h.setDbRows(rows([createdRun()]));
+    accountExists();
+    g.graph.patch.mockImplementation(async () => { throw Object.assign(new Error('Graph request failed: 403'), { status: 403 }); });
+    await expect(provisioning.resendCredentials(actor, TICKET)).rejects.toThrow(/User-PasswordProfile\.ReadWrite\.All/);
+    expect(h.sendEmail).not.toHaveBeenCalled();
+  });
+});

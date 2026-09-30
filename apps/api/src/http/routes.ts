@@ -636,6 +636,15 @@ export async function registerRoutes(app: FastifyInstance) {
     return { data: await provisioning.provision(p, id, body.fingerprint) };
   });
 
+  // Issue a NEW temporary password for the account this request created and re-send the SBS
+  // onboarding guide to the supervisor (IT copied). Credentials are never stored, so this is the
+  // only way to "resend" one.
+  app.post('/api/v1/tickets/:id/provisioning/resend-credentials', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return { data: await provisioning.resendCredentials(p, id) };
+  });
+
   // Run history, plus whether this deployment can provision at all. The flag rides along here
   // rather than on the public /auth/config: this route is already the one call the panel makes
   // on mount, it is already authenticated and already checks provisioning.execute, so the

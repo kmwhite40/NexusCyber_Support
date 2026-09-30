@@ -74,6 +74,8 @@ export function ProvisioningPanel({ ticketId, canProvision }: { ticketId: string
 
   const [latestRun, setLatestRun] = React.useState<RunRow | null>(null);
   const [runsLoaded, setRunsLoaded] = React.useState(false);
+  // Any run (not just the latest) that created the account — that is what makes a re-send possible.
+  const [accountCreated, setAccountCreated] = React.useState(false);
   /** null = not yet known. See featureOff below for why the distinction is deliberate. */
   const [enabled, setEnabled] = React.useState<boolean | null>(null);
 
@@ -82,6 +84,7 @@ export function ProvisioningPanel({ ticketId, canProvision }: { ticketId: string
       .get<{ data: RunRow[]; provisioningEnabled?: boolean }>(`/tickets/${ticketId}/provisioning`)
       .then((r) => {
         setLatestRun(r.data[0] ?? null);
+        setAccountCreated(r.data.some((run) => run.steps.some((s) => s.step_key === 'create_user' && s.status === 'succeeded')));
         setEnabled(r.provisioningEnabled ?? null);
       })
       .catch(() => {
@@ -169,6 +172,10 @@ export function ProvisioningPanel({ ticketId, canProvision }: { ticketId: string
       <CardBody className="space-y-4">
         {runsLoaded && latestRun && (
           <RunStatus run={latestRun} />
+        )}
+
+        {runsLoaded && accountCreated && !featureOff && (
+          <ResendCredentials ticketId={ticketId} disabled={inFlight || executing} />
         )}
 
         {featureOff && (
@@ -314,5 +321,58 @@ function StepList({ steps }: { steps: StepOutcome[] }) {
         );
       })}
     </ul>
+  );
+}
+
+/**
+ * Issue a NEW temporary password for the account this request created and re-send the SBS
+ * onboarding guide to the supervisor (IT copied). Two-step so nobody resets a working
+ * credential by accident.
+ */
+function ResendCredentials({ ticketId, disabled }: { ticketId: string; disabled: boolean }) {
+  const [confirming, setConfirming] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const [done, setDone] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+
+  async function send() {
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const res = await api.post<{ data: { recipient: string } }>(`/tickets/${ticketId}/provisioning/resend-credentials`);
+      setDone(`Onboarding guide sent to ${res.data.recipient} with a new temporary password.`);
+      setConfirming(false);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.detail : 'The onboarding email could not be re-sent.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="rounded-md border border-border p-3 text-sm">
+      {!confirming ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => { setConfirming(true); setDone(null); setError(null); }} disabled={disabled || busy}>
+            Resend onboarding email
+          </Button>
+          <span className="text-xs text-muted">Sends the onboarding guide again with a new temporary password.</span>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <p>
+            This resets the account&apos;s password to a new temporary one and emails the onboarding guide to the
+            supervisor, with IT copied. <strong>Any password or pass sent earlier will stop working.</strong>
+          </p>
+          <div className="flex gap-2">
+            <Button size="sm" onClick={send} disabled={busy}>{busy ? 'Sending…' : 'Reset password and send'}</Button>
+            <Button size="sm" variant="outline" onClick={() => setConfirming(false)} disabled={busy}>Cancel</Button>
+          </div>
+        </div>
+      )}
+      {done && <p className="mt-2 text-success">{done}</p>}
+      {error && <p className="mt-2 text-danger">{error}</p>}
+    </div>
   );
 }

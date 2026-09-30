@@ -449,7 +449,7 @@ function requireUserId(userId: string, stepKey: StepKey): void {
  * anywhere else that a reviewer could forget to update, because the redaction lives right next to
  * the code that received the secret in the first place.
  */
-function redactSecret(message: string, secret: string | undefined): string {
+export function redactSecret(message: string, secret: string | undefined): string {
   if (!secret) return message;
   return message.split(secret).join('[redacted]');
 }
@@ -470,7 +470,7 @@ function redactSecret(message: string, secret: string | undefined): string {
  * logged, never returned from executePlan (StepOutcome has no field for it), and never persisted
  * anywhere by this module.
  */
-function generateInitialPassword(): string {
+export function generateInitialPassword(): string {
   const random = randomBytes(32).toString('base64url'); // 256 bits; URL-safe alphabet only
   return `${random}Aa1!`;
 }

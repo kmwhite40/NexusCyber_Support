@@ -56,7 +56,7 @@ import {
 import { renderOnboardingGuide } from './onboarding-guide.js';
 import { planRun, deriveUpn, planFingerprint, normalizeForMatch, type Plan, type PlanInput } from './planner.js';
 import {
-  executePlan, TapPolicyUnavailableError, TAP_SKIPPED_NOTICE,
+  executePlan, TapPolicyUnavailableError, TAP_SKIPPED_NOTICE, generateInitialPassword, redactSecret,
   type ProvisioningOps, type StepOutcome,
 } from './executor.js';
 import type { Principal } from '../../types.js';
@@ -1005,6 +1005,99 @@ async function ticketOrgFor(sql: Sql, ticketId: string): Promise<string> {
  * NOT gated on config.provisioning.enabled — turning the feature off must not erase the
  * history of what it did while it was on. With no runs, it simply returns [].
  */
+/**
+ * Re-send the SBS onboarding guide for an account a run already created, with a NEW temporary
+ * password. Credentials are never stored, so the original cannot be re-sent: this resets the
+ * password (force change at first sign-in) and mails the guide to the supervisor, IT copied —
+ * the same delivery, template and containment as the run itself. The previous credential stops
+ * working.
+ *
+ * Setting a password on an EXISTING account is a passwordProfile PATCH, which app-only needs
+ * User-PasswordProfile.ReadWrite.All for. Without it Graph returns 403 and this says so.
+ */
+export async function resendCredentials(actor: Principal, ticketId: string): Promise<{ recipient: string }> {
+  requireEnabled();
+  const ticket = await loadTicket(ticketId);
+  authorize(actor, 'provisioning.execute', { organizationId: ticket.organization_id });
+  await requireProvisioningTenantOrg(ticket);
+  if (ticket.category !== ONBOARDING_CATALOG_KEY) {
+    throw Errors.badRequest('onboarding credentials can only be re-sent for a new-user onboarding request');
+  }
+
+  const found = await withSystemContext(async (sql) => {
+    const inflight = await sql.query(
+      `SELECT 1 FROM provisioning_runs WHERE ticket_id = $1 AND status = 'running'`, [ticketId]);
+    if (inflight.rows.length) throw Errors.conflict('a provisioning run is in progress for this request');
+    const { rows } = await sql.query(
+      `SELECT r.plan, s.graph_object_id
+         FROM provisioning_runs r
+         JOIN provisioning_steps s ON s.run_id = r.id AND s.step_key = 'create_user' AND s.status = 'succeeded'
+        WHERE r.ticket_id = $1
+        ORDER BY r.created_at DESC
+        LIMIT 1`,
+      [ticketId],
+    );
+    return rows[0] as { plan: Plan; graph_object_id: string | null } | undefined;
+  });
+  if (!found?.graph_object_id) {
+    throw Errors.conflict('no account has been created for this request yet — run provisioning first');
+  }
+  const plan = found.plan;
+
+  const g = await getProvisioningGraph();
+  const account = await findUserByUpn(g.graph, plan.upn);
+  if (!account || account.id !== found.graph_object_id) {
+    throw Errors.conflict(`the account ${plan.upn} created by this request no longer exists in the directory`);
+  }
+
+  const password = generateInitialPassword();
+  let recipient: string;
+  try {
+    try {
+      await setPassword(g.graph, account.id, password);
+    } catch (err) {
+      const status = (err as { status?: number })?.status;
+      logger.warn({ ticketId, status }, 'resetting the password for a credential re-send was refused');
+      throw status === 403
+        ? Errors.forbidden('resetting the password needs the User-PasswordProfile.ReadWrite.All permission on '
+          + 'the provisioning app (not granted). Grant it in Entra, or reset the password there and hand it over manually.')
+        : new Error('resetting the password failed');
+    }
+    const supervisor = typeof ticket.custom_fields?.supervisor === 'string' ? ticket.custom_fields.supervisor : '';
+    ({ recipient } = await deliverCredentialToSupervisor(ticket.organization_id, supervisor, plan.upn, password, 'password', {
+      fullName: plan.displayName,
+      department: typeof ticket.custom_fields?.department === 'string' ? ticket.custom_fields.department : '',
+      cloudPcAssigned: plan.steps.some((s) => s.key === 'assign_cloudpc'),
+    }));
+  } catch (err) {
+    // Never let the new password ride out on an error (a mail adapter may echo its message).
+    if (err instanceof Error) err.message = redactSecret(err.message, password);
+    throw err;
+  }
+
+  const body = `Onboarding guide re-sent with a NEW temporary password to ${recipient} by ${actor.email}. `
+    + 'Any earlier credential for this account no longer works.';
+  try {
+    await withSystemContext(async (sql) => {
+      await sql.query(
+        `INSERT INTO ticket_comments (organization_id, ticket_id, author_id, visibility, body)
+         VALUES ($1,$2,$3,'internal',$4)`,
+        [ticket.organization_id, ticket.id, actor.id, body],
+      );
+    });
+  } catch (err) {
+    logger.warn({ err, ticketId }, 'failed to note the credential re-send on the ticket');
+  }
+  await audit(actor, {
+    action: 'provisioning.credentials_resent',
+    organizationId: ticket.organization_id,
+    resourceType: 'ticket',
+    resourceId: ticketId,
+    detail: { upn: plan.upn, recipient },
+  });
+  return { recipient };
+}
+
 export async function listRuns(actor: Principal, ticketId: string) {
   return withOrgContext(orgContextFor(actor), async (sql) => {
     const organizationId = await ticketOrgFor(sql, ticketId);
