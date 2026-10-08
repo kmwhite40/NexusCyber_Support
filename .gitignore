@@ -15,3 +15,6 @@ infra/azure/.secrets.gov.env
 * 2.*
 *\ 2.*
 OneDeploy
+
+# TypeScript incremental build cache (rewritten on every build)
+*.tsbuildinfo
