@@ -191,10 +191,12 @@ export async function createTicket(actor: Principal, input: CreateTicketInput) {
         await sql.query('SELECT * FROM tickets WHERE organization_id=$1 AND external_ref=$2', [orgId, input.externalRef])
       ).rows[0];
       if (existing) {
+        const ig = input.integration ?? {};
         const { rows: updated } = await sql.query(
           `UPDATE tickets
               SET subject=$2, description=$3, category=$4, impact=$5, urgency=$6, priority=$7, tags=$8,
-                  severity=$9, custom_fields=$10
+                  severity=$9, custom_fields=$10, external_due_at=$11, external_owner=$12,
+                  external_source_id=$13, control_ids=$14, external_url=$15
             WHERE id=$1 RETURNING *`,
           [
             existing.id,
@@ -207,6 +209,12 @@ export async function createTicket(actor: Principal, input: CreateTicketInput) {
             input.tags ?? existing.tags,
             input.severity ?? existing.severity,
             input.customFields ?? existing.custom_fields,
+            // `in` not `??`: an explicit null withdraws a deadline, an absent key keeps it.
+            'dueAt' in ig ? ig.dueAt : existing.external_due_at,
+            'owner' in ig ? ig.owner : existing.external_owner,
+            'sourceId' in ig ? ig.sourceId : existing.external_source_id,
+            'controlIds' in ig ? ig.controlIds : existing.control_ids,
+            'url' in ig ? ig.url : existing.external_url,
           ],
         );
         await sql.query(
@@ -220,12 +228,15 @@ export async function createTicket(actor: Principal, input: CreateTicketInput) {
     }
 
     const ticketNumber = await nextTicketNumber(sql, orgId);
+    const ig = input.integration ?? {};
     const { rows } = await sql.query(
       `INSERT INTO tickets
          (organization_id, ticket_number, type, requester_id, affected_user_id, source_channel,
           subject, description, category, service_id, impact, urgency, priority, status, tags,
-          external_ref, external_source, severity, custom_fields)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'new',$14,$15,$16,$17,$18)
+          external_ref, external_source, severity, custom_fields,
+          external_due_at, external_owner, external_source_id, control_ids, external_url)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'new',$14,$15,$16,$17,$18,
+               $19,$20,$21,$22,$23)
        RETURNING *`,
       [
         orgId,
@@ -246,6 +257,11 @@ export async function createTicket(actor: Principal, input: CreateTicketInput) {
         input.externalSource ?? null,
         input.severity ?? null,
         input.customFields ?? {},
+        ig.dueAt ?? null,
+        ig.owner ?? null,
+        ig.sourceId ?? null,
+        ig.controlIds ?? [],
+        ig.url ?? null,
       ],
     );
     const ticket = rows[0];
