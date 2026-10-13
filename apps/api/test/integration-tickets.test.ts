@@ -152,3 +152,53 @@ describe('parseIntegrationTicket — required and bounded fields', () => {
     expect(() => parseIntegrationTicket([])).toThrow(ApiError);
   });
 });
+
+import { serializeIntegrationTicket, isExternalRefConflict } from '../src/modules/integration-tickets.js';
+
+describe('serializeIntegrationTicket', () => {
+  const row = {
+    id: 'a1', ticket_number: 'DEMO-000123', external_ref: 'carbon-conmon:poam:p-118',
+    status: 'triage', external_due_at: new Date('2026-11-30T00:00:00Z'),
+    created_at: new Date('2026-10-13T10:00:00Z'), updated_at: new Date('2026-10-13T10:00:01Z'),
+  };
+
+  it('exposes the integration shape, not the ticket row', () => {
+    const out = serializeIntegrationTicket(row, true, ['status'], null);
+    expect(out).toEqual({
+      ticketId: 'a1',
+      ticketKey: 'DEMO-000123',
+      externalRef: 'carbon-conmon:poam:p-118',
+      status: 'triage',
+      assignee: null,
+      dueDate: '2026-11-30T00:00:00.000Z',
+      createdAt: '2026-10-13T10:00:00.000Z',
+      updatedAt: '2026-10-13T10:00:01.000Z',
+      created: true,
+      ignored: ['status'],
+    });
+  });
+
+  it('echoes the caller due date, never the SLA clock', () => {
+    const out = serializeIntegrationTicket(
+      { ...row, external_due_at: null, resolution_due_at: new Date('2026-10-14T00:00:00Z') },
+      false, [], null,
+    );
+    expect(out.dueDate).toBeNull();
+  });
+
+  it('reports the assignee it was given', () => {
+    expect(serializeIntegrationTicket(row, false, [], 'a@example.gov').assignee).toBe('a@example.gov');
+  });
+});
+
+describe('isExternalRefConflict', () => {
+  it('recognises the unique-index violation on external_ref', () => {
+    expect(isExternalRefConflict({ code: '23505', constraint: 'ux_tickets_org_external_ref' })).toBe(true);
+  });
+
+  it('ignores other unique violations and non-pg errors', () => {
+    expect(isExternalRefConflict({ code: '23505', constraint: 'tickets_organization_id_ticket_number_key' })).toBe(false);
+    expect(isExternalRefConflict(new Error('boom'))).toBe(false);
+    expect(isExternalRefConflict(undefined)).toBe(false);
+  });
+});

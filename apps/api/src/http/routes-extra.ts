@@ -19,6 +19,7 @@ import * as analytics from '../modules/analytics.js';
 import * as notifications from '../modules/notifications.js';
 import * as apiKeys from '../modules/api-keys.js';
 import * as webhooks from '../modules/webhooks.js';
+import * as integrationTickets from '../modules/integration-tickets.js';
 
 export async function registerExtraRoutes(app: FastifyInstance): Promise<void> {
   // ---------------- Integration: M2M API keys (integration.manage) ----------------
@@ -47,6 +48,17 @@ export async function registerExtraRoutes(app: FastifyInstance): Promise<void> {
     const p = await requirePrincipal(req);
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     return apiKeys.revokeApiKey(p, id);
+  });
+
+  // ---------------- Integration: external GRC ticket upsert (ADR-0016) ----------------
+  // The strict-parsed sibling of POST /api/v1/tickets: an unrecognised field is a 422, never a
+  // silent drop. Request and response shapes live in modules/integration-tickets.ts, which is
+  // the contract. 201 = created, 200 = matched an existing externalRef and updated it.
+  app.post('/api/v1/integration/tickets', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const { created, body } = await integrationTickets.upsertIntegrationTicket(p, req.body);
+    reply.status(created ? 201 : 200);
+    return body;
   });
 
   // ---------------- Integration: outbound webhooks (integration.manage) ----------------

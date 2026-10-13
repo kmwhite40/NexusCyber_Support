@@ -4,6 +4,8 @@ import { withSystemContext } from '../../src/db/pool.js';
 import { loadPrincipal } from '../../src/auth/principal.js';
 import { createTicket } from '../../src/modules/tickets.js';
 import type { Principal } from '../../src/types.js';
+import { upsertIntegrationTicket } from '../../src/modules/integration-tickets.js';
+import { buildKeyPrincipal } from '../../src/auth/api-key.js';
 
 async function principalByEmail(email: string): Promise<Principal> {
   const u = await withSystemContext(async (sql) =>
@@ -169,5 +171,111 @@ describeDb('integration ticket fields persist through create and upsert', () => 
       integration: { controlIds: [] },
     });
     expect((await ticketRow(orgId, externalRef)).control_ids).toEqual([]);
+  });
+});
+
+describeDb('upsertIntegrationTicket end to end', () => {
+  let agent: Principal;
+  let orgId: string;
+  // A well-formed uuid that is deliberately NOT a seeded organization. createTicket calls
+  // authorize() before it opens any DB context, so the PDP rejects this with 403 before a
+  // foreign key could ever be checked — which is exactly the boundary under test.
+  const foreignOrgId = '00000000-0000-4000-8000-00000000dead';
+
+  beforeAll(async () => {
+    agent = await principalByEmail('manager@nexus.example.com');
+    orgId = await withSystemContext(
+      async (sql) => (await sql.query("SELECT id FROM organizations WHERE name='Demo Corp'")).rows[0].id,
+    );
+  });
+
+  function body(over: Record<string, unknown> = {}) {
+    return {
+      externalRef: `e2e-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      organizationId: orgId,
+      source: 'poam',
+      title: 'Patch CVE-2026-1234',
+      severity: 'high',
+      status: 'open',
+      priority: 'P1',
+      tenantId: null,
+      ...over,
+    };
+  }
+
+  it('creates with created=true and the integration response shape', async () => {
+    const { created, body: res } = await upsertIntegrationTicket(agent, body());
+    expect(created).toBe(true);
+    expect(res.created).toBe(true);
+    expect(res.ticketKey).toMatch(/-\d{6}$/);
+    expect(res.status).toBe('triage');
+    expect(res.assignee).toBeNull();
+    expect(res.ignored.sort()).toEqual(['priority', 'status', 'tenantId']);
+    expect(res).not.toHaveProperty('ticket_number');
+  });
+
+  it('upserts the second time with created=false and the same identity', async () => {
+    const payload = body();
+    const first = await upsertIntegrationTicket(agent, payload);
+    const second = await upsertIntegrationTicket(agent, { ...payload, title: 'Patch CVE-2026-1234 (rev 2)' });
+    expect(second.created).toBe(false);
+    expect(second.body.ticketId).toBe(first.body.ticketId);
+    expect(second.body.ticketKey).toBe(first.body.ticketKey);
+  });
+
+  it('derives P2 from severity high', async () => {
+    const { body: res } = await upsertIntegrationTicket(agent, body({ severity: 'high' }));
+    const row = await withSystemContext(async (sql) =>
+      (await sql.query('SELECT priority FROM tickets WHERE id=$1', [res.ticketId])).rows[0],
+    );
+    expect(row.priority).toBe('P2');
+  });
+
+  it('round-trips metadata semantically', async () => {
+    const metadata = { carbonFindingId: 'f-1', nested: { kev: true, score: 9.8 }, list: [1, 2, 3] };
+    const { body: res } = await upsertIntegrationTicket(agent, body({ metadata }));
+    const row = await withSystemContext(async (sql) =>
+      (await sql.query('SELECT custom_fields FROM tickets WHERE id=$1', [res.ticketId])).rows[0],
+    );
+    expect(row.custom_fields).toEqual(metadata);
+  });
+
+  it('rejects an organization outside the key principal scope with 403 (tenant boundary)', async () => {
+    const keyPrincipal = buildKeyPrincipal({
+      id: '00000000-0000-4000-8000-00000000a001', organization_id: orgId, key_id: 'k1', key_hash: 'x', name: 'test key',
+      scopes: ['ticket.create', 'ticket.read.organization'], expires_at: null, revoked_at: null,
+    });
+    await expect(
+      upsertIntegrationTicket(keyPrincipal, body({ organizationId: foreignOrgId })),
+    ).rejects.toMatchObject({ status: 403 });
+  });
+
+  it('lets that same key principal file against its own org (the 403 is scope, not auth)', async () => {
+    const keyPrincipal = buildKeyPrincipal({
+      id: '00000000-0000-4000-8000-00000000a001', organization_id: orgId, key_id: 'k1', key_hash: 'x', name: 'test key',
+      scopes: ['ticket.create', 'ticket.read.organization'], expires_at: null, revoked_at: null,
+    });
+    const { created } = await upsertIntegrationTicket(keyPrincipal, body());
+    expect(created).toBe(true);
+  });
+
+  it('surfaces a sensitive metadata key as 422, not 500 (Review Focus 5)', async () => {
+    await expect(
+      upsertIntegrationTicket(agent, body({ metadata: { personal_email: 'leak@personal.example' } })),
+    ).rejects.toMatchObject({ status: 422 });
+  });
+
+  it('resolves two concurrent first-syncs of one externalRef to a single ticket (Review Focus 4)', async () => {
+    const payload = body();
+    const [a, b] = await Promise.all([
+      upsertIntegrationTicket(agent, payload),
+      upsertIntegrationTicket(agent, payload),
+    ]);
+    expect(a.body.ticketId).toBe(b.body.ticketId);
+    const count = await withSystemContext(async (sql) =>
+      (await sql.query('SELECT count(*)::int AS n FROM tickets WHERE organization_id=$1 AND external_ref=$2',
+        [orgId, payload.externalRef])).rows[0].n,
+    );
+    expect(count).toBe(1);
   });
 });

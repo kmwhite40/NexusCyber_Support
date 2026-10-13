@@ -10,7 +10,10 @@
 // paths, so the integration gets its own.
 import { z } from 'zod';
 import { Errors } from '../errors.js';
+import { withSystemContext } from '../db/pool.js';
+import * as tickets from './tickets.js';
 import type { CreateTicketInput } from './tickets.js';
+import type { Principal } from '../types.js';
 
 /**
  * Fields the caller sends that Anchor accepts syntactically but cannot apply:
@@ -131,4 +134,93 @@ export function parseIntegrationTicket(raw: unknown): { input: CreateTicketInput
       integration,
     },
   };
+}
+
+export interface IntegrationTicketResponse {
+  ticketId: string;
+  ticketKey: string;
+  externalRef: string;
+  /** Anchor's authoritative status — not whatever the caller sent. */
+  status: string;
+  /** Anchor's current assignment, or null. Never derived from the caller's `owner`. */
+  assignee: string | null;
+  /** The CALLER's deadline (external_due_at), deliberately not Anchor's SLA resolution_due_at:
+   *  returning the SLA clock under a field the caller reads as "my deadline" would mislead. */
+  dueDate: string | null;
+  createdAt: string;
+  updatedAt: string;
+  /** True when this call minted the ticket (HTTP 201); false when it matched and updated (200). */
+  created: boolean;
+  /** Fields accepted syntactically but not applied — see NOT_APPLIED. */
+  ignored: string[];
+}
+
+function iso(v: unknown): string | null {
+  return v ? new Date(v as string | Date).toISOString() : null;
+}
+
+/** Project a ticket row onto the integration contract. Keeping this a pure function means the
+ *  external shape is pinned by unit tests and the internal column layout stays free to change. */
+export function serializeIntegrationTicket(
+  row: Record<string, unknown>,
+  created: boolean,
+  ignored: string[],
+  assignee: string | null,
+): IntegrationTicketResponse {
+  return {
+    ticketId: String(row.id),
+    ticketKey: String(row.ticket_number),
+    externalRef: String(row.external_ref),
+    status: String(row.status),
+    assignee,
+    dueDate: iso(row.external_due_at),
+    createdAt: iso(row.created_at) as string,
+    updatedAt: iso(row.updated_at) as string,
+    created,
+    ignored,
+  };
+}
+
+/**
+ * Did this error come from losing a race on the external_ref unique index?
+ *
+ * `createTicket` does SELECT-then-INSERT, so two simultaneous first-syncs of the same item can
+ * both miss the SELECT and one loses to ux_tickets_org_external_ref. For an endpoint whose
+ * entire purpose is a safe retry, surfacing that as a 500 would be the wrong answer: the
+ * loser's retry finds the row and takes the update path, which is the correct idempotent
+ * outcome.
+ */
+export function isExternalRefConflict(err: unknown): boolean {
+  const e = err as { code?: string; constraint?: string } | null | undefined;
+  return e?.code === '23505' && e?.constraint === 'ux_tickets_org_external_ref';
+}
+
+async function assigneeEmail(agentId: unknown): Promise<string | null> {
+  if (!agentId) return null;
+  return withSystemContext(async (sql) => {
+    const { rows } = await sql.query('SELECT email FROM users WHERE id=$1', [agentId]);
+    return (rows[0]?.email as string | undefined) ?? null;
+  });
+}
+
+/** Parse -> persist -> serialize. The only function the route calls. */
+export async function upsertIntegrationTicket(
+  actor: Principal,
+  raw: unknown,
+): Promise<{ created: boolean; body: IntegrationTicketResponse }> {
+  const { input, ignored } = parseIntegrationTicket(raw);
+
+  let result;
+  try {
+    result = await tickets.createTicket(actor, input);
+  } catch (err) {
+    if (!isExternalRefConflict(err)) throw err;
+    // The row exists now; this attempt takes the update path.
+    result = await tickets.createTicket(actor, input);
+  }
+
+  const { matched, ...row } = result;
+  const created = !matched;
+  const assignee = await assigneeEmail(row.assigned_agent_id);
+  return { created, body: serializeIntegrationTicket(row, created, ignored, assignee) };
 }
