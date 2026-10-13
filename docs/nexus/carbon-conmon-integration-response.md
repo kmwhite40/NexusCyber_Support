@@ -21,7 +21,7 @@
 | **A** | **Already live**, except for three items in §2. Your spec's phase-A list — upsert on `externalRef`, unique index, `Idempotency-Key`, per-org auth with `403` on scope violation, non-uuid first ref segment, null `tenantId` — is shipped and in production today. |
 | **B** | Half-built. Webhooks exist with per-org HMAC secrets and delivery audit, but do not meet your §5 wire format. `PATCH` does not exist. **Reopen-from-closed does not work** (§4.5). |
 | **C** | Not built. Both items are feasible; the delta feed is cheap. |
-| **D** | Not built. Mostly additive, with one design objection in §6. |
+| **D** | backlog fields (`parentExternalRef`, `priority`, `estimateDays`, `phase`, `workstream`, `acceptanceCriteria`) + `blocked` status + `blockedReason` | **shipped** — all applied; send them directly. `parentExternalRef` resolves epic→story in either arrival order, and a `blockedReason` creates the item blocked |
 
 **The real phase-A blocker is not a missing feature — it is field naming.** Your §2.1
 payload, posted at Anchor today, returns `400` on the first call and would silently discard

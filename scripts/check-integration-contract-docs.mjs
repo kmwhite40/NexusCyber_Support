@@ -29,7 +29,10 @@ const schemaKeys = new Set(
   [...between(mod, 'const payloadSchema', '.strict()').matchAll(/^ {4}(\w+):/gm)].map((m) => m[1]),
 );
 const notApplied = quoted(between(mod, 'const NOT_APPLIED =', ']'));
-const deferred = quoted(between(mod, 'const DEFERRED = [', ']'));
+// DEFERRED may be a populated literal or, once a phase lands, an empty typed array. Match the
+// declaration rather than one spelling of it: the previous parser crashed when phase D emptied it.
+const deferredDecl = mod.match(/const DEFERRED[^=]*=\s*(\[[^\]]*\])/);
+const deferred = quoted(deferredDecl ? deferredDecl[1] : '');
 
 // Does any production file actually SET suppressSla, as opposed to declaring or reading it?
 const walk = (dir) =>

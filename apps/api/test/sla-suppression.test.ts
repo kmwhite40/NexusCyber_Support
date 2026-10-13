@@ -6,10 +6,16 @@ import { stampSlaAndTriage } from '../src/modules/tickets.js';
  *  its 8x5 defaults, which is all we need. */
 function fakeSql() {
   const queries: string[] = [];
+  const calls: Array<{ text: string; params: unknown[] }> = [];
   return {
     queries,
-    query: async (text: string) => {
+    calls,
+    // Record parameters, not just statement text. An earlier version matched on the literal
+    // `status='triage'` and broke the moment the status became a bind parameter — a test
+    // failing for a change that altered no behaviour at all.
+    query: async (text: string, params: unknown[] = []) => {
       queries.push(text);
+      calls.push({ text, params });
       return { rows: [], rowCount: 0 };
     },
   };
@@ -37,7 +43,17 @@ describe('stampSlaAndTriage', () => {
   it('still moves a suppressed ticket to triage', async () => {
     const sql = fakeSql();
     await stampSlaAndTriage(sql as never, ticket, true);
-    expect(sql.queries.some((q) => /UPDATE tickets SET status='triage'/i.test(q))).toBe(true);
+    const update = sql.calls.find((c) => /UPDATE tickets SET status=/i.test(c.text));
+    expect(update).toBeTruthy();
+    expect(update?.params).toContain('triage');
+  });
+
+  it('honours an explicit initial status, so a blocked import does not land as triage', async () => {
+    const sql = fakeSql();
+    await stampSlaAndTriage(sql as never, ticket, true, 'blocked');
+    const update = sql.calls.find((c) => /UPDATE tickets SET status=/i.test(c.text));
+    expect(update?.params).toContain('blocked');
+    expect(update?.params).not.toContain('triage');
   });
 
   it('does not stamp due dates when suppressed', async () => {

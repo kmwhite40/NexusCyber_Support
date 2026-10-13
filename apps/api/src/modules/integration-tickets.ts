@@ -18,7 +18,8 @@ import type { Principal } from '../types.js';
 /**
  * Fields the caller sends that Anchor accepts syntactically but cannot apply:
  * - `status` — Anchor owns the lifecycle; status moves only through /transition.
- * - `priority` — Anchor DERIVES priority from impact x urgency; there is no P0.
+ * (`priority` used to be here. It is now stored verbatim as the caller's OWN ordering in
+ * external_priority — never as Anchor's derived priority, which drives SLA and escalation.)
  * - `tenantId` — Anchor has no tenant concept; organizations are the only boundary.
  *
  * These are reported in the response's `ignored[]` rather than refused, because the caller's
@@ -26,18 +27,13 @@ import type { Principal } from '../types.js';
  * forever. Reporting them is the middle path between that and the silent drop this module
  * exists to eliminate.
  */
-const NOT_APPLIED = ['status', 'priority', 'tenantId'] as const;
+const NOT_APPLIED = ['status', 'tenantId'] as const;
 
-/** Phase-D backlog fields. Refused loudly, so a caller is never told that backlog metadata
- *  landed when it did not. */
-const DEFERRED = [
-  'parentExternalRef',
-  'estimateDays',
-  'phase',
-  'workstream',
-  'acceptanceCriteria',
-  'blockedReason',
-] as const;
+/** Fields refused because Anchor has no model for them yet. Phase D emptied this list: the
+ *  backlog attributes it named are now first-class columns. Kept (rather than deleted) because
+ *  the refusal path is the contract's promise that an unsupported field is never silently
+ *  dropped, and the next deferred field should land here rather than being invented ad hoc. */
+const DEFERRED: readonly string[] = [];
 
 /**
  * Sources whose items are work records, not service commitments. A build-backlog story has an
@@ -79,9 +75,17 @@ const payloadSchema = z
     labels: z.array(z.string().max(60)).max(100).nullable().optional(),
     carbonUrl: z.string().url().max(2000).nullable().optional(),
     metadata: z.record(z.unknown()).nullable().optional(),
+    // ---- Phase D: backlog / work-item attributes ----
+    parentExternalRef: z.string().min(1).max(200).nullable().optional(),
+    estimateDays: z.number().nonnegative().max(10_000).nullable().optional(),
+    phase: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal('post-mvp')]).nullable().optional(),
+    workstream: z.string().max(60).nullable().optional(),
+    acceptanceCriteria: z.string().max(4_000).nullable().optional(),
+    blockedReason: z.string().max(2_000).nullable().optional(),
+    /** The caller's own ordering (P0-P2 for a build backlog), stored verbatim. */
+    priority: z.string().max(16).nullable().optional(),
     // Accepted, never applied — see NOT_APPLIED.
     status: z.string().max(40).nullable().optional(),
-    priority: z.string().max(8).nullable().optional(),
     tenantId: z.string().max(200).nullable().optional(),
   })
   .strict();
@@ -141,6 +145,25 @@ export function parseIntegrationTicket(raw: unknown): { input: CreateTicketInput
   if ('sourceId' in src) integration.sourceId = b.sourceId ?? null;
   if ('controlIds' in src) integration.controlIds = b.controlIds ?? [];
   if ('carbonUrl' in src) integration.url = b.carbonUrl ?? null;
+  if ('parentExternalRef' in src) integration.parentExternalRef = b.parentExternalRef ?? null;
+  if ('estimateDays' in src) integration.estimateDays = b.estimateDays ?? null;
+  if ('phase' in src) integration.workPhase = b.phase == null ? null : String(b.phase);
+  if ('workstream' in src) integration.workstream = b.workstream ?? null;
+  if ('acceptanceCriteria' in src) integration.acceptanceCriteria = b.acceptanceCriteria ?? null;
+  if ('blockedReason' in src) integration.blockedReason = b.blockedReason ?? null;
+  if ('priority' in src) integration.externalPriority = b.priority ?? null;
+
+  // `blockedReason` is the signal, not `status`. Anchor owns the lifecycle, so an integration
+  // never drives status on an ongoing sync — but at CREATION an item genuinely blocked on an
+  // external dependency must not land as `triage`, which would report it as ready to work.
+  // Requiring the reason (rather than trusting a status string) means a blocked item always
+  // says why, which is the only part a human reading the queue can act on.
+  const blocked = typeof b.blockedReason === 'string' && b.blockedReason.trim().length > 0;
+  if (!blocked && b.status === 'blocked') {
+    throw Errors.validation('a blocked item must say why it is blocked', [
+      { field: 'blockedReason', message: 'required when status is "blocked"' },
+    ]);
+  }
 
   return {
     ignored: NOT_APPLIED.filter((k) => k in src),
@@ -155,6 +178,7 @@ export function parseIntegrationTicket(raw: unknown): { input: CreateTicketInput
       urgency,
       tags: b.labels ?? undefined,
       customFields: b.metadata ?? undefined,
+      initialStatus: blocked ? 'blocked' : undefined,
       integration,
     },
   };

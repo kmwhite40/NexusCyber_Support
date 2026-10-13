@@ -77,11 +77,13 @@ describe('parseIntegrationTicket — severity drives priority', () => {
 });
 
 describe('parseIntegrationTicket — the three tiers', () => {
-  it('reports status, priority and tenantId as ignored rather than dropping them', () => {
+  it('reports status and tenantId as ignored rather than dropping them', () => {
     const { ignored } = parseIntegrationTicket(
       payload({ status: 'open', priority: 'P0', tenantId: null }),
     );
-    expect(ignored.sort()).toEqual(['priority', 'status', 'tenantId']);
+    // `priority` is deliberately absent: since phase D it is APPLIED, stored verbatim as the
+    // caller's own ordering in external_priority rather than discarded.
+    expect(ignored.sort()).toEqual(['status', 'tenantId']);
   });
 
   it('reports nothing as ignored when none were sent', () => {
@@ -100,16 +102,17 @@ describe('parseIntegrationTicket — the three tiers', () => {
     }
   });
 
-  it('refuses a phase-D backlog field and says so', () => {
-    try {
-      parseIntegrationTicket(payload({ parentExternalRef: 'carbon-conmon:backlog:WS-1' }));
-      throw new Error('should have thrown');
-    } catch (err) {
-      const e = err as ApiError;
-      expect(e.status).toBe(422);
-      expect(e.errors?.[0].field).toBe('parentExternalRef');
-      expect(e.detail).toMatch(/phase D/i);
-    }
+  it('now accepts parentExternalRef, which phase D promoted out of the refused tier', () => {
+    const { input } = parseIntegrationTicket(payload({ parentExternalRef: 'carbon-conmon:backlog:WS-1' }));
+    expect(input.integration?.parentExternalRef).toBe('carbon-conmon:backlog:WS-1');
+  });
+
+  it('still refuses a genuinely unknown field, so the refusal path has not rotted', () => {
+    const e = (() => {
+      try { parseIntegrationTicket(payload({ storyPoints: 5 })); } catch (err) { return err as ApiError; }
+    })();
+    expect(e?.status).toBe(422);
+    expect(e?.errors?.map((x) => x.field)).toContain('storyPoints');
   });
 });
 
@@ -266,5 +269,84 @@ describe('parseIntegrationTicket — non-operational sources carry no SLA clock'
   it('does not treat a source merely containing "backlog" as non-operational', () => {
     const { input } = parseIntegrationTicket(payload({ source: 'backlog-review' }));
     expect(input.integration?.suppressSla).toBeFalsy();
+  });
+});
+
+// ---- Phase D: backlog fields ----
+
+describe('parseIntegrationTicket — backlog fields are accepted, not refused', () => {
+  const backlog = (over: Record<string, unknown> = {}) =>
+    payload({ source: 'backlog', externalRef: 'carbon-conmon:backlog:WS-1.1', ...over });
+
+  it('maps every phase-D field onto the integration group', () => {
+    const { input } = parseIntegrationTicket(
+      backlog({
+        parentExternalRef: 'carbon-conmon:backlog:WS-1',
+        estimateDays: 3.5,
+        phase: 2,
+        workstream: 'WS-1',
+        acceptanceCriteria: 'The reconciler converges after a dropped webhook.',
+        priority: 'P0',
+      }),
+    );
+    expect(input.integration).toMatchObject({
+      parentExternalRef: 'carbon-conmon:backlog:WS-1',
+      estimateDays: 3.5,
+      workPhase: '2',
+      workstream: 'WS-1',
+      acceptanceCriteria: 'The reconciler converges after a dropped webhook.',
+      externalPriority: 'P0',
+    });
+  });
+
+  it('accepts post-mvp as a phase alongside the numeric ones', () => {
+    expect(parseIntegrationTicket(backlog({ phase: 'post-mvp' })).input.integration?.workPhase).toBe('post-mvp');
+    expect(parseIntegrationTicket(backlog({ phase: 1 })).input.integration?.workPhase).toBe('1');
+  });
+
+  it('refuses a phase outside the known set', () => {
+    const e = (() => { try { parseIntegrationTicket(backlog({ phase: 7 })); } catch (err) { return err as ApiError; } })();
+    expect(e?.status).toBe(422);
+    expect(e?.errors?.map((x) => x.field)).toContain('phase');
+  });
+
+  it('refuses a negative estimate', () => {
+    const e = (() => { try { parseIntegrationTicket(backlog({ estimateDays: -1 })); } catch (err) { return err as ApiError; } })();
+    expect(e?.status).toBe(422);
+  });
+
+  it('no longer reports priority as ignored — it is stored as the caller own ordering', () => {
+    const { ignored, input } = parseIntegrationTicket(backlog({ priority: 'P1' }));
+    expect(ignored).not.toContain('priority');
+    expect(input.integration?.externalPriority).toBe('P1');
+  });
+
+  it('keeps Anchor derived priority separate from the caller priority', () => {
+    const { input } = parseIntegrationTicket(backlog({ priority: 'P0', severity: 'low' }));
+    expect(input.integration?.externalPriority).toBe('P0');
+    expect(input.impact).toBe(4); // from severity low, not from P0
+  });
+});
+
+describe('parseIntegrationTicket — blocked items', () => {
+  const backlog = (over: Record<string, unknown> = {}) =>
+    payload({ source: 'backlog', externalRef: 'carbon-conmon:backlog:WS-2.1', ...over });
+
+  it('creates as blocked when a blockedReason is given', () => {
+    const { input } = parseIntegrationTicket(backlog({ blockedReason: 'Waiting on the Anchor contract' }));
+    expect(input.integration?.blockedReason).toBe('Waiting on the Anchor contract');
+    expect(input.initialStatus).toBe('blocked');
+  });
+
+  it('refuses status blocked without a reason, naming the missing field', () => {
+    const e = (() => {
+      try { parseIntegrationTicket(backlog({ status: 'blocked' })); } catch (err) { return err as ApiError; }
+    })();
+    expect(e?.status).toBe(422);
+    expect(e?.errors?.map((x) => x.field)).toContain('blockedReason');
+  });
+
+  it('leaves an unblocked item with no initial status override', () => {
+    expect(parseIntegrationTicket(backlog()).input.initialStatus).toBeUndefined();
   });
 });

@@ -118,17 +118,45 @@ export async function stampSlaAndTriage(
   sql: Sql,
   ticket: { id: string; organization_id: string; priority: string },
   suppressSla = false,
+  toStatus = 'triage',
 ): Promise<{ response_due_at: Date | null; resolution_due_at: Date | null }> {
   if (suppressSla) {
-    await sql.query(`UPDATE tickets SET status='triage' WHERE id=$1`, [ticket.id]);
+    await sql.query('UPDATE tickets SET status=$2 WHERE id=$1', [ticket.id, toStatus]);
     return { response_due_at: null, resolution_due_at: null };
   }
   const due = await startTicketSla(sql, ticket);
   await sql.query(
-    `UPDATE tickets SET response_due_at=$1, resolution_due_at=$2, status='triage' WHERE id=$3`,
-    [due.response_due_at, due.resolution_due_at, ticket.id],
+    'UPDATE tickets SET response_due_at=$1, resolution_due_at=$2, status=$4 WHERE id=$3',
+    [due.response_due_at, due.resolution_due_at, ticket.id, toStatus],
   );
   return due;
+}
+
+/**
+ * Link a ticket to its parent by the caller's external ref, in BOTH directions.
+ *
+ * An import arrives in whatever order the caller generated it, so a story can land before its
+ * epic. Rejecting that would make the caller order its payload or sync twice; instead the ref
+ * is stored and resolved on whichever side arrives second. Runs inside the caller's org
+ * context, so it can only ever link within one organization.
+ */
+export async function resolveParentLinks(sql: Sql, orgId: string, ticket: { id: string; external_ref: string | null; parent_external_ref: string | null }): Promise<void> {
+  if (ticket.parent_external_ref) {
+    await sql.query(
+      `UPDATE tickets SET parent_ticket_id = p.id
+         FROM tickets p
+        WHERE tickets.id = $1 AND p.organization_id = $2 AND p.external_ref = $3 AND p.id <> tickets.id`,
+      [ticket.id, orgId, ticket.parent_external_ref],
+    );
+  }
+  if (ticket.external_ref) {
+    // Children that arrived first and have been waiting for this ticket.
+    await sql.query(
+      `UPDATE tickets SET parent_ticket_id = $1
+        WHERE organization_id = $2 AND parent_external_ref = $3 AND id <> $1 AND parent_ticket_id IS NULL`,
+      [ticket.id, orgId, ticket.external_ref],
+    );
+  }
 }
 
 export interface CreateTicketInput {
@@ -163,7 +191,19 @@ export interface CreateTicketInput {
     url?: string | null;
     sourceId?: string | null;
     suppressSla?: boolean;
+    // Phase D — backlog / work-item attributes (ADR-0016, migration 0082).
+    parentExternalRef?: string | null;
+    estimateDays?: number | null;
+    workPhase?: string | null;
+    workstream?: string | null;
+    acceptanceCriteria?: string | null;
+    blockedReason?: string | null;
+    /** The caller's OWN priority scheme. Never Anchor's derived `priority`. */
+    externalPriority?: string | null;
   };
+  /** Status to create in, for the one case an integration may set it: an item blocked on an
+   *  external dependency at import. Anchor owns every transition after that. */
+  initialStatus?: 'blocked';
 }
 
 export async function createTicket(actor: Principal, input: CreateTicketInput) {
@@ -202,7 +242,9 @@ export async function createTicket(actor: Principal, input: CreateTicketInput) {
           `UPDATE tickets
               SET subject=$2, description=$3, category=$4, impact=$5, urgency=$6, priority=$7, tags=$8,
                   severity=$9, custom_fields=$10, external_due_at=$11, external_owner=$12,
-                  external_source_id=$13, control_ids=$14, external_url=$15, external_source=$16
+                  external_source_id=$13, control_ids=$14, external_url=$15, external_source=$16,
+                  parent_external_ref=$17, external_priority=$18, estimate_days=$19,
+                  work_phase=$20, workstream=$21, acceptance_criteria=$22, blocked_reason=$23
             WHERE id=$1 RETURNING *`,
           [
             existing.id,
@@ -224,6 +266,13 @@ export async function createTicket(actor: Principal, input: CreateTicketInput) {
             // `source` is a required, documented-as-applied field; not refreshing it here left
             // the column disagreeing with the `synced` ticket_event recorded just below.
             input.externalSource ?? existing.external_source,
+            'parentExternalRef' in ig ? ig.parentExternalRef : existing.parent_external_ref,
+            'externalPriority' in ig ? ig.externalPriority : existing.external_priority,
+            'estimateDays' in ig ? ig.estimateDays : existing.estimate_days,
+            'workPhase' in ig ? ig.workPhase : existing.work_phase,
+            'workstream' in ig ? ig.workstream : existing.workstream,
+            'acceptanceCriteria' in ig ? ig.acceptanceCriteria : existing.acceptance_criteria,
+            'blockedReason' in ig ? ig.blockedReason : existing.blocked_reason,
           ],
         );
         await sql.query(
@@ -231,6 +280,7 @@ export async function createTicket(actor: Principal, input: CreateTicketInput) {
            VALUES ($1,$2,$3,'synced',$4)`,
           [orgId, existing.id, actor.id, { external_ref: input.externalRef, source: input.externalSource ?? existing.external_source }],
         );
+        await resolveParentLinks(sql, orgId, updated[0]);
         // matched=true → the route replies 200 (idempotent update), not 201.
         return { ...updated[0], matched: true };
       }
@@ -243,9 +293,11 @@ export async function createTicket(actor: Principal, input: CreateTicketInput) {
          (organization_id, ticket_number, type, requester_id, affected_user_id, source_channel,
           subject, description, category, service_id, impact, urgency, priority, status, tags,
           external_ref, external_source, severity, custom_fields,
-          external_due_at, external_owner, external_source_id, control_ids, external_url)
+          external_due_at, external_owner, external_source_id, control_ids, external_url,
+          parent_external_ref, external_priority, estimate_days, work_phase, workstream,
+          acceptance_criteria, blocked_reason)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'new',$14,$15,$16,$17,$18,
-               $19,$20,$21,$22,$23)
+               $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
        RETURNING *`,
       [
         orgId,
@@ -271,11 +323,21 @@ export async function createTicket(actor: Principal, input: CreateTicketInput) {
         ig.sourceId ?? null,
         ig.controlIds ?? [],
         ig.url ?? null,
+        ig.parentExternalRef ?? null,
+        ig.externalPriority ?? null,
+        ig.estimateDays ?? null,
+        ig.workPhase ?? null,
+        ig.workstream ?? null,
+        ig.acceptanceCriteria ?? null,
+        ig.blockedReason ?? null,
       ],
     );
     const ticket = rows[0];
 
-    const due = await stampSlaAndTriage(sql, ticket, input.integration?.suppressSla ?? false);
+    const due = await stampSlaAndTriage(
+      sql, ticket, input.integration?.suppressSla ?? false, input.initialStatus ?? 'triage',
+    );
+    await resolveParentLinks(sql, orgId, ticket);
     await sql.query(
       `INSERT INTO ticket_events (organization_id, ticket_id, actor_id, event_type, detail)
        VALUES ($1,$2,$3,'created',$4)`,
@@ -302,7 +364,13 @@ export async function createTicket(actor: Principal, input: CreateTicketInput) {
       publish('ticket.acknowledged', orgId, { ticket_id: ticket.id, org_id: orgId }, { idempotencyKey: `ticket.acknowledged:${ticket.id}` });
     }
 
-    return { ...ticket, response_due_at: due.response_due_at, resolution_due_at: due.resolution_due_at, status: 'triage', matched: false };
+    return {
+      ...ticket,
+      response_due_at: due.response_due_at,
+      resolution_due_at: due.resolution_due_at,
+      status: input.initialStatus ?? 'triage',
+      matched: false,
+    };
   });
 }
 
