@@ -11,6 +11,7 @@ import {
 import { useAuth } from '@/components/auth-context';
 import { Button, Card, CardBody, CardHeader, CardTitle, Input, Field, Select, Badge } from '@/components/ui/primitives';
 import { DataTable, EmptyState, Skeleton } from '@/components/ui/data';
+import { ApiKeysCard } from '@/components/api-keys-card';
 
 const CONSENT_HELP =
   'In the customer’s Entra tenant, create an app registration and grant admin consent for the '
@@ -23,6 +24,9 @@ function fmt(ts: string | null): string {
 export default function IntegrationsPage() {
   const { can } = useAuth();
   const canManage = can('integration.credentials.manage');
+  // Distinct permission: credentials.manage covers a customer's OWN directory credentials,
+  // integration.manage covers the M2M keys other systems authenticate to Anchor with.
+  const canManageKeys = can('integration.manage');
 
   const [orgs, setOrgs] = React.useState<OrgSummary[]>([]);
   const [orgId, setOrgId] = React.useState('');
@@ -209,6 +213,10 @@ export default function IntegrationsPage() {
           )}
         </CardBody>
       </Card>
+
+      {/* M2M credentials for the selected organization. Minting one used to require lifting a
+          session token out of the browser and posting it with curl. */}
+      {orgId && <ApiKeysCard organizationId={orgId} canManage={canManageKeys} />}
     </div>
   );
 }
