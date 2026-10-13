@@ -234,10 +234,10 @@ Also still needed from you:
 | Anchor phase | Deliverable | Status |
 |---|---|---|
 | **A (live)** | `externalRef` upsert + unique index + `Idempotency-Key` + per-org key auth with `403` scope rejection + non-uuid ref segments + nullable severity + `/healthz` `/readyz` | **deployed since 2026-06** |
-| **A′** | `POST /api/v1/integration/tickets` with your §2.1 request/response shape, **strict parsing (`422` on unknown fields)**, real homes for `dueDate` / `owner` / `controlIds` / `carbonUrl`, `parentExternalRef` resolution, **mandatory SLA-clock suppression for `source: backlog`** | **shipped** — `POST /api/v1/integration/tickets` |
+| **A′** | `POST /api/v1/integration/tickets` with your §2.1 request/response shape, **strict parsing (`422` on unknown fields)**, real homes for `dueDate` / `owner` / `controlIds` / `carbonUrl` / `sourceId`, and an `ignored[]` array naming what Anchor accepted but did not apply | **shipped** |
 | **B** | `closed → reopened`; `PATCH /tickets/:id`; webhook timestamp + delivery-id rename + durable retry + `resolution` + `ticket.updated` | your M2.7 |
 | **C** | delta feed with keyset cursor + `(organization_id, updated_at)` index; batch `externalRef` lookup (200/request); per-key rate limits | your WS-7.8 |
-| **D** | backlog fields (`priority`, `estimateDays`, `phase`, `workstream`, `acceptanceCriteria`) + `blocked` status + `blockedReason` | ships with A′ |
+| **D** | backlog fields (`parentExternalRef`, `priority`, `estimateDays`, `phase`, `workstream`, `acceptanceCriteria`) + `blocked` status + `blockedReason` | **not shipped.** Every one of these is a hard `422` today, naming the field and citing phase D — do not put them in a Sprint 1 payload. `parentExternalRef` resolution and SLA-clock suppression for `source: backlog` land here, not in A′ |
 
 `blocked` needs no schema change — statuses are per-organization configurable rows in
 `workflows`/`workflow_transitions`. Note Anchor already has `on_hold` and `waiting_vendor`,

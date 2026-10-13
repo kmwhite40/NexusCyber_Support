@@ -192,20 +192,26 @@ export async function createTicket(actor: Principal, input: CreateTicketInput) {
       ).rows[0];
       if (existing) {
         const ig = input.integration ?? {};
+        // Impact/urgency/priority move only when the caller supplied them. Defaulting to 3/3
+        // here (as the fresh-insert path does) would let a partial re-sync silently downgrade
+        // a P1 ticket to P3 while leaving severity untouched.
+        const upImpact = input.impact ?? existing.impact ?? 3;
+        const upUrgency = input.urgency ?? existing.urgency ?? 3;
+        const upPriority = derivePriority(upImpact, upUrgency);
         const { rows: updated } = await sql.query(
           `UPDATE tickets
               SET subject=$2, description=$3, category=$4, impact=$5, urgency=$6, priority=$7, tags=$8,
                   severity=$9, custom_fields=$10, external_due_at=$11, external_owner=$12,
-                  external_source_id=$13, control_ids=$14, external_url=$15
+                  external_source_id=$13, control_ids=$14, external_url=$15, external_source=$16
             WHERE id=$1 RETURNING *`,
           [
             existing.id,
             input.subject,
             input.description ?? existing.description,
             input.category ?? existing.category,
-            impact,
-            urgency,
-            priority,
+            upImpact,
+            upUrgency,
+            upPriority,
             input.tags ?? existing.tags,
             input.severity ?? existing.severity,
             input.customFields ?? existing.custom_fields,
@@ -215,6 +221,9 @@ export async function createTicket(actor: Principal, input: CreateTicketInput) {
             'sourceId' in ig ? ig.sourceId : existing.external_source_id,
             'controlIds' in ig ? ig.controlIds : existing.control_ids,
             'url' in ig ? ig.url : existing.external_url,
+            // `source` is a required, documented-as-applied field; not refreshing it here left
+            // the column disagreeing with the `synced` ticket_event recorded just below.
+            input.externalSource ?? existing.external_source,
           ],
         );
         await sql.query(

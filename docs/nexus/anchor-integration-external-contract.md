@@ -66,13 +66,19 @@ programme-scoped key such as `carbon-conmon:backlog:WS-1.1` is accepted as-is.
 | sourceId | string? | → `external_source_id`; survives a change to the externalRef format |
 | owner | string? | → `external_owner`, **text only — never sets the assignee** |
 | controlIds | string[]? | → `control_ids` (queryable, GIN-indexed) |
-| dueDate | ISO 8601? | → `external_due_at`, the CALLER's deadline, distinct from Anchor's SLA clock |
+| dueDate | RFC 3339 date-time? | → `external_due_at`, the CALLER's deadline, distinct from Anchor's SLA clock. A full timestamp with offset — `2026-11-30T00:00:00Z`, not `2026-11-30` |
 | labels | string[]? | → `tags` |
 | carbonUrl | url? | → `external_url` |
 | metadata | object? | → `custom_fields` |
 
-On an upsert, **key presence matters**: an omitted key preserves the stored value, an explicit
-`null` clears it. So `"dueDate": null` withdraws a deadline; omitting `dueDate` keeps it.
+On an upsert, **key presence matters for the five integration columns** — `dueDate`, `owner`,
+`controlIds`, `carbonUrl` and `sourceId`. An omitted key preserves the stored value; an explicit
+`null` clears it. So `"dueDate": null` withdraws a deadline, while omitting `dueDate` keeps it.
+
+For the other applied fields a `null` reads as "unset" and behaves like an omitted key: it
+preserves what is stored rather than erasing it. The one field to watch is `severity` — send it
+and Anchor recomputes priority; omit it and both severity and priority are left exactly as they
+were, so a partial re-sync cannot downgrade a critical finding.
 
 An upsert never changes `status`, the assignee or the ticket number — Anchor owns the lifecycle
 and the assignment.

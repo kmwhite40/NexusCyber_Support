@@ -279,3 +279,84 @@ describeDb('upsertIntegrationTicket end to end', () => {
     expect(count).toBe(1);
   });
 });
+
+describeDb('review fixes — upsert fidelity and the org boundary', () => {
+  let agent: Principal;
+  let customer: Principal;
+  let orgId: string;
+  const foreignOrgId = '00000000-0000-4000-8000-00000000dead';
+
+  beforeAll(async () => {
+    agent = await principalByEmail('manager@nexus.example.com');
+    customer = await principalByEmail('user@demo.example.com');
+    orgId = await withSystemContext(
+      async (sql) => (await sql.query("SELECT id FROM organizations WHERE name='Demo Corp'")).rows[0].id,
+    );
+  });
+
+  function body(over: Record<string, unknown> = {}) {
+    return {
+      externalRef: `fix-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      organizationId: orgId,
+      source: 'poam',
+      title: 'Patch CVE-2026-9999',
+      ...over,
+    };
+  }
+
+  it('keeps priority and severity consistent when a re-sync omits severity (Important 1)', async () => {
+    const payload = body({ severity: 'critical' });
+    const first = await upsertIntegrationTicket(agent, payload);
+
+    const before = await withSystemContext(async (sql) =>
+      (await sql.query('SELECT severity, impact, urgency, priority FROM tickets WHERE id=$1', [first.body.ticketId])).rows[0],
+    );
+    expect(before).toMatchObject({ severity: 'critical', impact: 1, urgency: 1, priority: 'P1' });
+
+    // A partial re-sync that says nothing about severity — the documented presence rule
+    // invites exactly this (an owner-only or dueDate-only update).
+    await upsertIntegrationTicket(agent, {
+      externalRef: payload.externalRef,
+      organizationId: orgId,
+      source: 'poam',
+      title: 'Patch CVE-2026-9999',
+      owner: 'Platform Team',
+    });
+
+    const after = await withSystemContext(async (sql) =>
+      (await sql.query('SELECT severity, impact, urgency, priority FROM tickets WHERE id=$1', [first.body.ticketId])).rows[0],
+    );
+    expect(after).toMatchObject({ severity: 'critical', impact: 1, urgency: 1, priority: 'P1' });
+  });
+
+  it('refreshes external_source when a re-sync changes source (Important 3)', async () => {
+    const payload = body({ source: 'poam' });
+    const first = await upsertIntegrationTicket(agent, payload);
+    await upsertIntegrationTicket(agent, { ...payload, source: 'conmon-poam' });
+
+    const row = await withSystemContext(async (sql) =>
+      (await sql.query('SELECT external_source FROM tickets WHERE id=$1', [first.body.ticketId])).rows[0],
+    );
+    expect(row.external_source).toBe('conmon-poam');
+  });
+
+  it('refuses a customer-plane principal naming another organization with 403 (Important 4)', async () => {
+    await expect(
+      upsertIntegrationTicket(customer, body({ organizationId: foreignOrgId })),
+    ).rejects.toMatchObject({ status: 403 });
+  });
+
+  it('does not silently relocate the ticket into the caller org when another is named (Important 4)', async () => {
+    const payload = body({ organizationId: foreignOrgId });
+    await expect(upsertIntegrationTicket(customer, payload)).rejects.toMatchObject({ status: 403 });
+    const count = await withSystemContext(async (sql) =>
+      (await sql.query('SELECT count(*)::int AS n FROM tickets WHERE external_ref=$1', [payload.externalRef])).rows[0].n,
+    );
+    expect(count).toBe(0);
+  });
+
+  it('still lets a customer-plane principal file against its own organization', async () => {
+    const { created } = await upsertIntegrationTicket(customer, body({ organizationId: orgId }));
+    expect(created).toBe(true);
+  });
+});

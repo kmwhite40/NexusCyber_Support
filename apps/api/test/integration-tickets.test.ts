@@ -202,3 +202,50 @@ describe('isExternalRefConflict', () => {
     expect(isExternalRefConflict(undefined)).toBe(false);
   });
 });
+
+// ---- Fixes from the whole-branch review ----
+
+describe('parseIntegrationTicket — severity presence (review Important 1)', () => {
+  it('emits no impact/urgency when severity is absent, so an upsert cannot downgrade priority', () => {
+    const { input } = parseIntegrationTicket(payload({ owner: 'A' }));
+    expect(input.impact).toBeUndefined();
+    expect(input.urgency).toBeUndefined();
+  });
+
+  it('still emits impact/urgency when severity is sent', () => {
+    const { input } = parseIntegrationTicket(payload({ severity: 'critical' }));
+    expect(input.impact).toBe(1);
+    expect(input.urgency).toBe(1);
+  });
+
+  it('emits 3/3 for an explicit null severity, which is a stated value not an omission', () => {
+    const { input } = parseIntegrationTicket(payload({ severity: null }));
+    expect(input.impact).toBe(3);
+    expect(input.urgency).toBe(3);
+  });
+});
+
+describe('parseIntegrationTicket — null on every optional field (review Important 2)', () => {
+  it('accepts null for description, labels, metadata and status like its siblings', () => {
+    expect(() =>
+      parseIntegrationTicket(
+        payload({ description: null, labels: null, metadata: null, status: null }),
+      ),
+    ).not.toThrow();
+  });
+
+  it('treats a null description as unset, so an upsert preserves the stored one', () => {
+    const { input } = parseIntegrationTicket(payload({ description: null }));
+    expect(input.description).toBeUndefined();
+  });
+
+  it('treats null labels and metadata as unset rather than as a wipe', () => {
+    const { input } = parseIntegrationTicket(payload({ labels: null, metadata: null }));
+    expect(input.tags).toBeUndefined();
+    expect(input.customFields).toBeUndefined();
+  });
+
+  it('still reports a null status in ignored[]', () => {
+    expect(parseIntegrationTicket(payload({ status: null })).ignored).toContain('status');
+  });
+});

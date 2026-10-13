@@ -39,13 +39,15 @@ Add **`POST /api/v1/integration/tickets`**, an integration-only route alongside 
 3. Returns a stable integration response shape (`ticketId`, `ticketKey`, `externalRef`,
    `status`, `created`) rather than the internal ticket row, so the column layout stays free
    to change.
-4. Gives first-class homes to `dueDate`, `owner`, `controlIds` and `carbonUrl` instead of
-   burying them in `custom_fields`, and resolves `parentExternalRef` to `parent_ticket_id`
-   server-side.
-5. **Suppresses SLA clock start when `source` marks the item as non-operational** (e.g. a
-   build-backlog story). `startTicketSla` currently runs on every create path with targets
-   hardcoded per derived priority and no `sla_policies` lookup, so there is no configuration
-   that stops the clock — only code.
+4. Gives first-class homes to `dueDate`, `owner`, `controlIds`, `carbonUrl` and `sourceId`
+   instead of burying them in `custom_fields`. (`parentExternalRef` → `parent_ticket_id`
+   resolution was scoped OUT of this phase: it is refused with a `422` citing phase D, along
+   with the rest of the backlog fields.)
+5. **Builds the mechanism to suppress SLA clock start** — `stampSlaAndTriage(sql, ticket,
+   suppressSla)` — because no configuration can do it: `startTicketSla` runs on every create
+   path with targets hardcoded per derived priority and no `sla_policies` lookup. **Nothing
+   sets the flag in this phase**; remediation tickets want their clock, and phase D switches it
+   on for `source: backlog` without reopening the create path.
 
 `POST /api/v1/tickets` keeps its current permissive behaviour and its `externalRef` upsert, so
 existing integrations are unaffected and ADR-0013 stands.

@@ -49,23 +49,29 @@ export const SEVERITY_TO_IMPACT_URGENCY: Record<string, [number, number]> = {
   low: [4, 4],
 };
 
+// Every optional field is `.nullable()` as well, deliberately and uniformly. The caller is a
+// typed client that serializes its whole DTO, so it sends `"description": null` for a field it
+// considers unset — rejecting that while accepting `"tenantId": null` would be an arbitrary
+// distinction that 422s the consumer's very first request. A null reads as "unset": it behaves
+// exactly like an omitted key, EXCEPT inside the `integration` group, where presence is the
+// signal and an explicit null clears the column.
 const payloadSchema = z
   .object({
     externalRef: z.string().min(1).max(200),
     organizationId: z.string().uuid(),
     source: z.string().min(1).max(60),
     title: z.string().min(3).max(300),
-    description: z.string().max(20_000).optional(),
+    description: z.string().max(20_000).nullable().optional(),
     severity: z.enum(['critical', 'high', 'medium', 'low']).nullable().optional(),
     sourceId: z.string().max(200).nullable().optional(),
     owner: z.string().max(200).nullable().optional(),
-    controlIds: z.array(z.string().max(60)).max(200).optional(),
+    controlIds: z.array(z.string().max(60)).max(200).nullable().optional(),
     dueDate: z.string().datetime({ offset: true }).nullable().optional(),
-    labels: z.array(z.string().max(60)).max(100).optional(),
+    labels: z.array(z.string().max(60)).max(100).nullable().optional(),
     carbonUrl: z.string().url().max(2000).nullable().optional(),
-    metadata: z.record(z.unknown()).optional(),
+    metadata: z.record(z.unknown()).nullable().optional(),
     // Accepted, never applied — see NOT_APPLIED.
-    status: z.string().max(40).optional(),
+    status: z.string().max(40).nullable().optional(),
     priority: z.string().max(8).nullable().optional(),
     tenantId: z.string().max(200).nullable().optional(),
   })
@@ -109,7 +115,15 @@ export function parseIntegrationTicket(raw: unknown): { input: CreateTicketInput
   }
   const b = parsed.data;
 
-  const [impact, urgency] = SEVERITY_TO_IMPACT_URGENCY[b.severity ?? ''] ?? [3, 3];
+  // Only derive impact/urgency when the caller actually said something about severity. A
+  // partial re-sync (an owner-only or dueDate-only update, which the presence rule invites)
+  // must not reset a critical finding's priority to P3 — and must not leave the row holding
+  // severity='critical' next to priority='P3', which no consumer could reconcile. An explicit
+  // null IS a statement, and maps to the 3/3 default.
+  const severitySent = 'severity' in src;
+  const [impact, urgency] = severitySent
+    ? SEVERITY_TO_IMPACT_URGENCY[b.severity ?? ''] ?? [3, 3]
+    : [undefined, undefined];
 
   const integration: NonNullable<CreateTicketInput['integration']> = {};
   if ('dueDate' in src) integration.dueAt = b.dueDate ?? null;
@@ -122,15 +136,15 @@ export function parseIntegrationTicket(raw: unknown): { input: CreateTicketInput
     ignored: NOT_APPLIED.filter((k) => k in src),
     input: {
       subject: b.title,
-      description: b.description,
+      description: b.description ?? undefined,
       organizationId: b.organizationId,
       externalRef: b.externalRef,
       externalSource: b.source,
       severity: b.severity ?? undefined,
       impact,
       urgency,
-      tags: b.labels,
-      customFields: b.metadata,
+      tags: b.labels ?? undefined,
+      customFields: b.metadata ?? undefined,
       integration,
     },
   };
@@ -209,6 +223,15 @@ export async function upsertIntegrationTicket(
   raw: unknown,
 ): Promise<{ created: boolean; body: IntegrationTicketResponse }> {
   const { input, ignored } = parseIntegrationTicket(raw);
+
+  // The route only requires *a* principal, and a browser cookie session satisfies that as
+  // readily as an `ak_` key. createTicket forces a customer-plane caller's org to its own and
+  // discards input.organizationId before authorize() ever sees it — which would answer 201 for
+  // a request to file into a different organization, having quietly filed it somewhere else.
+  // The contract's rule is 403 for an out-of-scope organizationId, on every path.
+  if (actor.plane === 'customer' && actor.organizationId !== input.organizationId) {
+    throw Errors.forbidden('organizationId is outside this principal\'s scope');
+  }
 
   let result;
   try {
