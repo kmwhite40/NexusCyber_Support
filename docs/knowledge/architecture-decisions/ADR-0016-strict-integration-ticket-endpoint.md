@@ -43,11 +43,13 @@ Add **`POST /api/v1/integration/tickets`**, an integration-only route alongside 
    instead of burying them in `custom_fields`. (`parentExternalRef` → `parent_ticket_id`
    resolution was scoped OUT of this phase: it is refused with a `422` citing phase D, along
    with the rest of the backlog fields.)
-5. **Builds the mechanism to suppress SLA clock start** — `stampSlaAndTriage(sql, ticket,
-   suppressSla)` — because no configuration can do it: `startTicketSla` runs on every create
-   path with targets hardcoded per derived priority and no `sla_policies` lookup. **Nothing
-   sets the flag in this phase**; remediation tickets want their clock, and phase D switches it
-   on for `source: backlog` without reopening the create path.
+5. **Suppresses SLA clock start for non-operational sources.** `stampSlaAndTriage(sql, ticket,
+   suppressSla)` carries the mechanism, because no configuration can: `startTicketSla` runs on
+   every create path with targets hardcoded per derived priority and no `sla_policies` lookup.
+   `parseIntegrationTicket` sets the flag for `source: "backlog"` (exact match — `backlog-review`
+   would be someone's real queue). A build story has an estimate, not a deadline; giving it a
+   clock means it breaches, escalates, and appears in the owning organization's SLA reporting as
+   a missed commitment nobody made. Remediation sources keep their clock.
 
 `POST /api/v1/tickets` keeps its current permissive behaviour and its `externalRef` upsert, so
 existing integrations are unaffected and ADR-0013 stands.

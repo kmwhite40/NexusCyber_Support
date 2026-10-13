@@ -360,3 +360,50 @@ describeDb('review fixes — upsert fidelity and the org boundary', () => {
     expect(created).toBe(true);
   });
 });
+
+describeDb('SLA clock suppression for backlog items', () => {
+  let agent: Principal;
+  let orgId: string;
+
+  beforeAll(async () => {
+    agent = await principalByEmail('manager@nexus.example.com');
+    orgId = await withSystemContext(
+      async (sql) => (await sql.query("SELECT id FROM organizations WHERE name='Demo Corp'")).rows[0].id,
+    );
+  });
+
+  function body(source: string) {
+    return {
+      externalRef: `sla-${source}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      organizationId: orgId,
+      source,
+      title: `Work item from ${source}`,
+    };
+  }
+
+  async function slaCount(ticketId: string) {
+    return withSystemContext(async (sql) =>
+      (await sql.query('SELECT count(*)::int AS n FROM sla_instances WHERE ticket_id=$1', [ticketId])).rows[0].n,
+    );
+  }
+
+  it('writes no sla_instances rows for a backlog item', async () => {
+    const { body: res } = await upsertIntegrationTicket(agent, body('backlog'));
+    expect(await slaCount(res.ticketId)).toBe(0);
+  });
+
+  it('leaves a backlog ticket with no due stamps but still in triage', async () => {
+    const { body: res } = await upsertIntegrationTicket(agent, body('backlog'));
+    const row = await withSystemContext(async (sql) =>
+      (await sql.query('SELECT status, response_due_at, resolution_due_at FROM tickets WHERE id=$1', [res.ticketId])).rows[0],
+    );
+    expect(row.status).toBe('triage');
+    expect(row.response_due_at).toBeNull();
+    expect(row.resolution_due_at).toBeNull();
+  });
+
+  it('still starts both clocks for a remediation item (no regression)', async () => {
+    const { body: res } = await upsertIntegrationTicket(agent, body('poam'));
+    expect(await slaCount(res.ticketId)).toBe(2);
+  });
+});

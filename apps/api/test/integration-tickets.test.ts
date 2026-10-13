@@ -249,3 +249,22 @@ describe('parseIntegrationTicket — null on every optional field (review Import
     expect(parseIntegrationTicket(payload({ status: null })).ignored).toContain('status');
   });
 });
+
+describe('parseIntegrationTicket — non-operational sources carry no SLA clock', () => {
+  it('suppresses the clock for source "backlog"', () => {
+    const { input } = parseIntegrationTicket(payload({ source: 'backlog' }));
+    expect(input.integration?.suppressSla).toBe(true);
+  });
+
+  it('leaves the clock running for a remediation source', () => {
+    for (const source of ['poam', 'risk', 'conmon-poam', 'conmon-risk']) {
+      const { input } = parseIntegrationTicket(payload({ source }));
+      expect(input.integration?.suppressSla).toBeFalsy();
+    }
+  });
+
+  it('does not treat a source merely containing "backlog" as non-operational', () => {
+    const { input } = parseIntegrationTicket(payload({ source: 'backlog-review' }));
+    expect(input.integration?.suppressSla).toBeFalsy();
+  });
+});

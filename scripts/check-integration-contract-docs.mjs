@@ -64,12 +64,21 @@ if (defMissing.length) problems.push(`DEFERRED fields absent from the doc: ${def
 // ---- 2. no doc may claim unshipped behaviour ----
 const adr = read(ADR);
 const aPrimeRow = read(RESPONSE).split('\n').find((l) => l.startsWith('| **A′**')) ?? '';
-for (const [label, text] of [['ADR-0016', adr], ['the A′ row', aPrimeRow]]) {
+// Markdown hard-wraps prose, so a claim can straddle a newline ("**Nothing\n   sets the flag").
+// Matching the raw text made this gate miss exactly that and report PASS. Flatten first.
+const flat = (t) => t.replace(/\s+/g, ' ');
+for (const [label, raw] of [['ADR-0016', adr], ['the A′ row', aPrimeRow]]) {
+  const text = flat(raw);
   if (deferred.has('parentExternalRef') && /resolves `?parentExternalRef`? to|`parentExternalRef` resolution/.test(text)) {
     problems.push(`${label} claims parentExternalRef resolution, but it is refused as phase D`);
   }
   if (!suppressIsSet && /\*\*Suppresses SLA clock start|mandatory SLA-clock suppression/.test(text)) {
     problems.push(`${label} claims SLA suppression is active, but no production code sets suppressSla`);
+  }
+  // And the reverse. The first version of this gate only checked one direction, so wiring the
+  // flag up would have left the ADR asserting the opposite with nothing to catch it.
+  if (suppressIsSet && /[Nn]othing sets the flag|nothing sets `?suppressSla/.test(text)) {
+    problems.push(`${label} says nothing sets suppressSla, but production code does`);
   }
 }
 

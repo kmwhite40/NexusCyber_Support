@@ -83,6 +83,14 @@ were, so a partial re-sync cannot downgrade a critical finding.
 An upsert never changes `status`, the assignee or the ticket number — Anchor owns the lifecycle
 and the assignment.
 
+### `source: "backlog"` starts no SLA clock
+
+An item whose `source` is exactly `backlog` is treated as a work record rather than a service
+commitment: it is created, numbered and triaged like any other ticket, but no SLA instance is
+started and `dueDate`-style response/resolution stamps stay null. Every other source keeps its
+clock. Send `backlog` for programme/build work so it does not breach and escalate in the owning
+organization's SLA reporting.
+
 ### Accepted but not applied
 
 `status`, `priority` and `tenantId` are accepted and returned in the response's `ignored[]`

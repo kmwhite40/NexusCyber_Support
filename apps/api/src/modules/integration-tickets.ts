@@ -39,6 +39,15 @@ const DEFERRED = [
   'blockedReason',
 ] as const;
 
+/**
+ * Sources whose items are work records, not service commitments. A build-backlog story has an
+ * estimate, not a deadline: giving it an SLA clock means it breaches, escalates, and lands in
+ * the owning organization's SLA reporting as a missed commitment nobody ever made.
+ *
+ * Exact match, not a prefix or substring test — `backlog-review` would be somebody's real queue.
+ */
+const NON_OPERATIONAL_SOURCES = new Set(['backlog']);
+
 /** The published contract's severity mapping. Applied server-side here (unlike
  *  POST /api/v1/tickets, which stores severity descriptively and ignores it for priority) so
  *  the caller does not have to compute Anchor's impact/urgency itself. */
@@ -126,6 +135,7 @@ export function parseIntegrationTicket(raw: unknown): { input: CreateTicketInput
     : [undefined, undefined];
 
   const integration: NonNullable<CreateTicketInput['integration']> = {};
+  if (NON_OPERATIONAL_SOURCES.has(b.source)) integration.suppressSla = true;
   if ('dueDate' in src) integration.dueAt = b.dueDate ?? null;
   if ('owner' in src) integration.owner = b.owner ?? null;
   if ('sourceId' in src) integration.sourceId = b.sourceId ?? null;
