@@ -145,7 +145,11 @@ export async function resolveParentLinks(sql: Sql, orgId: string, ticket: { id: 
     await sql.query(
       `UPDATE tickets SET parent_ticket_id = p.id
          FROM tickets p
-        WHERE tickets.id = $1 AND p.organization_id = $2 AND p.external_ref = $3 AND p.id <> tickets.id`,
+        WHERE tickets.id = $1 AND p.organization_id = $2 AND p.external_ref = $3 AND p.id <> tickets.id
+          -- Refuse the direct cycle A->B->A. Nothing walks this chain recursively today, so a
+          -- cycle would be bad data rather than a hang, but it would be bad data waiting for
+          -- the first tree view. Deeper cycles need a recursive check and a deliberate caller.
+          AND (p.parent_ticket_id IS NULL OR p.parent_ticket_id <> tickets.id)`,
       [ticket.id, orgId, ticket.parent_external_ref],
     );
   }
@@ -153,7 +157,8 @@ export async function resolveParentLinks(sql: Sql, orgId: string, ticket: { id: 
     // Children that arrived first and have been waiting for this ticket.
     await sql.query(
       `UPDATE tickets SET parent_ticket_id = $1
-        WHERE organization_id = $2 AND parent_external_ref = $3 AND id <> $1 AND parent_ticket_id IS NULL`,
+        WHERE organization_id = $2 AND parent_external_ref = $3 AND id <> $1 AND parent_ticket_id IS NULL
+          AND id <> COALESCE((SELECT parent_ticket_id FROM tickets me WHERE me.id = $1), '00000000-0000-0000-0000-000000000000'::uuid)`,
       [ticket.id, orgId, ticket.external_ref],
     );
   }

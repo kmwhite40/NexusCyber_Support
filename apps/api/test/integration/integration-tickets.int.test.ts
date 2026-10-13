@@ -492,3 +492,33 @@ describeDb('phase D — backlog work items', () => {
     expect(n).toBe(0);
   });
 });
+
+describeDb('phase D — parent links refuse a direct cycle', () => {
+  let agent: Principal;
+  let orgId: string;
+
+  beforeAll(async () => {
+    agent = await principalByEmail('manager@nexus.example.com');
+    orgId = await withSystemContext(
+      async (sql) => (await sql.query("SELECT id FROM organizations WHERE name='Demo Corp'")).rows[0].id,
+    );
+  });
+
+  it('does not let two items become each other parent', async () => {
+    const stamp = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const aRef = `carbon-conmon:backlog:A-${stamp}`;
+    const bRef = `carbon-conmon:backlog:B-${stamp}`;
+    const base = { organizationId: orgId, source: 'backlog' };
+
+    const a = await upsertIntegrationTicket(agent, { ...base, externalRef: aRef, title: 'Item A', parentExternalRef: bRef });
+    const b = await upsertIntegrationTicket(agent, { ...base, externalRef: bRef, title: 'Item B', parentExternalRef: aRef });
+
+    const rows = await withSystemContext(async (sql) =>
+      (await sql.query('SELECT id, parent_ticket_id FROM tickets WHERE id = ANY($1)',
+        [[a.body.ticketId, b.body.ticketId]])).rows,
+    );
+    const byId = Object.fromEntries(rows.map((r: { id: string; parent_ticket_id: string | null }) => [r.id, r.parent_ticket_id]));
+    const mutual = byId[a.body.ticketId] === b.body.ticketId && byId[b.body.ticketId] === a.body.ticketId;
+    expect(mutual).toBe(false);
+  });
+});
