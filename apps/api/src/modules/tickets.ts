@@ -104,6 +104,33 @@ export async function nextTicketNumber(sql: Sql, orgId: string): Promise<string>
   return `${ticketNumberPrefix(orgRow?.name)}-${String(n).padStart(6, '0')}`;
 }
 
+/**
+ * Move a freshly inserted ticket to `triage` and start its SLA clocks.
+ *
+ * `suppressSla` serves integration items that are work records rather than service
+ * commitments — a build-backlog story has an estimate, not a deadline. It has to be a
+ * parameter because no configuration can do it: startTicketSla writes sla_instances on every
+ * create path, targets are hardcoded per derived priority (targetMinutes), and sla_policies is
+ * never read by any module. The status still moves to `triage`; only the clocks and the
+ * due-date stamps are skipped.
+ */
+export async function stampSlaAndTriage(
+  sql: Sql,
+  ticket: { id: string; organization_id: string; priority: string },
+  suppressSla = false,
+): Promise<{ response_due_at: Date | null; resolution_due_at: Date | null }> {
+  if (suppressSla) {
+    await sql.query(`UPDATE tickets SET status='triage' WHERE id=$1`, [ticket.id]);
+    return { response_due_at: null, resolution_due_at: null };
+  }
+  const due = await startTicketSla(sql, ticket);
+  await sql.query(
+    `UPDATE tickets SET response_due_at=$1, resolution_due_at=$2, status='triage' WHERE id=$3`,
+    [due.response_due_at, due.resolution_due_at, ticket.id],
+  );
+  return due;
+}
+
 export interface CreateTicketInput {
   type?: string;
   subject: string;
@@ -119,6 +146,24 @@ export interface CreateTicketInput {
   customFields?: Record<string, unknown>; // integration metadata (custom_fields jsonb)
   externalRef?: string; // integration idempotency key (e.g. <tenantId>:<source>:<itemId>)
   externalSource?: string; // originating system label (e.g. 'anchor')
+  /**
+   * Typed fields from the external-integration contract (ADR-0016). Deliberately a nested
+   * group rather than five loose parameters so the existing call sites stay readable, and
+   * deliberately absent from the human-intake route's zod schema — only
+   * modules/integration-tickets.ts populates it.
+   *
+   * Key PRESENCE is meaningful on an upsert: an absent key preserves the stored value, a
+   * present `null` clears it. `??` cannot express that distinction, which is why the update
+   * branch tests with `in`.
+   */
+  integration?: {
+    dueAt?: string | null;
+    owner?: string | null;
+    controlIds?: string[];
+    url?: string | null;
+    sourceId?: string | null;
+    suppressSla?: boolean;
+  };
 }
 
 export async function createTicket(actor: Principal, input: CreateTicketInput) {
@@ -205,11 +250,7 @@ export async function createTicket(actor: Principal, input: CreateTicketInput) {
     );
     const ticket = rows[0];
 
-    const due = await startTicketSla(sql, ticket);
-    await sql.query(
-      `UPDATE tickets SET response_due_at=$1, resolution_due_at=$2, status='triage' WHERE id=$3`,
-      [due.response_due_at, due.resolution_due_at, ticket.id],
-    );
+    const due = await stampSlaAndTriage(sql, ticket, input.integration?.suppressSla ?? false);
     await sql.query(
       `INSERT INTO ticket_events (organization_id, ticket_id, actor_id, event_type, detail)
        VALUES ($1,$2,$3,'created',$4)`,
