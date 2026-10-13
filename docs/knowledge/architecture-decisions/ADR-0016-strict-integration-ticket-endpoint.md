@@ -54,6 +54,34 @@ Add **`POST /api/v1/integration/tickets`**, an integration-only route alongside 
 `POST /api/v1/tickets` keeps its current permissive behaviour and its `externalRef` upsert, so
 existing integrations are unaffected and ADR-0013 stands.
 
+## Phase D — backlog work items (2026-10-13, migration 0082)
+
+The refused tier is now empty: `parentExternalRef`, `estimateDays`, `phase`, `workstream`,
+`acceptanceCriteria` and `blockedReason` are first-class columns. Anchor had broad Jira Service
+Management parity already; what it lacked was the Jira *Software* layer — epic→story hierarchy,
+estimates, backlog ordering — and these are its first increment.
+
+Three calls worth recording:
+
+1. **`priority` moved from reported-but-ignored to applied**, stored verbatim in
+   `external_priority`. It is the caller's ordering, never Anchor's derived `priority`, which
+   drives SLA targets and escalation. "P0 blocks the MVP" is not a security severity, and the
+   separate column is what keeps it out of that logic. `ignored[]` is now `status` and
+   `tenantId` only.
+2. **`blockedReason`, not `status`, is the signal for a blocked item.** Anchor owns the
+   lifecycle, so an integration never drives status on an ongoing sync — but an item blocked on
+   an external dependency must not be created in `triage` and reported as ready. Keying on the
+   reason means a blocked item always says why; `status: "blocked"` without one is a `422`.
+   Creation only.
+3. **Parent links resolve in both directions.** An import arrives in the caller's order, so a
+   story can precede its epic. `parent_external_ref` is stored and `resolveParentLinks` matches
+   on whichever side lands second, rather than rejecting the child or making the caller sort
+   its payload.
+
+`blocked` was added to the built-in transition map (`assigned`/`in_progress` → `blocked` →
+`in_progress`/`assigned`). It is deliberately distinct from `on_hold`: on_hold is Anchor pausing
+its own work, blocked means something outside Anchor is in the way.
+
 ## Alternatives considered
 | Option | Why not |
 |---|---|

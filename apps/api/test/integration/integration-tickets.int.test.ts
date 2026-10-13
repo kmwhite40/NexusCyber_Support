@@ -210,7 +210,7 @@ describeDb('upsertIntegrationTicket end to end', () => {
     expect(res.ticketKey).toMatch(/-\d{6}$/);
     expect(res.status).toBe('triage');
     expect(res.assignee).toBeNull();
-    expect(res.ignored.sort()).toEqual(['priority', 'status', 'tenantId']);
+    expect(res.ignored.sort()).toEqual(['status', 'tenantId']);
     expect(res).not.toHaveProperty('ticket_number');
   });
 
@@ -405,5 +405,120 @@ describeDb('SLA clock suppression for backlog items', () => {
   it('still starts both clocks for a remediation item (no regression)', async () => {
     const { body: res } = await upsertIntegrationTicket(agent, body('poam'));
     expect(await slaCount(res.ticketId)).toBe(2);
+  });
+});
+
+describeDb('phase D — backlog work items', () => {
+  let agent: Principal;
+  let orgId: string;
+
+  beforeAll(async () => {
+    agent = await principalByEmail('manager@nexus.example.com');
+    orgId = await withSystemContext(
+      async (sql) => (await sql.query("SELECT id FROM organizations WHERE name='Demo Corp'")).rows[0].id,
+    );
+  });
+
+  const ref = (suffix: string) => `carbon-conmon:backlog:${suffix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+  function item(externalRef: string, over: Record<string, unknown> = {}) {
+    return { externalRef, organizationId: orgId, source: 'backlog', title: `Item ${externalRef}`, ...over };
+  }
+
+  async function row(ticketId: string) {
+    return withSystemContext(async (sql) =>
+      (await sql.query(
+        `SELECT status, priority, parent_ticket_id, parent_external_ref, external_priority,
+                estimate_days, work_phase, workstream, acceptance_criteria, blocked_reason
+           FROM tickets WHERE id=$1`, [ticketId])).rows[0],
+    );
+  }
+
+  it('persists every backlog column', async () => {
+    const { body: res } = await upsertIntegrationTicket(agent, item(ref('WS-1.1'), {
+      estimateDays: 3.5, phase: 2, workstream: 'WS-1',
+      acceptanceCriteria: 'The reconciler converges after a dropped webhook.',
+      priority: 'P0',
+    }));
+    const r = await row(res.ticketId);
+    expect(Number(r.estimate_days)).toBe(3.5);
+    expect(r.work_phase).toBe('2');
+    expect(r.workstream).toBe('WS-1');
+    expect(r.acceptance_criteria).toMatch(/reconciler converges/);
+    expect(r.external_priority).toBe('P0');
+  });
+
+  it('keeps the caller priority out of Anchor derived priority', async () => {
+    const { body: res } = await upsertIntegrationTicket(agent, item(ref('WS-1.2'), { priority: 'P0' }));
+    const r = await row(res.ticketId);
+    expect(r.external_priority).toBe('P0');
+    expect(r.priority).toBe('P3'); // derived from the 3/3 default, never from P0
+  });
+
+  it('creates a blocked item as blocked, with its reason', async () => {
+    const { body: res } = await upsertIntegrationTicket(agent, item(ref('WS-2.1'), {
+      blockedReason: 'Waiting on the Anchor contract',
+    }));
+    expect(res.status).toBe('blocked');
+    const r = await row(res.ticketId);
+    expect(r.status).toBe('blocked');
+    expect(r.blocked_reason).toBe('Waiting on the Anchor contract');
+  });
+
+  it('links a story to an epic that already exists', async () => {
+    const epicRef = ref('WS-3');
+    const epic = await upsertIntegrationTicket(agent, item(epicRef));
+    const story = await upsertIntegrationTicket(agent, item(ref('WS-3.1'), { parentExternalRef: epicRef }));
+    expect((await row(story.body.ticketId)).parent_ticket_id).toBe(epic.body.ticketId);
+  });
+
+  it('defers the link when the story arrives before its epic, then resolves it', async () => {
+    const epicRef = ref('WS-4');
+    const story = await upsertIntegrationTicket(agent, item(ref('WS-4.1'), { parentExternalRef: epicRef }));
+    // The epic does not exist yet: accepted, not rejected, and recorded for later.
+    const before = await row(story.body.ticketId);
+    expect(before.parent_ticket_id).toBeNull();
+    expect(before.parent_external_ref).toBe(epicRef);
+
+    const epic = await upsertIntegrationTicket(agent, item(epicRef));
+    expect((await row(story.body.ticketId)).parent_ticket_id).toBe(epic.body.ticketId);
+  });
+
+  it('still starts no SLA clock for a backlog item carrying phase-D fields', async () => {
+    const { body: res } = await upsertIntegrationTicket(agent, item(ref('WS-5.1'), { estimateDays: 2 }));
+    const n = await withSystemContext(async (sql) =>
+      (await sql.query('SELECT count(*)::int AS n FROM sla_instances WHERE ticket_id=$1', [res.ticketId])).rows[0].n,
+    );
+    expect(n).toBe(0);
+  });
+});
+
+describeDb('phase D — parent links refuse a direct cycle', () => {
+  let agent: Principal;
+  let orgId: string;
+
+  beforeAll(async () => {
+    agent = await principalByEmail('manager@nexus.example.com');
+    orgId = await withSystemContext(
+      async (sql) => (await sql.query("SELECT id FROM organizations WHERE name='Demo Corp'")).rows[0].id,
+    );
+  });
+
+  it('does not let two items become each other parent', async () => {
+    const stamp = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const aRef = `carbon-conmon:backlog:A-${stamp}`;
+    const bRef = `carbon-conmon:backlog:B-${stamp}`;
+    const base = { organizationId: orgId, source: 'backlog' };
+
+    const a = await upsertIntegrationTicket(agent, { ...base, externalRef: aRef, title: 'Item A', parentExternalRef: bRef });
+    const b = await upsertIntegrationTicket(agent, { ...base, externalRef: bRef, title: 'Item B', parentExternalRef: aRef });
+
+    const rows = await withSystemContext(async (sql) =>
+      (await sql.query('SELECT id, parent_ticket_id FROM tickets WHERE id = ANY($1)',
+        [[a.body.ticketId, b.body.ticketId]])).rows,
+    );
+    const byId = Object.fromEntries(rows.map((r: { id: string; parent_ticket_id: string | null }) => [r.id, r.parent_ticket_id]));
+    const mutual = byId[a.body.ticketId] === b.body.ticketId && byId[b.body.ticketId] === a.body.ticketId;
+    expect(mutual).toBe(false);
   });
 });

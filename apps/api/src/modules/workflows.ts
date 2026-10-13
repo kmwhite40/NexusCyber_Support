@@ -13,8 +13,11 @@ export type TransitionMap = Record<string, string[]>;
 export const DEFAULT_TRANSITIONS: TransitionMap = {
   new: ['triage', 'assigned'],
   triage: ['assigned', 'in_progress'],
-  assigned: ['in_progress', 'waiting_customer', 'on_hold'],
-  in_progress: ['waiting_customer', 'waiting_vendor', 'on_hold', 'resolved'],
+  assigned: ['in_progress', 'waiting_customer', 'on_hold', 'blocked'],
+  in_progress: ['waiting_customer', 'waiting_vendor', 'on_hold', 'resolved', 'blocked'],
+  // Distinct from on_hold: on_hold is Anchor's own pause, blocked means an external dependency
+  // is in the way and the item is not workable (phase D / ADR-0016).
+  blocked: ['in_progress', 'assigned'],
   waiting_customer: ['in_progress', 'resolved'],
   waiting_vendor: ['in_progress'],
   on_hold: ['in_progress'],

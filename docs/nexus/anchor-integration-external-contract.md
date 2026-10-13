@@ -70,6 +70,13 @@ programme-scoped key such as `carbon-conmon:backlog:WS-1.1` is accepted as-is.
 | labels | string[]? | → `tags` |
 | carbonUrl | url? | → `external_url` |
 | metadata | object? | → `custom_fields` |
+| priority | string? | → `external_priority`, stored **verbatim as the caller's own ordering** (e.g. `P0`–`P2`). Never Anchor's derived `priority`, and never drives SLA, routing or escalation |
+| parentExternalRef | string? | the caller's ref for this item's parent → resolved to `parent_ticket_id`. **Order-independent:** a child may arrive before its parent; the link resolves when the second one lands |
+| estimateDays | number? | engineer-days, ≥ 0 |
+| phase | `1`\|`2`\|`3`\|`post-mvp`? | → `work_phase` |
+| workstream | string? | ≤60, indexed |
+| acceptanceCriteria | string? | ≤4000 |
+| blockedReason | string? | → `blocked_reason`. **Sending one creates the item in `blocked` status** |
 
 On an upsert, **key presence matters for the five integration columns** — `dueDate`, `owner`,
 `controlIds`, `carbonUrl` and `sourceId`. An omitted key preserves the stored value; an explicit
@@ -93,16 +100,27 @@ organization's SLA reporting.
 
 ### Accepted but not applied
 
-`status`, `priority` and `tenantId` are accepted and returned in the response's `ignored[]`
-array. Anchor owns the lifecycle (status moves only via `/transition`), derives priority from
-impact × urgency (there is no `P0`), and has no tenant concept. They are reported rather than
-refused so a conformant payload keeps working — check `ignored[]` if you expect them to apply.
+`status` and `tenantId` are accepted and returned in the response's `ignored[]` array. Anchor
+owns the lifecycle (status moves only via `/transition`) and has no tenant concept. They are
+reported rather than refused so a conformant payload keeps working — check `ignored[]` if you
+expect them to apply.
+
+`priority` used to be here. Since phase D it is **applied**, stored verbatim in
+`external_priority` as the caller's own ordering. Anchor's own `priority` is still derived from
+impact × urgency and still has no `P0` — the two never mix, which is the point.
+
+**One exception to "Anchor owns the lifecycle":** sending a `blockedReason` creates the item in
+`blocked` status, because an item genuinely blocked on an external dependency must not land in
+`triage` and be reported as ready to work. It applies at creation only; every transition after
+that is Anchor's. Sending `status: "blocked"` *without* a reason is a `422` — a blocked item
+has to say why, since that is the only part a human reading the queue can act on.
 
 ### Refused — 422
 
-`parentExternalRef`, `estimateDays`, `phase`, `workstream`, `acceptanceCriteria` and
-`blockedReason` (phase D, not yet supported), and **any unrecognised field**. The response is an
-RFC 7807 problem document whose `errors[]` names each offending field.
+**Any unrecognised field.** The response is an RFC 7807 problem document whose `errors[]` names
+each offending field. (The phase-D backlog fields that used to be listed here — `parentExternalRef`,
+`estimateDays`, `phase`, `workstream`, `acceptanceCriteria`, `blockedReason` — are now applied;
+see the table above.)
 
 ### Response
 
