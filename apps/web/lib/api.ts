@@ -631,6 +631,36 @@ export const entraApi = {
   sync: (orgId: string) => api.post<EntraSyncStats>(`/integrations/entra/${orgId}/sync`, {}),
 };
 
+export interface ApiKey {
+  id: string;
+  organization_id: string;
+  /** Public half of the token (`ak_<key_id>_...`). The secret half is never readable. */
+  key_id: string;
+  name: string;
+  scopes: string[];
+  created_at: string;
+  last_used_at: string | null;
+  expires_at: string | null;
+  revoked_at: string | null;
+}
+
+/** The create response — the ONLY place `token` ever exists. */
+export interface CreatedApiKey extends Omit<ApiKey, 'last_used_at' | 'revoked_at'> {
+  token: string;
+}
+
+export const apiKeysApi = {
+  // NOTE the asymmetry, and do not "tidy" it: the list route wraps its payload as
+  // `{ data: [...] }` while create and revoke return the object directly. request() does not
+  // unwrap, so a uniform generic here renders `undefined.map` at the call site.
+  list: (organizationId: string) =>
+    api.get<{ data: ApiKey[] }>(`/integration/api-keys?organizationId=${encodeURIComponent(organizationId)}`)
+      .then((r) => r.data),
+  create: (b: { organizationId: string; name: string; scopes?: string[]; expiresAt?: string }) =>
+    api.post<CreatedApiKey>('/integration/api-keys', b),
+  revoke: (id: string) => api.del<{ id: string; revoked: boolean }>(`/integration/api-keys/${id}`),
+};
+
 export const platformUsersApi = {
   list: () => api.get<{ data: PlatformUser[]; assignable_roles: string[] }>('/platform/users'),
   create: (b: { email: string; displayName?: string; roleKeys?: string[]; password?: string; scope?: OrgScope }) =>
