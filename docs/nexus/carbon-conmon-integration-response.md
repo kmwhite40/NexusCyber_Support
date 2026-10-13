@@ -234,7 +234,7 @@ Also still needed from you:
 | Anchor phase | Deliverable | Status |
 |---|---|---|
 | **A (live)** | `externalRef` upsert + unique index + `Idempotency-Key` + per-org key auth with `403` scope rejection + non-uuid ref segments + nullable severity + `/healthz` `/readyz` | **deployed since 2026-06** |
-| **A′** | `POST /api/v1/integration/tickets` with your §2.1 request/response shape, **strict parsing (`422` on unknown fields)**, real homes for `dueDate` / `owner` / `controlIds` / `carbonUrl`, `parentExternalRef` resolution, **mandatory SLA-clock suppression for `source: backlog`** | gates S1.7; Carbon can ship against the existing contract meanwhile |
+| **A′** | `POST /api/v1/integration/tickets` with your §2.1 request/response shape, **strict parsing (`422` on unknown fields)**, real homes for `dueDate` / `owner` / `controlIds` / `carbonUrl`, `parentExternalRef` resolution, **mandatory SLA-clock suppression for `source: backlog`** | **shipped** — `POST /api/v1/integration/tickets` |
 | **B** | `closed → reopened`; `PATCH /tickets/:id`; webhook timestamp + delivery-id rename + durable retry + `resolution` + `ticket.updated` | your M2.7 |
 | **C** | delta feed with keyset cursor + `(organization_id, updated_at)` index; batch `externalRef` lookup (200/request); per-key rate limits | your WS-7.8 |
 | **D** | backlog fields (`priority`, `estimateDays`, `phase`, `workstream`, `acceptanceCriteria`) + `blocked` status + `blockedReason` | ships with A′ |

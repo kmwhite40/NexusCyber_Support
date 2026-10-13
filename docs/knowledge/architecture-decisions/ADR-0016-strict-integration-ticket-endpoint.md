@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposed |
+| **Status** | Accepted |
 | **Date** | 2026-10-12 |
 | **Deciders** | Anchor engineering |
 | **Related** | ADR-0013 (external integration contract); `docs/nexus/anchor-integration-external-contract.md`; `docs/nexus/carbon-conmon-integration-response.md`; migration 0051; `http/routes.ts`, `modules/tickets.ts` |

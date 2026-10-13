@@ -44,6 +44,71 @@ Response: full ticket row (`id`, `ticket_number`, `status='triage'`, `priority`,
 Severity → impact/urgency so priority derives: `critical→(1,1) P1 · high→(2,2) P2 ·
 medium→(3,3) P3 · low→(4,4) P4`.
 
+## Outbound — strict upsert (preferred)
+
+`POST /api/v1/integration/tickets` — same per-organization API key. **Prefer this over
+`POST /api/v1/tickets`:** it takes the integration vocabulary directly and an unrecognised
+field is a `422` rather than a silent drop.
+
+`externalRef` is **required** (the endpoint is upsert-only) and is NOT validated as a uuid — a
+programme-scoped key such as `carbon-conmon:backlog:WS-1.1` is accepted as-is.
+
+### Applied
+
+| field | type | notes |
+|---|---|---|
+| externalRef | string **req** | 1–200, the idempotency key |
+| organizationId | uuid **req** | must match the key's org, else 403 |
+| source | string **req** | ≤60 → `external_source` |
+| title | string **req** | 3–300 → `subject` |
+| description | string? | ≤20000 |
+| severity | `critical`\|`high`\|`medium`\|`low`\|null? | **also drives priority**: critical→P1, high→P2, medium→P3, low→P4, null→P3 |
+| sourceId | string? | → `external_source_id`; survives a change to the externalRef format |
+| owner | string? | → `external_owner`, **text only — never sets the assignee** |
+| controlIds | string[]? | → `control_ids` (queryable, GIN-indexed) |
+| dueDate | ISO 8601? | → `external_due_at`, the CALLER's deadline, distinct from Anchor's SLA clock |
+| labels | string[]? | → `tags` |
+| carbonUrl | url? | → `external_url` |
+| metadata | object? | → `custom_fields` |
+
+On an upsert, **key presence matters**: an omitted key preserves the stored value, an explicit
+`null` clears it. So `"dueDate": null` withdraws a deadline; omitting `dueDate` keeps it.
+
+An upsert never changes `status`, the assignee or the ticket number — Anchor owns the lifecycle
+and the assignment.
+
+### Accepted but not applied
+
+`status`, `priority` and `tenantId` are accepted and returned in the response's `ignored[]`
+array. Anchor owns the lifecycle (status moves only via `/transition`), derives priority from
+impact × urgency (there is no `P0`), and has no tenant concept. They are reported rather than
+refused so a conformant payload keeps working — check `ignored[]` if you expect them to apply.
+
+### Refused — 422
+
+`parentExternalRef`, `estimateDays`, `phase`, `workstream`, `acceptanceCriteria` and
+`blockedReason` (phase D, not yet supported), and **any unrecognised field**. The response is an
+RFC 7807 problem document whose `errors[]` names each offending field.
+
+### Response
+
+```json
+{ "ticketId":"...", "ticketKey":"DEMO-000123", "externalRef":"...", "status":"triage",
+  "assignee":null, "dueDate":"2026-11-30T00:00:00.000Z",
+  "createdAt":"...", "updatedAt":"...", "created":true, "ignored":["status","priority"] }
+```
+
+**HTTP 201 = created, 200 = matched an existing externalRef and updated it**, mirrored by
+`created`. `status` and `assignee` are Anchor's authoritative values, not what was sent.
+`dueDate` echoes `external_due_at` — your deadline, not Anchor's SLA `resolution_due_at`.
+
+### Two things to know about metadata
+
+- It round-trips **semantically, not byte-identically** — it is stored as `jsonb`, which
+  normalises key order and whitespace. Hash a canonical form, or keep the hash on your side.
+- A key an administrator has flagged `sensitive` on any request form is **refused with a 422**,
+  not stripped. Namespace your keys to stay clear of the PII vault boundary.
+
 ## Inbound — status writeback (webhooks)
 
 Register the receiver (admin; secret shown once → HMAC key):

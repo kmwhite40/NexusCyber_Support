@@ -26,7 +26,7 @@ ADRs record **why** Anchor is built the way it is. They describe the system **as
 | [0013](ADR-0013-external-integration-contract.md) | API keys, idempotent upsert, signed webhooks | Accepted | — |
 | [0014](ADR-0014-temporary-password-credential.md) | Temporary password instead of TAP | Accepted | — |
 | [0015](ADR-0015-rfc7807-errors-and-idempotency.md) | RFC 7807 errors + Idempotency-Key | Accepted | §T.1 |
-| [0016](ADR-0016-strict-integration-ticket-endpoint.md) | Strict, separate integration ticket endpoint | Proposed | ADR-0013 |
+| [0016](ADR-0016-strict-integration-ticket-endpoint.md) | Strict, separate integration ticket endpoint | Accepted | ADR-0013 |
 
 ## Open architecture debt
 - **ADR-0005 / 0015:** events and idempotency keys are in memory — move to a durable broker/store before scaling out.
