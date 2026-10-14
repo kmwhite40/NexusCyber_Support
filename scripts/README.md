@@ -9,6 +9,7 @@ Dependency-light (bash + curl + node + the Postgres Docker container).
 | `smoke.sh` | Post-deploy smoke: health/readiness + auth + core read endpoints return 200. Exits non-zero on first failure — wire into a deploy gate. |
 | `db-backup.sh` | Timestamped custom-format `pg_dump` into `./backups/` (CP control family / backup-restore testing). |
 | `db-restore.sh` | Restore a dump into the target DB (DR drill). **Destructive** — prompts before overwriting. |
+| `purge-test-workflows.mjs` | Remove the `wf_test_*` workflows and tickets leaked by the workflow integration suite before it cleaned up after itself. **Dry run by default**; `--apply` deletes in one transaction, and it refuses if any alert, on-call page or posture finding still references a matched ticket. Needs the owner `DATABASE_URL`. |
 | `check-integration-contract-docs.mjs` | Gate for the external integration contract: asserts the published field tiers still match `payloadSchema`, and that no doc claims behaviour that did not ship (`parentExternalRef` resolution, active SLA suppression). Exits non-zero on drift — the ADR and the consumer-facing response doc both drifted once. |
 
 ```bash
@@ -23,6 +24,10 @@ BASE_URL=http://localhost:4000/api/v1 scripts/smoke.sh
 
 # integration contract docs still match the code (no DB or network needed)
 node scripts/check-integration-contract-docs.mjs
+
+# see what test pollution would be removed, then remove it
+node scripts/purge-test-workflows.mjs
+node scripts/purge-test-workflows.mjs --apply
 
 # backup -> restore drill
 scripts/db-backup.sh
