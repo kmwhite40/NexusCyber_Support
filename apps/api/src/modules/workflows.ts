@@ -23,7 +23,13 @@ export const DEFAULT_TRANSITIONS: TransitionMap = {
   on_hold: ['in_progress'],
   resolved: ['closed', 'reopened'],
   reopened: ['in_progress'],
-  closed: [],
+  // Closed is NOT terminal. An external GRC system owns the finding, not Anchor: Anchor
+  // reports that work was done, and the finding closes only on re-collected evidence. When
+  // reassessment still fails the same ticket must reopen — repeatedly — or the integration has
+  // to mint a new ticket every cycle and the remediation history is lost on exactly the item
+  // that needed it. `transition` already clears resolved_at/closed_at and publishes
+  // ticket.reopened when leaving a terminal state; only this map stood in the way.
+  closed: ['reopened'],
 };
 
 /** Is a transition allowed by a map? Pure. */

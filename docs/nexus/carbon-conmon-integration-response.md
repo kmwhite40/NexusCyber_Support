@@ -19,7 +19,7 @@
 | Your phase | Verdict |
 |---|---|
 | **A** | **Already live**, except for three items in §2. Your spec's phase-A list — upsert on `externalRef`, unique index, `Idempotency-Key`, per-org auth with `403` on scope violation, non-uuid first ref segment, null `tenantId` — is shipped and in production today. |
-| **B** | Half-built. Webhooks exist with per-org HMAC secrets and delivery audit, but do not meet your §5 wire format. `PATCH` does not exist. **Reopen-from-closed does not work** (§4.5). |
+| **B** | **reopen-from-closed: shipped** (migration 0083 — the same ticket reopens repeatedly, identity and thread intact). Still outstanding: `PATCH /tickets/:id`; webhook timestamp + delivery-id rename + durable retry + `resolution` + `ticket.updated` | your M2.7 |
 | **C** | Not built. Both items are feasible; the delta feed is cheap. |
 | **D** | backlog fields (`parentExternalRef`, `priority`, `estimateDays`, `phase`, `workstream`, `acceptanceCriteria`) + `blocked` status + `blockedReason` | **shipped** — all applied; send them directly. `parentExternalRef` resolves epic→story in either arrival order, and a `blockedReason` creates the item blocked |
 
