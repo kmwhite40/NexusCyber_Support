@@ -161,6 +161,20 @@ Anchor POSTs JSON with headers `X-Anchor-Event`, `X-Anchor-Delivery`,
 `ticket.external_ref` is the caller's `<tenantId>:<source>:<itemId>`. Dedupe on `event_id`.
 Deliveries are recorded; inspect via `GET /api/v1/integration/webhooks/deliveries`.
 
+### Reopening a closed ticket
+
+`closed` is **not** terminal. `POST /api/v1/tickets/:id/transition` with `{"to":"reopened"}`
+moves a closed ticket back into active work, repeatedly, keeping the same `ticketId`,
+`ticketKey` and comment thread — Anchor never forks a reopened item. Leaving a terminal state
+clears `resolved_at` and `closed_at`, so a row never reads as closed and open at once.
+
+The path is `closed → reopened → in_progress`. `reopened` is a real status, not a synonym for
+`open`. Anchor emits `ticket.reopened` alongside `ticket.status_changed`.
+
+This applies to the system-provided workflows. An organization running its own configured
+workflow opts in by adding the transition through the workflows API — Anchor does not rewrite
+customer-authored workflows.
+
 Event types emitted: `ticket.created · status_changed · resolved · closed · reopened ·
 assigned · escalated · commented`. Status vocab: `new · triage · assigned · in_progress ·
 waiting_customer · waiting_vendor · on_hold · resolved · closed`.

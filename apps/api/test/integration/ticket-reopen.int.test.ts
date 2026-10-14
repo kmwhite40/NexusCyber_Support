@@ -66,14 +66,21 @@ describeDb('reopening a ticket clears the terminal stamps', () => {
     expect(row.resolved_at).toBeNull();
   });
 
-  it('refuses to reopen a closed ticket at all — closed is terminal here', async () => {
-    // Worth pinning rather than assuming: because this route does not exist, transition() never
-    // needs to clear closed_at. The mail-ingest path DOES reopen closed tickets (an out-of-band
-    // customer reply must not vanish), which is exactly why the stamp clearing lives there too.
+  it('reopens a CLOSED ticket and clears closed_at', async () => {
+    // This used to assert the opposite — that closed was terminal and the route did not exist.
+    // It does now: an external GRC system owns the finding, so Anchor closing a ticket is not
+    // the finding closing, and a failed reassessment must reopen THIS ticket rather than mint a
+    // new one (migration 0083 + the built-in map). The stamp clearing transition() already did
+    // for resolved now matters for closed too, which is what this pins.
     const id = await resolvedTicket();
     await transition(agent, id, 'closed');
     expect((await stamps(id)).closed_at).not.toBeNull();
-    await expect(transition(agent, id, 'reopened')).rejects.toThrow(/illegal transition/i);
+
+    const reopened = await transition(agent, id, 'reopened');
+    expect(reopened.status).toBe('reopened');
+    const row = await stamps(id);
+    expect(row.closed_at).toBeNull();
+    expect(row.resolved_at).toBeNull();
   });
 
   it('does not disturb the stamp on a transition between terminal states', async () => {
