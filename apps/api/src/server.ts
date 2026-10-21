@@ -9,6 +9,7 @@ import { migrate } from './db/migrate.js';
 import { pool } from './db/pool.js';
 import { registerRoutes } from './http/routes.js';
 import { registerExtraRoutes } from './http/routes-extra.js';
+import { corsOptions } from './http/cors.js';
 import { registerIdempotency, IdempotencyStore } from './http/idempotency.js';
 import { registerNotificationHandlers } from './modules/notifications.js';
 import { registerAutomationHandlers } from './modules/automation.js';
@@ -72,10 +73,7 @@ async function main() {
   // Multipart for attachment uploads (10 MiB per file; SSRF-safe streaming download).
   await app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024, files: 1 } });
 
-  await app.register(cors, {
-    origin: config.webOrigin,
-    credentials: true,
-  });
+  await app.register(cors, corsOptions(config.webOrigin));
 
   // Observability: count every HTTP response by status class, and expose Prometheus metrics.
   app.addHook('onResponse', async (req, reply) => {
