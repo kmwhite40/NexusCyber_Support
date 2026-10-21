@@ -180,6 +180,65 @@ describe('ChangesPage', () => {
     );
   });
 
+  // Staff have no organization of their own, so a change raised from the nexus plane with
+  // no organizationId was refused 400 "organizationId required" — the form never sent one.
+  it('makes a nexus raiser choose the customer organization and sends it on create', async () => {
+    const ORG2 = '99999999-9999-9999-9999-999999999999';
+    mockedApi.get.mockImplementation((url: string) => {
+      if (url.startsWith('/organizations')) {
+        return Promise.resolve({ data: [{ id: ORG, name: 'Acme Federal' }, { id: ORG2, name: 'Globex' }] });
+      }
+      if (url === `/changes/templates?organizationId=${ORG}`) {
+        return Promise.resolve({ data: [{ id: 't-acme', organization_id: ORG, name: 'Acme connector upgrade', change_type: 'normal', risk: 'medium' }] });
+      }
+      if (url === '/changes/c-new') return Promise.resolve(changeRecordFixture({ title: 'Patch the gateway' }));
+      return Promise.resolve({ data: [] });
+    });
+    mockedApi.post.mockResolvedValue({ id: 'c-new' });
+    asUser({ plane: 'nexus', organization_id: null }, ['change.create']);
+    render(<ChangesPage />);
+    await userEvent.click(screen.getByRole('button', { name: /new change/i }));
+
+    const org = await screen.findByLabelText('Customer organization');
+    await screen.findByRole('option', { name: 'Acme Federal' });
+    await userEvent.type(screen.getByPlaceholderText(/change title/i), 'Patch the gateway');
+    // No customer chosen yet: nothing to raise it against.
+    expect(screen.getByRole('button', { name: /^create$/i })).toBeDisabled();
+
+    await userEvent.selectOptions(org, ORG);
+    // Templates are per organization, so the list is re-read for the chosen customer…
+    await screen.findByRole('option', { name: /acme connector upgrade/i });
+    await userEvent.selectOptions(screen.getByLabelText('Change template'), 't-acme');
+    // …and a template picked for one customer never rides along onto another's change.
+    await userEvent.selectOptions(org, ORG2);
+    await waitFor(() => expect(screen.getByLabelText('Change template')).toHaveValue(''));
+    expect(mockedApi.get).toHaveBeenCalledWith(`/changes/templates?organizationId=${ORG2}`);
+
+    await userEvent.selectOptions(org, ORG);
+    await userEvent.click(screen.getByRole('button', { name: /^create$/i }));
+    await waitFor(() =>
+      expect(mockedApi.post).toHaveBeenCalledWith('/changes', expect.objectContaining({ organizationId: ORG, title: 'Patch the gateway' })),
+    );
+    expect(mockedApi.post.mock.calls[0][1]).not.toHaveProperty('templateId', 't-acme');
+  });
+
+  it('does not offer the organization picker to a customer raiser', async () => {
+    asUser({}, ['change.create']);
+    render(<ChangesPage />);
+    await userEvent.click(screen.getByRole('button', { name: /new change/i }));
+    expect(screen.queryByLabelText('Customer organization')).not.toBeInTheDocument();
+  });
+
+  // A network failure is not an ApiError; a fixed "Failed to save the board" hid the cause.
+  it('names the underlying error when a board save fails outside the API', async () => {
+    asUser({}, ['cab.manage']);
+    mockedApi.put.mockRejectedValue(new TypeError('Failed to fetch'));
+    render(<ChangesPage />);
+    await userEvent.click(screen.getByRole('tab', { name: /cab settings/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /save board/i }));
+    expect(await screen.findByText(/failed to save the board.*failed to fetch/i)).toBeInTheDocument();
+  });
+
   it('keeps the New change action out of the settings tab', async () => {
     asUser({}, ['change.create', 'cab.manage']);
     render(<ChangesPage />);

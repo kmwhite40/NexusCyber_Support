@@ -40,4 +40,10 @@ describeDb('problem management (integration)', () => {
     const res = await transitionProblem(analyst, prob.id, 'resolved');
     expect(res.status).toBe('resolved');
   });
+
+  // Staff have no organization of their own: a problem they create must name its customer.
+  // The web form used to omit it, and this 400 was swallowed so Create silently did nothing.
+  it('refuses an agent-created problem with no organizationId', async () => {
+    await expect(createProblem(analyst, { title: 'Recurring VPN disconnects' })).rejects.toMatchObject({ status: 400 });
+  });
 });
