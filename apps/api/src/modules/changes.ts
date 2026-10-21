@@ -10,6 +10,7 @@ import { audit } from './audit.js';
 import { publish } from '../events/bus.js';
 import { Errors } from '../errors.js';
 import { resolveBoard } from './cab.js';
+import { resolveUserNames } from './user-names.js';
 import type { Principal } from '../types.js';
 
 export type ChangeType = 'standard' | 'normal' | 'emergency';
@@ -702,18 +703,22 @@ export async function recordPir(actor: Principal, changeId: string, outcome: Pir
 // ---- Deliberation thread ----
 
 export async function listComments(actor: Principal, changeId: string) {
-  return withOrgContext(orgContextFor(actor), async (sql) => {
+  const rows = await withOrgContext(orgContextFor(actor), async (sql) => {
     const change = (await sql.query('SELECT id FROM changes WHERE id=$1', [changeId])).rows[0];
     if (!change) throw Errors.notFound('change not found');
     return (
       await sql.query(
-        `SELECT c.id, c.change_id, c.author_id, u.display_name AS author_name, c.body, c.created_at
-           FROM change_comments c LEFT JOIN users u ON u.id = c.author_id
+        `SELECT c.id, c.change_id, c.author_id, c.body, c.created_at
+           FROM change_comments c
           WHERE c.change_id=$1 ORDER BY c.created_at`,
         [changeId],
       )
     ).rows;
   });
+  // Not a JOIN on users: in org context RLS hides the org-NULL Nexus rows, which named every
+  // staff comment "Unknown author". Resolved after the transaction, display name only.
+  const names = await resolveUserNames(rows.map((r: { author_id: string | null }) => r.author_id));
+  return rows.map((r: { author_id: string | null }) => ({ ...r, author_name: r.author_id ? names.get(r.author_id) ?? null : null }));
 }
 
 export async function addComment(actor: Principal, changeId: string, body: string) {

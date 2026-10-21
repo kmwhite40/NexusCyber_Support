@@ -10,6 +10,8 @@ import { publish } from '../events/bus.js';
 import { startTicketSla, pauseTicketSlas, resumeTicketSlas, markResponseMet } from './sla.js';
 import { linksForTicket } from './links.js';
 import { resolveTransitions, isTransitionAllowed } from './workflows.js';
+import { redactEventsForCustomer, ticketUserIds, withTicketNames } from './ticket-people.js';
+import { resolveUserNames } from './user-names.js';
 import { Errors } from '../errors.js';
 import type { Principal } from '../types.js';
 
@@ -460,18 +462,23 @@ export async function getTicket(actor: Principal, id: string) {
     const comments = (
       await sql.query('SELECT * FROM ticket_comments WHERE ticket_id=$1 ORDER BY created_at', [id])
     ).rows.filter((c) => c.visibility === 'customer' || actor.plane === 'nexus');
-    const events = (
+    const allEvents = (
       await sql.query('SELECT * FROM ticket_events WHERE ticket_id=$1 ORDER BY created_at', [id])
     ).rows;
+    // The event log carries desk internals (an escalation's reason, internal-note activity), so
+    // customers get the redacted view — before any names are attached to it.
+    const events = actor.plane === 'customer' ? redactEventsForCustomer(allEvents) : allEvents;
     const slas = (await sql.query('SELECT * FROM sla_instances WHERE ticket_id=$1', [id])).rows;
     const tasks = (await sql.query('SELECT * FROM service_request_tasks WHERE ticket_id=$1 ORDER BY position', [id])).rows;
     const approvals = (await sql.query('SELECT * FROM approvals WHERE subject_id=$1', [id])).rows;
     const links = await linksForTicket(sql, id);
     return { ...ticket, comments, events, slas, tasks, approvals, links };
   });
-  // Outside the org-context transaction so the name lookup never holds a second pool connection
-  // while the first is still checked out.
-  return actor.plane === 'nexus' ? { ...t, ...(await ticketPeople(t)) } : t;
+  // Outside the org-context transaction so the name lookups never hold a second pool connection
+  // while the first is still checked out. Display names go to both planes (a customer may see who
+  // wrote a reply they can already read); requester/affected-user emails stay staff-only.
+  const named = withTicketNames(t, await resolveUserNames(ticketUserIds(t)));
+  return actor.plane === 'nexus' ? { ...named, ...(await ticketPeople(t)) } : named;
 }
 
 /** Names for the requester / affected-user columns, for staff views. Resolved in system context

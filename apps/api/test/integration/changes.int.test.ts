@@ -299,4 +299,17 @@ describeDb('change management + CAB voting (integration)', () => {
     const thread = await listComments(analyst, c.id);
     expect(thread.map((t: any) => t.body)).toEqual(['Needs a rollback rehearsal.']);
   });
+
+  it("names a Nexus agent's comment, which an org-context join on users could not", async () => {
+    // RLS on users hides org-NULL (Nexus) rows in org context, so the old LEFT JOIN returned a
+    // NULL author_name for every staff comment and the thread read "Unknown author".
+    const c = await createChange(agent, { title: 'Named deliberation', changeType: 'normal', organizationId: acmeId });
+    await addComment(manager, c.id, 'Who said this?');
+    const managerName = await withSystemContext(async (sql) =>
+      (await sql.query('SELECT display_name FROM users WHERE id=$1', [manager.id])).rows[0].display_name);
+    const thread = await listComments(analyst, c.id);
+    expect(managerName).toBeTruthy();
+    expect(thread[0]).toMatchObject({ author_id: manager.id, author_name: managerName });
+    expect(thread[0]).not.toHaveProperty('author_email');
+  });
 });
