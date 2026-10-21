@@ -26,6 +26,7 @@ import { startRetentionPurge } from './jobs/retention-purge.js';
 import { startCloudPcPoller } from './jobs/cloudpc-poller.js';
 import { startOffboardingSweeper } from './jobs/offboarding-sweeper.js';
 import { startRetentionSweeper } from './jobs/retention-sweeper.js';
+import { startAutoCloseResolvedSweeper } from './jobs/auto-close-resolved.js';
 import { buildInfo } from './build-info.js';
 
 async function main() {
@@ -135,6 +136,15 @@ async function main() {
   // Inbound M365 mail -> ticket polling (no-op unless configured + enabled).
   startMailIngest();
   startEntraSync();
+
+  // Auto-close: Resolved tickets close after AUTO_CLOSE_RESOLVED_DAYS through the normal
+  // transition path (workflow-checked, audited). 0 disables.
+  if (config.autoCloseResolvedDays > 0) {
+    startAutoCloseResolvedSweeper(config.autoCloseResolvedDays);
+    logger.info(`Auto-close of resolved tickets enabled (${config.autoCloseResolvedDays}d)`);
+  } else {
+    logger.info('Auto-close of resolved tickets disabled (AUTO_CLOSE_RESOLVED_DAYS=0)');
+  }
 
   // Data-retention purge: delete resolved incidents/problems/changes after the window.
   if (config.retention.enabled) {

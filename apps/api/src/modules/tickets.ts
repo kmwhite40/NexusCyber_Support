@@ -608,64 +608,78 @@ export async function assignTicket(
 /** States that carry a completion stamp. Leaving one is a reopen; moving between them is not. */
 const TERMINAL_STATUSES = new Set(['resolved', 'closed']);
 
-export async function transition(actor: Principal, id: string, to: string, opts: { resolutionCode?: string; closureNotes?: string } = {}) {
+export interface TransitionOpts { resolutionCode?: string; closureNotes?: string }
+
+export async function transition(actor: Principal, id: string, to: string, opts: TransitionOpts = {}) {
   authorize(actor, 'ticket.update');
-  return withOrgContext(orgContextFor(actor), async (sql) => {
-    const t = (await sql.query('SELECT organization_id, status, type FROM tickets WHERE id=$1', [id])).rows[0];
-    if (!t) throw Errors.notFound('ticket not found');
-    // Allowed transitions come from the configured workflow for this org+type, falling back
-    // to the built-in default map when none is configured.
-    const map = await resolveTransitions(sql, t.organization_id, t.type);
-    if (!isTransitionAllowed(map, t.status, to)) throw Errors.conflict(`illegal transition ${t.status} -> ${to}`);
+  return withOrgContext(orgContextFor(actor), (sql) => applyTransition(sql, actor, id, to, opts));
+}
 
-    const sets: string[] = ['status=$2'];
-    const params: unknown[] = [id, to];
-    if (to === 'resolved') {
-      sets.push('resolved_at=now()');
-      if (opts.resolutionCode) { params.push(opts.resolutionCode); sets.push(`resolution_code=$${params.length}`); }
-      if (opts.closureNotes) { params.push(opts.closureNotes); sets.push(`closure_notes=$${params.length}`); }
-      // stop resolution SLA
-      await sql.query(`UPDATE sla_instances SET state='met' WHERE ticket_id=$1 AND metric='resolution' AND state NOT IN ('met','breached')`, [id]);
-    }
-    if (to === 'closed') sets.push('closed_at=now()');
+/**
+ * The body of a status transition, on a connection the caller supplies. transition() is the
+ * only entry point for people; this is exported so a background job (auto-close) makes the SAME
+ * transition — workflow check, stamps, ticket_events, audit, events — instead of a second copy
+ * of it. A null actor is the system: no authorization (the caller is trusted server code) and
+ * a NULL actor_id in ticket_events and the audit chain, which is the honest attribution.
+ *
+ * Must run inside a transaction: withOrgContext's, or an explicit BEGIN/COMMIT around a
+ * withSystemContext callback (which bypasses RLS — every query here is scoped by ticket id).
+ */
+export async function applyTransition(sql: Sql, actor: Principal | null, id: string, to: string, opts: TransitionOpts = {}) {
+  const t = (await sql.query('SELECT organization_id, status, type FROM tickets WHERE id=$1', [id])).rows[0];
+  if (!t) throw Errors.notFound('ticket not found');
+  // Allowed transitions come from the configured workflow for this org+type, falling back
+  // to the built-in default map when none is configured.
+  const map = await resolveTransitions(sql, t.organization_id, t.type);
+  if (!isTransitionAllowed(map, t.status, to)) throw Errors.conflict(`illegal transition ${t.status} -> ${to}`);
 
-    // Leaving a terminal state must clear the terminal stamps. Without this a reopened ticket
-    // kept the resolved_at from its earlier resolve, so the row read as resolved AND open at the
-    // same time — an active status carrying a resolution timestamp. That is what "I resolved it
-    // and it still sits there as if it's open" actually looked like in the data.
-    //
-    // resolved -> closed is NOT a reopen and is deliberately excluded: that resolution really
-    // happened, and its timestamp is part of the record.
-    const LEAVING_TERMINAL = TERMINAL_STATUSES.has(t.status) && !TERMINAL_STATUSES.has(to);
-    if (LEAVING_TERMINAL) sets.push('resolved_at=NULL', 'closed_at=NULL');
-    // Leaving the intake states means work has started — that's the first response.
-    if ((t.status === 'new' || t.status === 'triage') && to !== 'new' && to !== 'triage') {
-      await markResponseMet(sql, id);
-    }
+  const sets: string[] = ['status=$2'];
+  const params: unknown[] = [id, to];
+  if (to === 'resolved') {
+    sets.push('resolved_at=now()');
+    if (opts.resolutionCode) { params.push(opts.resolutionCode); sets.push(`resolution_code=$${params.length}`); }
+    if (opts.closureNotes) { params.push(opts.closureNotes); sets.push(`closure_notes=$${params.length}`); }
+    // stop resolution SLA
+    await sql.query(`UPDATE sla_instances SET state='met' WHERE ticket_id=$1 AND metric='resolution' AND state NOT IN ('met','breached')`, [id]);
+  }
+  if (to === 'closed') sets.push('closed_at=now()');
 
-    const { rows } = await sql.query(`UPDATE tickets SET ${sets.join(', ')} WHERE id=$1 RETURNING *`, params);
+  // Leaving a terminal state must clear the terminal stamps. Without this a reopened ticket
+  // kept the resolved_at from its earlier resolve, so the row read as resolved AND open at the
+  // same time — an active status carrying a resolution timestamp. That is what "I resolved it
+  // and it still sits there as if it's open" actually looked like in the data.
+  //
+  // resolved -> closed is NOT a reopen and is deliberately excluded: that resolution really
+  // happened, and its timestamp is part of the record.
+  const LEAVING_TERMINAL = TERMINAL_STATUSES.has(t.status) && !TERMINAL_STATUSES.has(to);
+  if (LEAVING_TERMINAL) sets.push('resolved_at=NULL', 'closed_at=NULL');
+  // Leaving the intake states means work has started — that's the first response.
+  if ((t.status === 'new' || t.status === 'triage') && to !== 'new' && to !== 'triage') {
+    await markResponseMet(sql, id);
+  }
 
-    // SLA clock follows on-hold states: pause when the ticket goes on hold (waiting on
-    // the customer/vendor), resume when work restarts. Resolution stop is handled above.
-    const ON_HOLD = new Set(['waiting_customer', 'waiting_vendor', 'on_hold']);
-    if (ON_HOLD.has(to) && !ON_HOLD.has(t.status)) await pauseTicketSlas(sql, id);
-    if (to === 'in_progress' && ON_HOLD.has(t.status)) await resumeTicketSlas(sql, id);
+  const { rows } = await sql.query(`UPDATE tickets SET ${sets.join(', ')} WHERE id=$1 RETURNING *`, params);
 
-    await sql.query(
-      `INSERT INTO ticket_events (organization_id, ticket_id, actor_id, event_type, detail)
-       VALUES ($1,$2,$3,'status_changed',$4)`,
-      [t.organization_id, id, actor.id, { from: t.status, to }],
-    );
-    await audit(actor, { action: 'ticket.update', organizationId: t.organization_id, resourceType: 'ticket', resourceId: id, detail: { to } });
-    publish('ticket.status_changed', t.organization_id, { ticket_id: id, org_id: t.organization_id, from: t.status, to });
-    if (to === 'resolved') publish('ticket.resolved', t.organization_id, { ticket_id: id, org_id: t.organization_id, resolution_code: opts.resolutionCode });
-    if (to === 'closed') publish('ticket.closed', t.organization_id, { ticket_id: id, org_id: t.organization_id });
-    // Reopen = leaving a terminal state (resolved/closed) back into active work.
-    if (LEAVING_TERMINAL) {
-      publish('ticket.reopened', t.organization_id, { ticket_id: id, org_id: t.organization_id, from: t.status, to });
-    }
-    return rows[0];
-  });
+  // SLA clock follows on-hold states: pause when the ticket goes on hold (waiting on
+  // the customer/vendor), resume when work restarts. Resolution stop is handled above.
+  const ON_HOLD = new Set(['waiting_customer', 'waiting_vendor', 'on_hold']);
+  if (ON_HOLD.has(to) && !ON_HOLD.has(t.status)) await pauseTicketSlas(sql, id);
+  if (to === 'in_progress' && ON_HOLD.has(t.status)) await resumeTicketSlas(sql, id);
+
+  await sql.query(
+    `INSERT INTO ticket_events (organization_id, ticket_id, actor_id, event_type, detail)
+     VALUES ($1,$2,$3,'status_changed',$4)`,
+    [t.organization_id, id, actor?.id ?? null, { from: t.status, to }],
+  );
+  await audit(actor, { action: 'ticket.update', organizationId: t.organization_id, resourceType: 'ticket', resourceId: id, detail: { to } });
+  publish('ticket.status_changed', t.organization_id, { ticket_id: id, org_id: t.organization_id, from: t.status, to });
+  if (to === 'resolved') publish('ticket.resolved', t.organization_id, { ticket_id: id, org_id: t.organization_id, resolution_code: opts.resolutionCode });
+  if (to === 'closed') publish('ticket.closed', t.organization_id, { ticket_id: id, org_id: t.organization_id });
+  // Reopen = leaving a terminal state (resolved/closed) back into active work.
+  if (LEAVING_TERMINAL) {
+    publish('ticket.reopened', t.organization_id, { ticket_id: id, org_id: t.organization_id, from: t.status, to });
+  }
+  return rows[0];
 }
 
 /** Manually pause a ticket's running SLA clocks (e.g. blocked on a third party). */

@@ -156,6 +156,9 @@ export async function registerRoutes(app: FastifyInstance) {
     oidcLabel: 'Sign in as Admin',
     customerOidcEnabled: customerOidcOn(),
     customerOidcLabel: 'Sign in with your organization',
+    // Self-service password reset for a locked-out user — public by design, since they cannot
+    // sign in to read it anywhere else. Validated https in config (parseSsprUrl).
+    ssprUrl: config.ssprUrl,
   }));
 
   // Begin Authorization Code + PKCE. ?mode=customer selects the multitenant customer app;

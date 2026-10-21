@@ -7,6 +7,7 @@ import { X } from 'lucide-react';
 import { BrandMark } from './ui/brand';
 import { Button } from './ui/primitives';
 import { useAuth } from './auth-context';
+import { auth } from '@/lib/api';
 
 const SLA_ROWS: Array<{ p: string; label: string; tone: string; meaning: string; ack: string; resolve: string }> = [
   { p: 'P1', label: 'Critical', tone: 'bg-danger', meaning: "You're blocked tenant-wide, locked out of all admin, or there's a security incident", ack: '1 hour', resolve: '4 hours' },
@@ -32,6 +33,16 @@ export function WelcomeDialog() {
       setOpen(true);
     }
   }, [me]);
+
+  // Same self-service reset link as the login page, from the same public endpoint. Fetched only
+  // once the dialog opens; a failure just leaves the line out.
+  const [ssprUrl, setSsprUrl] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    if (!open) return;
+    let live = true;
+    auth.config().then((c) => { if (live) setSsprUrl(c.ssprUrl || null); }).catch(() => {});
+    return () => { live = false; };
+  }, [open]);
 
   const close = React.useCallback(() => {
     try { sessionStorage.setItem(STORAGE_KEY, me?.id ?? '1'); } catch { /* ignore */ }
@@ -125,6 +136,21 @@ export function WelcomeDialog() {
             After hours, weekends, or federal holidays: call the after-hours on-call{' '}
             <strong>NexusCyber Hotline — (800) 265-6446</strong> — for any P1 critical issue.
           </div>
+
+          {ssprUrl && (
+            <p className="text-sm text-fg">
+              Locked out?{' '}
+              <a
+                href={ssprUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium underline underline-offset-4 hover:text-brand"
+              >
+                Reset your password
+              </a>{' '}
+              yourself with Microsoft self-service password reset — no ticket needed.
+            </p>
+          )}
         </div>
 
         {/* Footer */}

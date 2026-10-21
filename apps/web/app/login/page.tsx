@@ -35,19 +35,22 @@ export default function LoginPage() {
     customerEnabled: false,
     customerLabel: '',
   });
+  // Self-service password reset (cloud-specific, from the API). Unset = no link.
+  const [ssprUrl, setSsprUrl] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     auth.devUsers().then((r) => setDemos(r.users)).catch(() => {});
     auth
       .config()
-      .then((c) =>
+      .then((c) => {
         setSso({
           enabled: c.oidcEnabled,
           label: c.oidcLabel,
           customerEnabled: c.customerOidcEnabled,
           customerLabel: c.customerOidcLabel,
-        }),
-      )
+        });
+        setSsprUrl(c.ssprUrl || null);
+      })
       .catch(() => {});
   }, []);
 
@@ -129,6 +132,20 @@ export default function LoginPage() {
         </>
       )}
 
+      {/* Outside the SSO block on purpose: a password user who is locked out needs it too. */}
+      {ssprUrl && (
+        <p className="text-center text-sm text-muted">
+          Locked out?{' '}
+          <a
+            href={ssprUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-fg underline underline-offset-4 hover:text-brand"
+          >
+            Reset your password
+          </a>
+        </p>
+      )}
 
       {demos.length > 0 && (
         <>

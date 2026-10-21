@@ -510,6 +510,8 @@ export const auth = {
       oidcLabel: string;
       customerOidcEnabled: boolean;
       customerOidcLabel: string;
+      /** Microsoft self-service password reset for the deployment's cloud; absent = hide the link. */
+      ssprUrl?: string;
     }>('/auth/config'),
 };
 
