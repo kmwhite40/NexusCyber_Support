@@ -2,7 +2,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
-import { Card, CardBody, CardTitle, Badge } from '@/components/ui/primitives';
+import { Card, CardBody, CardTitle, Badge, Checkbox } from '@/components/ui/primitives';
 import { DataTable, EmptyState, Skeleton } from '@/components/ui/data';
 import { PriorityBadge, StatusBadge } from '@/components/ui/badges';
 
@@ -24,6 +24,8 @@ export default function QueuesPage() {
   const [queues, setQueues] = React.useState<Queue[] | null>(null);
   const [active, setActive] = React.useState<string | null>(null);
   const [tickets, setTickets] = React.useState<QTicket[] | null>(null);
+  // Closed tickets live in Archived; the API leaves them out of a queue unless asked.
+  const [includeClosed, setIncludeClosed] = React.useState(false);
 
   React.useEffect(() => {
     api.get<{ data: Queue[] }>('/queues').then((r) => { setQueues(r.data); if (r.data[0]) setActive(r.data[0].id); }).catch(() => setQueues([]));
@@ -32,8 +34,9 @@ export default function QueuesPage() {
   React.useEffect(() => {
     if (!active) return;
     setTickets(null);
-    api.get<{ queue: Queue; tickets: QTicket[] }>(`/queues/${active}/tickets`).then((r) => setTickets(r.tickets)).catch(() => setTickets([]));
-  }, [active]);
+    const qs = includeClosed ? '?include_closed=true' : '';
+    api.get<{ queue: Queue; tickets: QTicket[] }>(`/queues/${active}/tickets${qs}`).then((r) => setTickets(r.tickets)).catch(() => setTickets([]));
+  }, [active, includeClosed]);
 
   return (
     <div className="space-y-5">
@@ -56,7 +59,13 @@ export default function QueuesPage() {
         </Card>
 
         <Card>
-          <div className="border-b border-border p-4"><CardTitle>{queues?.find((q) => q.id === active)?.name ?? 'Tickets'}</CardTitle></div>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-4">
+            <CardTitle>{queues?.find((q) => q.id === active)?.name ?? 'Tickets'}</CardTitle>
+            <label className="flex items-center gap-2 text-sm text-muted">
+              <Checkbox checked={includeClosed} onChange={(e) => setIncludeClosed(e.target.checked)} />
+              Include closed
+            </label>
+          </div>
           <CardBody className="px-0 pt-0">
             {!tickets ? (
               <div className="space-y-2 p-5">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-12" />)}</div>

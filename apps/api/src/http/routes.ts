@@ -491,9 +491,12 @@ export async function registerRoutes(app: FastifyInstance) {
         priority: z.string().optional(),
         limit: z.coerce.number().optional(),
         type: z.string().optional(),
+        // Opt-in: Tickets / My requests send exclude_status=closed; callers that omit it are unchanged.
+        exclude_status: z.string().optional(),
       })
       .parse(req.query);
-    const data = await tickets.listTickets(p, q);
+    const { exclude_status, ...filter } = q;
+    const data = await tickets.listTickets(p, { ...filter, excludeStatus: exclude_status });
     return { data, page: { has_more: false, next_cursor: null } };
   });
 
@@ -1111,7 +1114,9 @@ export async function registerRoutes(app: FastifyInstance) {
   app.get('/api/v1/queues/:id/tickets', async (req) => {
     const p = await requirePrincipal(req);
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
-    return queues.queueTickets(p, id);
+    const q = z.object({ include_closed: z.enum(['0', '1', 'true', 'false']).optional() }).parse(req.query);
+    const includeClosed = q.include_closed === '1' || q.include_closed === 'true';
+    return queues.queueTickets(p, id, undefined, { includeClosed });
   });
 
   // ---------------- CSAT satisfaction surveys ----------------

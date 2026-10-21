@@ -30,4 +30,16 @@ describeDb('agent queues (integration)', () => {
     // Every returned ticket matches the queue's status filter.
     for (const t of res.tickets) expect(t.status).toBe('in_progress');
   });
+
+  it('hides closed tickets from a queue with no status filter unless asked', async () => {
+    const qs = await listQueues(agent);
+    const p1 = qs.find((q: any) => q.name === 'P1 incidents');
+    expect(p1).toBeTruthy();
+
+    const hidden = await queueTickets(agent, p1.id);
+    for (const t of hidden.tickets) expect(t.status).not.toBe('closed');
+
+    const all = await queueTickets(agent, p1.id, undefined, { includeClosed: true });
+    expect(all.tickets.length).toBeGreaterThanOrEqual(hidden.tickets.length);
+  });
 });

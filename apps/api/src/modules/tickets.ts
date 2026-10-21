@@ -385,35 +385,57 @@ export interface ListFilter {
   priority?: string;
   limit?: number;
   type?: string;
+  /** Comma-separated statuses to leave out (Tickets / My requests hide `closed`). Ignored
+   *  when `status` is set, so an explicit status=closed (Archived) always returns closed. */
+  excludeStatus?: string;
+}
+
+/** Build the parameterized WHERE clauses for a ticket list. Pure. `ownOnly` restricts a
+ *  read.own customer to tickets they requested; `actorId` also resolves assignee=me. */
+export function buildTicketListWhere(
+  filter: ListFilter,
+  ctx: { actorId: string; ownOnly: boolean },
+): { clauses: string[]; params: unknown[] } {
+  const where: string[] = [];
+  const params: unknown[] = [];
+
+  if (ctx.ownOnly) {
+    params.push(ctx.actorId);
+    where.push(`requester_id = $${params.length}`);
+  }
+  if (filter.status) {
+    params.push(filter.status);
+    where.push(`status = $${params.length}`);
+  } else if (filter.excludeStatus) {
+    const excluded = filter.excludeStatus.split(',').map((s) => s.trim()).filter(Boolean);
+    if (excluded.length) {
+      params.push(excluded);
+      where.push(`status <> ALL($${params.length})`);
+    }
+  }
+  if (filter.type) {
+    params.push(filter.type);
+    where.push(`type = $${params.length}`);
+  }
+  if (filter.priority) {
+    params.push(filter.priority);
+    where.push(`priority = $${params.length}`);
+  }
+  if (filter.assignee) {
+    params.push(filter.assignee === 'me' ? ctx.actorId : filter.assignee);
+    where.push(`assigned_agent_id = $${params.length}`);
+  }
+  return { clauses: where, params };
 }
 
 export async function listTickets(actor: Principal, filter: ListFilter) {
   return withOrgContext(orgContextFor(actor), async (sql) => {
-    const where: string[] = [];
-    const params: unknown[] = [];
-
     // Customer end users with only read.own see only their own tickets.
     const orgWide = can(actor, 'ticket.read.organization') || can(actor, 'ticket.read.all_assigned_customers');
-    if (actor.plane === 'customer' && !orgWide) {
-      params.push(actor.id);
-      where.push(`requester_id = $${params.length}`);
-    }
-    if (filter.status) {
-      params.push(filter.status);
-      where.push(`status = $${params.length}`);
-    }
-    if (filter.type) {
-      params.push(filter.type);
-      where.push(`type = $${params.length}`);
-    }
-    if (filter.priority) {
-      params.push(filter.priority);
-      where.push(`priority = $${params.length}`);
-    }
-    if (filter.assignee) {
-      params.push(filter.assignee === 'me' ? actor.id : filter.assignee);
-      where.push(`assigned_agent_id = $${params.length}`);
-    }
+    const { clauses: where, params } = buildTicketListWhere(filter, {
+      actorId: actor.id,
+      ownOnly: actor.plane === 'customer' && !orgWide,
+    });
     const limit = Math.min(filter.limit ?? 50, 200);
     const sqlText = `SELECT * FROM tickets ${
       where.length ? 'WHERE ' + where.join(' AND ') : ''
