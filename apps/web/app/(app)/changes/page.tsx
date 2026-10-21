@@ -2,7 +2,7 @@
 import * as React from 'react';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
-import { Card, CardBody, Button, Input, Select, Textarea, SegmentedControl } from '@/components/ui/primitives';
+import { Card, CardBody, Button, Input, Select, Textarea, SegmentedControl, Field } from '@/components/ui/primitives';
 import { changesApi, type Change, type ChangeRecord, type ChangeTemplate } from '@/lib/changes';
 import { ChangeCalendar } from './_components/change-calendar';
 import { ChangeList } from './_components/change-list';
@@ -32,9 +32,12 @@ export default function ChangesPage() {
   // picker; a nexus admin chooses which customer's board they are editing. Neither ever
   // omits the org — see the ORG SCOPE note in _components/cab-board-settings.tsx.
   const isAgent = me?.plane === 'nexus';
-  const orgOptions = useOrgOptions(canManageCab && isAgent);
+  const orgOptions = useOrgOptions((canManageCab || perms.create) && isAgent);
   const [cabOrgId, setCabOrgId] = React.useState<string | null>(null);
   const settingsOrgId = isAgent ? cabOrgId : me?.organization_id ?? null;
+  // The same holds for raising a change: staff have no org of their own, so the API refuses
+  // an agent-raised change that does not name its customer ("organizationId required").
+  const [createOrgId, setCreateOrgId] = React.useState('');
 
   // Losing cab.manage (a role change mid-session) must not strand the user on a tab they
   // may no longer see.
@@ -51,10 +54,15 @@ export default function ChangesPage() {
   // all — so it is not a type a raiser may simply pick off a dropdown. It comes from a
   // pre-approved template, authored by a CAB administrator; without one, the option does
   // not exist here.
+  // Templates are per organization too, so an agent's list follows the customer they chose.
   React.useEffect(() => {
     if (!perms.create) return;
-    changesApi.templates().then(setTemplates).catch(() => setTemplates([]));
-  }, [perms.create]);
+    if (isAgent && !createOrgId) {
+      setTemplates([]);
+      return;
+    }
+    changesApi.templates(isAgent ? createOrgId : undefined).then(setTemplates).catch(() => setTemplates([]));
+  }, [perms.create, isAgent, createOrgId]);
 
   const template = templates.find((t) => t.id === form.templateId) ?? null;
   const preapproved = template?.change_type === 'standard';
@@ -75,6 +83,7 @@ export default function ChangesPage() {
       const c = await changesApi.create({
         ...form,
         templateId: form.templateId || undefined,
+        organizationId: isAgent ? createOrgId : undefined,
         // The template is what carries the pre-approval; the form never asserts it alone.
         changeType: preapproved ? 'standard' : form.changeType,
       });
@@ -114,6 +123,22 @@ export default function ChangesPage() {
       {creating && view !== 'settings' && (
         <Card>
           <CardBody className="space-y-3">
+            {isAgent && (
+              <Field label="Customer organization" hint="Agents raise changes on behalf of a customer.">
+                <Select
+                  aria-label="Customer organization"
+                  value={createOrgId}
+                  onChange={(e) => {
+                    setCreateOrgId(e.target.value);
+                    // A template belongs to one customer; never carry it onto another's change.
+                    setForm((f) => ({ ...f, templateId: '' }));
+                  }}
+                >
+                  <option value="">Select an organization…</option>
+                  {orgOptions.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                </Select>
+              </Field>
+            )}
             <Input placeholder="Change title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
             <Textarea
               placeholder="Description, implementation & backout plan"
@@ -152,7 +177,7 @@ export default function ChangesPage() {
                 <option value="medium">Medium risk</option>
                 <option value="high">High risk</option>
               </Select>
-              <Button onClick={create} disabled={!form.title.trim()} className="ml-auto">Create</Button>
+              <Button onClick={create} disabled={!form.title.trim() || (isAgent && !createOrgId)} className="ml-auto">Create</Button>
             </div>
             {preapproved && (
               <p className="text-[11px] text-muted">

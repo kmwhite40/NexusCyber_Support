@@ -9,6 +9,7 @@ import { migrate } from './db/migrate.js';
 import { pool } from './db/pool.js';
 import { registerRoutes } from './http/routes.js';
 import { registerExtraRoutes } from './http/routes-extra.js';
+import { corsOptions } from './http/cors.js';
 import { registerIdempotency, IdempotencyStore } from './http/idempotency.js';
 import { registerNotificationHandlers } from './modules/notifications.js';
 import { registerAutomationHandlers } from './modules/automation.js';
@@ -25,6 +26,7 @@ import { startRetentionPurge } from './jobs/retention-purge.js';
 import { startCloudPcPoller } from './jobs/cloudpc-poller.js';
 import { startOffboardingSweeper } from './jobs/offboarding-sweeper.js';
 import { startRetentionSweeper } from './jobs/retention-sweeper.js';
+import { startAutoCloseResolvedSweeper } from './jobs/auto-close-resolved.js';
 import { buildInfo } from './build-info.js';
 
 async function main() {
@@ -72,10 +74,7 @@ async function main() {
   // Multipart for attachment uploads (10 MiB per file; SSRF-safe streaming download).
   await app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024, files: 1 } });
 
-  await app.register(cors, {
-    origin: config.webOrigin,
-    credentials: true,
-  });
+  await app.register(cors, corsOptions(config.webOrigin));
 
   // Observability: count every HTTP response by status class, and expose Prometheus metrics.
   app.addHook('onResponse', async (req, reply) => {
@@ -137,6 +136,15 @@ async function main() {
   // Inbound M365 mail -> ticket polling (no-op unless configured + enabled).
   startMailIngest();
   startEntraSync();
+
+  // Auto-close: Resolved tickets close after AUTO_CLOSE_RESOLVED_DAYS through the normal
+  // transition path (workflow-checked, audited). 0 disables.
+  if (config.autoCloseResolvedDays > 0) {
+    startAutoCloseResolvedSweeper(config.autoCloseResolvedDays);
+    logger.info(`Auto-close of resolved tickets enabled (${config.autoCloseResolvedDays}d)`);
+  } else {
+    logger.info('Auto-close of resolved tickets disabled (AUTO_CLOSE_RESOLVED_DAYS=0)');
+  }
 
   // Data-retention purge: delete resolved incidents/problems/changes after the window.
   if (config.retention.enabled) {

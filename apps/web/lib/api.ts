@@ -98,8 +98,10 @@ export interface Ticket {
   created_at: string;
   category?: string;
   assignment_group_id?: string | null;
-  comments?: Array<{ id: string; body: string; visibility: string; created_at: string; author_id: string }>;
-  events?: Array<{ id: string; event_type: string; detail: any; created_at: string }>;
+  /** author_id is null for system/automation comments; `author` is then null too. */
+  comments?: TicketComment[];
+  /** Customers get a redacted log: internal-note events dropped, internal detail stripped. */
+  events?: Array<{ id: string; event_type: string; detail: any; created_at: string; actor_id?: string | null; actor?: UserName | null }>;
   slas?: Array<{ id: string; metric: string; state: string; due_at: string }>;
   tasks?: Array<{ id: string; step_key: string; label: string; assignee_role: string | null; status: string; automatable: boolean; position: number }>;
   approvals?: Array<{ id: string; status: string }>;
@@ -112,9 +114,24 @@ export interface Ticket {
   /** Resolved names for the two columns above. Staff (nexus-plane) reads only. */
   requester?: UserRef | null;
   affected_user?: UserRef | null;
+  /** Display names only, on both planes. assigned_by is the latest assign/escalate event;
+   *  its id is null when automation did it. */
+  assignee?: UserName | null;
+  assigned_by?: { id: string | null; name: string | null; at: string } | null;
+}
+
+export interface TicketComment {
+  id: string;
+  body: string;
+  visibility: string;
+  created_at: string;
+  author_id: string | null;
+  author?: UserName | null;
 }
 
 export interface UserRef { id: string; name: string | null; email: string | null }
+/** A person as anyone may see them: display name, never email. */
+export interface UserName { id: string; name: string | null }
 
 /** GET /tickets/:id/form — the submitted catalog form, reassembled for staff. */
 export interface SubmittedFormField {
@@ -493,6 +510,8 @@ export const auth = {
       oidcLabel: string;
       customerOidcEnabled: boolean;
       customerOidcLabel: string;
+      /** Microsoft self-service password reset for the deployment's cloud; absent = hide the link. */
+      ssprUrl?: string;
     }>('/auth/config'),
 };
 

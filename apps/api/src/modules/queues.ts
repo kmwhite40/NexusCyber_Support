@@ -20,12 +20,16 @@ export interface WhereResult {
 }
 
 /** Build parameterized WHERE clauses for a queue definition. Pure; params are 1-indexed
- *  starting at `startIdx`. The caller prefixes any base clauses (e.g. org scoping). */
-export function buildQueueWhere(def: QueueDefinition, startIdx = 1): WhereResult {
+ *  starting at `startIdx`. The caller prefixes any base clauses (e.g. org scoping).
+ *  Closed tickets belong to Archived, so a queue with no status filter hides them unless
+ *  `includeClosed`; a queue that lists its statuses is authoritative either way. */
+export function buildQueueWhere(def: QueueDefinition, startIdx = 1, opts: { includeClosed?: boolean } = {}): WhereResult {
   const clauses: string[] = [];
   const params: unknown[] = [];
   let i = startIdx;
-  if (def.status !== undefined) {
+  if (def.status === undefined) {
+    if (!opts.includeClosed) clauses.push(`t.status <> 'closed'`);
+  } else {
     if (Array.isArray(def.status)) { params.push(def.status); clauses.push(`t.status = ANY($${i++})`); }
     else { params.push(def.status); clauses.push(`t.status = $${i++}`); }
   }
@@ -74,7 +78,7 @@ export async function createQueue(actor: Principal, input: { name: string; defin
 }
 
 /** Resolve a queue's tickets, applying its filter and SLA-aware sort. */
-export async function queueTickets(actor: Principal, queueId: string, limit = 100) {
+export async function queueTickets(actor: Principal, queueId: string, limit = 100, opts: { includeClosed?: boolean } = {}) {
   authorize(actor, 'ticket.read.all_assigned_customers');
   const queue = await withSystemContext(async (sql) =>
     (await sql.query('SELECT * FROM queues WHERE id=$1', [queueId])).rows[0],
@@ -82,7 +86,7 @@ export async function queueTickets(actor: Principal, queueId: string, limit = 10
   if (!queue) throw Errors.notFound('queue not found');
 
   return withOrgContext(orgContextFor(actor), async (sql) => {
-    const { clauses, params } = buildQueueWhere(queue.definition as QueueDefinition, 1);
+    const { clauses, params } = buildQueueWhere(queue.definition as QueueDefinition, 1, opts);
     const where = clauses.length ? 'WHERE ' + clauses.join(' AND ') : '';
     const order = orderExpression(queue.order_by);
     const { rows } = await sql.query(

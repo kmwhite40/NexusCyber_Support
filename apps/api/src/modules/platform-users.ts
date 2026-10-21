@@ -9,8 +9,9 @@
 //   - Only a platform SuperAdmin may grant ALL-orgs scope or assign the SuperAdmin role
 //     (prevents a delegated admin from escalating privilege).
 //   - A delegated admin (admin.users.manage, not SuperAdmin) may only manage users and
-//     grant scope WITHIN their own assigned orgs — and may not touch a SuperAdmin or an
-//     all-orgs user at all (resetting such a user's password is a privilege escalation).
+//     grant scope WITHIN their own org scope (their assigned orgs, or every org when they
+//     hold an all-orgs grant) — and may not touch a SuperAdmin or an all-orgs user at all
+//     (resetting such a user's password is a privilege escalation).
 //   - Nobody can suspend, delete or demote themselves, and the last active SuperAdmin can
 //     never be removed.
 //   - Every multi-statement change runs in one transaction: a failure part-way through a
@@ -47,7 +48,7 @@ export interface PlatformUser {
   created_at: string;
 }
 
-interface Target {
+export interface Target {
   id: string;
   status: string;
   roles: string[];
@@ -58,9 +59,14 @@ function isSuperAdmin(actor: Principal): boolean {
   return actor.permissions.includes('admin.superuser');
 }
 
-/** A delegated admin may only act within their own org scope. */
-function assertScopeAllowed(actor: Principal, orgIds: string[]): void {
-  if (isSuperAdmin(actor)) return;
+/**
+ * A delegated admin may only act within their own org scope. An all-organizations admin's
+ * scope is every org (assignedOrgs is empty for them — see auth/principal.ts), so any
+ * per-org grant is inside it. What stays SuperAdmin-only — the all-orgs grant, the
+ * SuperAdmin role, and managing such users — is refused by the callers, not here.
+ */
+export function assertScopeAllowed(actor: Principal, orgIds: string[]): void {
+  if (isSuperAdmin(actor) || actor.allOrgs) return;
   const outside = orgIds.filter((o) => !actor.assignedOrgs.includes(o));
   if (outside.length) {
     throw Errors.forbidden('cannot manage organizations outside your own scope');
@@ -68,7 +74,7 @@ function assertScopeAllowed(actor: Principal, orgIds: string[]): void {
 }
 
 /** Whether `actor` may manage the EXISTING user `target` at all. */
-function assertCanManageTarget(actor: Principal, target: Target): void {
+export function assertCanManageTarget(actor: Principal, target: Target): void {
   if (isSuperAdmin(actor)) return;
   if (target.roles.includes('SuperAdmin') || target.scope.mode === 'all') {
     throw Errors.forbidden('only a SuperAdmin can manage a SuperAdmin or an all-organizations user');

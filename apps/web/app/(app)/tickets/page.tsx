@@ -2,26 +2,34 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { api, type Ticket } from '@/lib/api';
-import { Card, CardBody, Button, Input, Select } from '@/components/ui/primitives';
+import { Card, CardBody, Button, Checkbox, Input, Select } from '@/components/ui/primitives';
 import { DataTable, EmptyState, Skeleton } from '@/components/ui/data';
 import { PriorityBadge, StatusBadge } from '@/components/ui/badges';
 import { Plus } from 'lucide-react';
 
-const STATUSES = ['', 'new', 'triage', 'assigned', 'in_progress', 'waiting_customer', 'resolved', 'closed'];
+// Every status in the default workflow (apps/api/src/modules/workflows.ts DEFAULT_TRANSITIONS).
+const STATUSES = [
+  '', 'new', 'triage', 'assigned', 'in_progress', 'blocked', 'waiting_customer', 'waiting_vendor',
+  'on_hold', 'resolved', 'reopened', 'closed',
+];
 
 export default function TicketsPage() {
   const router = useRouter();
   const [tickets, setTickets] = React.useState<Ticket[] | null>(null);
   const [status, setStatus] = React.useState('');
+  // Closed tickets live in Archived; this list (also customers' "My requests") hides them
+  // unless asked. A status picked from the dropdown is asked for exactly, closed included.
+  const [includeClosed, setIncludeClosed] = React.useState(false);
   const [q, setQ] = React.useState('');
 
   const load = React.useCallback(() => {
     setTickets(null);
     const qs = new URLSearchParams();
     if (status) qs.set('status', status);
+    else if (!includeClosed) qs.set('exclude_status', 'closed');
     qs.set('limit', '100');
     api.get<{ data: Ticket[] }>(`/tickets?${qs}`).then((r) => setTickets(r.data)).catch(() => setTickets([]));
-  }, [status]);
+  }, [status, includeClosed]);
 
   React.useEffect(load, [load]);
 
@@ -42,6 +50,10 @@ export default function TicketsPage() {
           <Select className="w-44" value={status} onChange={(e) => setStatus(e.target.value)}>
             {STATUSES.map((s) => <option key={s} value={s}>{s ? s.replace(/_/g, ' ') : 'All statuses'}</option>)}
           </Select>
+          <label className="flex items-center gap-2 text-sm text-muted">
+            <Checkbox checked={includeClosed} disabled={!!status} onChange={(e) => setIncludeClosed(e.target.checked)} />
+            Include closed
+          </label>
           <span className="ml-auto text-xs text-muted">{filtered.length} result{filtered.length === 1 ? '' : 's'}</span>
         </div>
         <CardBody className="px-0 pt-0">

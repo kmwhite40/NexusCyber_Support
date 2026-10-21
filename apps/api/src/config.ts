@@ -22,6 +22,10 @@ export interface Config {
   retention: RetentionConfig;
   provisioning: ProvisioningConfig;
   entraSync: EntraSyncConfig;
+  /** Days a ticket may sit in Resolved before the auto-close job closes it. 0 = never. */
+  autoCloseResolvedDays: number;
+  /** Microsoft self-service password reset page, linked from the login page for locked-out users. */
+  ssprUrl: string;
 }
 
 export interface NotificationsConfig {
@@ -270,6 +274,40 @@ export function parseEntraSyncConfig(env: NodeJS.ProcessEnv): EntraSyncConfig {
   };
 }
 
+/**
+ * AUTO_CLOSE_RESOLVED_DAYS. 0 switches the job off. A garbage or negative value falls back to the
+ * default rather than through: NaN would silently disable the job (every comparison false), and a
+ * negative window would put the cutoff in the future and close tickets the moment they resolve.
+ */
+export function parseAutoCloseResolvedDays(env: NodeJS.ProcessEnv): number {
+  const raw = env.AUTO_CLOSE_RESOLVED_DAYS;
+  if (raw === undefined || raw.trim() === '') return 7;
+  const days = Number(raw);
+  return Number.isFinite(days) && days >= 0 ? days : 7;
+}
+
+/** Microsoft's SSPR portal per cloud. A gov (GCC High) account cannot reset on the .com page. */
+const SSPR_DEFAULT: Record<Enclave, string> = {
+  gov: 'https://passwordreset.microsoftonline.us',
+  commercial: 'https://passwordreset.microsoftonline.com',
+};
+
+/**
+ * SSPR_URL, defaulting to the enclave's Microsoft portal. This lands in an href on the PUBLIC
+ * login page, so anything that is not an absolute https URL — a typo, or a javascript: URL — is
+ * replaced by the default rather than rendered.
+ */
+export function parseSsprUrl(env: NodeJS.ProcessEnv, enclave: Enclave): string {
+  const fallback = SSPR_DEFAULT[enclave] ?? SSPR_DEFAULT.commercial;
+  const raw = (env.SSPR_URL ?? '').trim();
+  if (!raw) return fallback;
+  try {
+    return new URL(raw).protocol === 'https:' ? raw : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export function parseOidcConfig(env: NodeJS.ProcessEnv): OidcConfig {
   const enabled = bool(env.OIDC_ENABLED);
   const tenantId = env.OIDC_TENANT_ID ?? env.M365_TENANT_ID ?? '';
@@ -322,6 +360,7 @@ function required(name: string, fallback?: string): string {
 }
 
 const adminDatabaseUrl = required('DATABASE_URL', 'postgres://nexus:nexus@localhost:5432/nexus');
+const enclave: Enclave = (process.env.ENCLAVE as Enclave) ?? 'commercial';
 
 export const config: Config = {
   // Azure App Service (Code/Linux) injects PORT and routes to it; honor it first,
@@ -332,7 +371,7 @@ export const config: Config = {
     process.env.APP_DATABASE_URL ?? 'postgres://nexus_app:nexus_app@localhost:5432/nexus',
   sessionSigningKey: required('SESSION_SIGNING_KEY', 'dev-only-insecure-change-me'),
   webOrigin: (process.env.WEB_ORIGIN ?? 'http://localhost:3000').split(','),
-  enclave: (process.env.ENCLAVE as Enclave) ?? 'commercial',
+  enclave,
   isProduction: process.env.NODE_ENV === 'production',
   selfSignupEnabled: process.env.SELF_SIGNUP_ENABLED
     ? process.env.SELF_SIGNUP_ENABLED === 'true'
@@ -352,4 +391,6 @@ export const config: Config = {
   },
   provisioning: parseProvisioningConfig(process.env),
   entraSync: parseEntraSyncConfig(process.env),
+  autoCloseResolvedDays: parseAutoCloseResolvedDays(process.env),
+  ssprUrl: parseSsprUrl(process.env, enclave),
 };

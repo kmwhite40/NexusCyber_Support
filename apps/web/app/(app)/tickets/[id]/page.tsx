@@ -13,6 +13,8 @@ import { ProvisioningPanel } from '@/components/provisioning-panel';
 import { OffboardingPanel } from '@/components/offboarding-panel';
 import { SubmittedForm } from '@/components/submitted-form';
 import { CardBoundary } from '@/components/card-boundary';
+import { TicketComments } from '@/components/ticket-conversation';
+import { assigneeSummary, personLabel } from '@/lib/ticket-people';
 
 export default function TicketDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -288,17 +290,7 @@ export default function TicketDetailPage() {
           <Card>
             <CardHeader><CardTitle>Conversation</CardTitle></CardHeader>
             <CardBody className="space-y-3">
-              {(ticket.comments ?? []).length === 0 && <p className="text-sm text-muted">No comments yet.</p>}
-              {(ticket.comments ?? []).map((c) => (
-                <div key={c.id} className={`rounded-md border p-3 ${c.visibility === 'internal' ? 'border-warning/30 bg-warning/5' : 'border-border bg-surface-2/40'}`}>
-                  <div className="mb-1 flex items-center gap-2">
-                    <span className="text-xs font-medium text-fg">{c.author_id === me?.id ? 'You' : c.visibility === 'internal' ? 'Agent (internal)' : 'Participant'}</span>
-                    {c.visibility === 'internal' && <Badge tone="warning">internal note</Badge>}
-                    <span className="ml-auto text-xs text-muted">{new Date(c.created_at).toLocaleString()}</span>
-                  </div>
-                  <p className="whitespace-pre-wrap text-sm text-fg/90">{c.body}</p>
-                </div>
-              ))}
+              <TicketComments comments={ticket.comments ?? []} meId={me?.id} />
 
               <div className="pt-2">
                 <Textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Write a reply…" />
@@ -341,6 +333,7 @@ export default function TicketDetailPage() {
               <Row k="Priority" v={ticket.priority} />
               <Row k="Status" v={ticket.status.replace(/_/g, ' ')} />
               <Row k="Created" v={new Date(ticket.created_at).toLocaleString()} />
+              <Row k="Assignee" v={assigneeSummary(ticket, me?.id)} />
               {isAgent && userDisplay(ticket.requester) && <Row k="Requester" v={userDisplay(ticket.requester)!} />}
               {isAgent && userDisplay(ticket.affected_user) && <Row k="Affected user" v={userDisplay(ticket.affected_user)!} />}
               {ticket.tags?.length ? <Row k="Tags" v={ticket.tags.join(', ')} /> : null}
@@ -355,7 +348,7 @@ export default function TicketDetailPage() {
                   <li key={e.id} className="relative">
                     <span className="absolute -left-[21px] top-1 h-2 w-2 rounded-full bg-brand" />
                     <div className="text-xs font-medium text-fg">{e.event_type.replace(/_/g, ' ')}</div>
-                    <div className="text-xs text-muted">{new Date(e.created_at).toLocaleString()}</div>
+                    <div className="text-xs text-muted">by {personLabel(e.actor, me?.id, 'you')} · {new Date(e.created_at).toLocaleString()}</div>
                   </li>
                 ))}
                 {(ticket.events ?? []).length === 0 && <li className="text-xs text-muted">No events.</li>}

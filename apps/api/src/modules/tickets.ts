@@ -10,6 +10,8 @@ import { publish } from '../events/bus.js';
 import { startTicketSla, pauseTicketSlas, resumeTicketSlas, markResponseMet } from './sla.js';
 import { linksForTicket } from './links.js';
 import { resolveTransitions, isTransitionAllowed } from './workflows.js';
+import { redactEventsForCustomer, ticketUserIds, withTicketNames } from './ticket-people.js';
+import { resolveUserNames } from './user-names.js';
 import { Errors } from '../errors.js';
 import type { Principal } from '../types.js';
 
@@ -385,35 +387,57 @@ export interface ListFilter {
   priority?: string;
   limit?: number;
   type?: string;
+  /** Comma-separated statuses to leave out (Tickets / My requests hide `closed`). Ignored
+   *  when `status` is set, so an explicit status=closed (Archived) always returns closed. */
+  excludeStatus?: string;
+}
+
+/** Build the parameterized WHERE clauses for a ticket list. Pure. `ownOnly` restricts a
+ *  read.own customer to tickets they requested; `actorId` also resolves assignee=me. */
+export function buildTicketListWhere(
+  filter: ListFilter,
+  ctx: { actorId: string; ownOnly: boolean },
+): { clauses: string[]; params: unknown[] } {
+  const where: string[] = [];
+  const params: unknown[] = [];
+
+  if (ctx.ownOnly) {
+    params.push(ctx.actorId);
+    where.push(`requester_id = $${params.length}`);
+  }
+  if (filter.status) {
+    params.push(filter.status);
+    where.push(`status = $${params.length}`);
+  } else if (filter.excludeStatus) {
+    const excluded = filter.excludeStatus.split(',').map((s) => s.trim()).filter(Boolean);
+    if (excluded.length) {
+      params.push(excluded);
+      where.push(`status <> ALL($${params.length})`);
+    }
+  }
+  if (filter.type) {
+    params.push(filter.type);
+    where.push(`type = $${params.length}`);
+  }
+  if (filter.priority) {
+    params.push(filter.priority);
+    where.push(`priority = $${params.length}`);
+  }
+  if (filter.assignee) {
+    params.push(filter.assignee === 'me' ? ctx.actorId : filter.assignee);
+    where.push(`assigned_agent_id = $${params.length}`);
+  }
+  return { clauses: where, params };
 }
 
 export async function listTickets(actor: Principal, filter: ListFilter) {
   return withOrgContext(orgContextFor(actor), async (sql) => {
-    const where: string[] = [];
-    const params: unknown[] = [];
-
     // Customer end users with only read.own see only their own tickets.
     const orgWide = can(actor, 'ticket.read.organization') || can(actor, 'ticket.read.all_assigned_customers');
-    if (actor.plane === 'customer' && !orgWide) {
-      params.push(actor.id);
-      where.push(`requester_id = $${params.length}`);
-    }
-    if (filter.status) {
-      params.push(filter.status);
-      where.push(`status = $${params.length}`);
-    }
-    if (filter.type) {
-      params.push(filter.type);
-      where.push(`type = $${params.length}`);
-    }
-    if (filter.priority) {
-      params.push(filter.priority);
-      where.push(`priority = $${params.length}`);
-    }
-    if (filter.assignee) {
-      params.push(filter.assignee === 'me' ? actor.id : filter.assignee);
-      where.push(`assigned_agent_id = $${params.length}`);
-    }
+    const { clauses: where, params } = buildTicketListWhere(filter, {
+      actorId: actor.id,
+      ownOnly: actor.plane === 'customer' && !orgWide,
+    });
     const limit = Math.min(filter.limit ?? 50, 200);
     const sqlText = `SELECT * FROM tickets ${
       where.length ? 'WHERE ' + where.join(' AND ') : ''
@@ -438,18 +462,23 @@ export async function getTicket(actor: Principal, id: string) {
     const comments = (
       await sql.query('SELECT * FROM ticket_comments WHERE ticket_id=$1 ORDER BY created_at', [id])
     ).rows.filter((c) => c.visibility === 'customer' || actor.plane === 'nexus');
-    const events = (
+    const allEvents = (
       await sql.query('SELECT * FROM ticket_events WHERE ticket_id=$1 ORDER BY created_at', [id])
     ).rows;
+    // The event log carries desk internals (an escalation's reason, internal-note activity), so
+    // customers get the redacted view — before any names are attached to it.
+    const events = actor.plane === 'customer' ? redactEventsForCustomer(allEvents) : allEvents;
     const slas = (await sql.query('SELECT * FROM sla_instances WHERE ticket_id=$1', [id])).rows;
     const tasks = (await sql.query('SELECT * FROM service_request_tasks WHERE ticket_id=$1 ORDER BY position', [id])).rows;
     const approvals = (await sql.query('SELECT * FROM approvals WHERE subject_id=$1', [id])).rows;
     const links = await linksForTicket(sql, id);
     return { ...ticket, comments, events, slas, tasks, approvals, links };
   });
-  // Outside the org-context transaction so the name lookup never holds a second pool connection
-  // while the first is still checked out.
-  return actor.plane === 'nexus' ? { ...t, ...(await ticketPeople(t)) } : t;
+  // Outside the org-context transaction so the name lookups never hold a second pool connection
+  // while the first is still checked out. Display names go to both planes (a customer may see who
+  // wrote a reply they can already read); requester/affected-user emails stay staff-only.
+  const named = withTicketNames(t, await resolveUserNames(ticketUserIds(t)));
+  return actor.plane === 'nexus' ? { ...named, ...(await ticketPeople(t)) } : named;
 }
 
 /** Names for the requester / affected-user columns, for staff views. Resolved in system context
@@ -579,64 +608,78 @@ export async function assignTicket(
 /** States that carry a completion stamp. Leaving one is a reopen; moving between them is not. */
 const TERMINAL_STATUSES = new Set(['resolved', 'closed']);
 
-export async function transition(actor: Principal, id: string, to: string, opts: { resolutionCode?: string; closureNotes?: string } = {}) {
+export interface TransitionOpts { resolutionCode?: string; closureNotes?: string }
+
+export async function transition(actor: Principal, id: string, to: string, opts: TransitionOpts = {}) {
   authorize(actor, 'ticket.update');
-  return withOrgContext(orgContextFor(actor), async (sql) => {
-    const t = (await sql.query('SELECT organization_id, status, type FROM tickets WHERE id=$1', [id])).rows[0];
-    if (!t) throw Errors.notFound('ticket not found');
-    // Allowed transitions come from the configured workflow for this org+type, falling back
-    // to the built-in default map when none is configured.
-    const map = await resolveTransitions(sql, t.organization_id, t.type);
-    if (!isTransitionAllowed(map, t.status, to)) throw Errors.conflict(`illegal transition ${t.status} -> ${to}`);
+  return withOrgContext(orgContextFor(actor), (sql) => applyTransition(sql, actor, id, to, opts));
+}
 
-    const sets: string[] = ['status=$2'];
-    const params: unknown[] = [id, to];
-    if (to === 'resolved') {
-      sets.push('resolved_at=now()');
-      if (opts.resolutionCode) { params.push(opts.resolutionCode); sets.push(`resolution_code=$${params.length}`); }
-      if (opts.closureNotes) { params.push(opts.closureNotes); sets.push(`closure_notes=$${params.length}`); }
-      // stop resolution SLA
-      await sql.query(`UPDATE sla_instances SET state='met' WHERE ticket_id=$1 AND metric='resolution' AND state NOT IN ('met','breached')`, [id]);
-    }
-    if (to === 'closed') sets.push('closed_at=now()');
+/**
+ * The body of a status transition, on a connection the caller supplies. transition() is the
+ * only entry point for people; this is exported so a background job (auto-close) makes the SAME
+ * transition — workflow check, stamps, ticket_events, audit, events — instead of a second copy
+ * of it. A null actor is the system: no authorization (the caller is trusted server code) and
+ * a NULL actor_id in ticket_events and the audit chain, which is the honest attribution.
+ *
+ * Must run inside a transaction: withOrgContext's, or an explicit BEGIN/COMMIT around a
+ * withSystemContext callback (which bypasses RLS — every query here is scoped by ticket id).
+ */
+export async function applyTransition(sql: Sql, actor: Principal | null, id: string, to: string, opts: TransitionOpts = {}) {
+  const t = (await sql.query('SELECT organization_id, status, type FROM tickets WHERE id=$1', [id])).rows[0];
+  if (!t) throw Errors.notFound('ticket not found');
+  // Allowed transitions come from the configured workflow for this org+type, falling back
+  // to the built-in default map when none is configured.
+  const map = await resolveTransitions(sql, t.organization_id, t.type);
+  if (!isTransitionAllowed(map, t.status, to)) throw Errors.conflict(`illegal transition ${t.status} -> ${to}`);
 
-    // Leaving a terminal state must clear the terminal stamps. Without this a reopened ticket
-    // kept the resolved_at from its earlier resolve, so the row read as resolved AND open at the
-    // same time — an active status carrying a resolution timestamp. That is what "I resolved it
-    // and it still sits there as if it's open" actually looked like in the data.
-    //
-    // resolved -> closed is NOT a reopen and is deliberately excluded: that resolution really
-    // happened, and its timestamp is part of the record.
-    const LEAVING_TERMINAL = TERMINAL_STATUSES.has(t.status) && !TERMINAL_STATUSES.has(to);
-    if (LEAVING_TERMINAL) sets.push('resolved_at=NULL', 'closed_at=NULL');
-    // Leaving the intake states means work has started — that's the first response.
-    if ((t.status === 'new' || t.status === 'triage') && to !== 'new' && to !== 'triage') {
-      await markResponseMet(sql, id);
-    }
+  const sets: string[] = ['status=$2'];
+  const params: unknown[] = [id, to];
+  if (to === 'resolved') {
+    sets.push('resolved_at=now()');
+    if (opts.resolutionCode) { params.push(opts.resolutionCode); sets.push(`resolution_code=$${params.length}`); }
+    if (opts.closureNotes) { params.push(opts.closureNotes); sets.push(`closure_notes=$${params.length}`); }
+    // stop resolution SLA
+    await sql.query(`UPDATE sla_instances SET state='met' WHERE ticket_id=$1 AND metric='resolution' AND state NOT IN ('met','breached')`, [id]);
+  }
+  if (to === 'closed') sets.push('closed_at=now()');
 
-    const { rows } = await sql.query(`UPDATE tickets SET ${sets.join(', ')} WHERE id=$1 RETURNING *`, params);
+  // Leaving a terminal state must clear the terminal stamps. Without this a reopened ticket
+  // kept the resolved_at from its earlier resolve, so the row read as resolved AND open at the
+  // same time — an active status carrying a resolution timestamp. That is what "I resolved it
+  // and it still sits there as if it's open" actually looked like in the data.
+  //
+  // resolved -> closed is NOT a reopen and is deliberately excluded: that resolution really
+  // happened, and its timestamp is part of the record.
+  const LEAVING_TERMINAL = TERMINAL_STATUSES.has(t.status) && !TERMINAL_STATUSES.has(to);
+  if (LEAVING_TERMINAL) sets.push('resolved_at=NULL', 'closed_at=NULL');
+  // Leaving the intake states means work has started — that's the first response.
+  if ((t.status === 'new' || t.status === 'triage') && to !== 'new' && to !== 'triage') {
+    await markResponseMet(sql, id);
+  }
 
-    // SLA clock follows on-hold states: pause when the ticket goes on hold (waiting on
-    // the customer/vendor), resume when work restarts. Resolution stop is handled above.
-    const ON_HOLD = new Set(['waiting_customer', 'waiting_vendor', 'on_hold']);
-    if (ON_HOLD.has(to) && !ON_HOLD.has(t.status)) await pauseTicketSlas(sql, id);
-    if (to === 'in_progress' && ON_HOLD.has(t.status)) await resumeTicketSlas(sql, id);
+  const { rows } = await sql.query(`UPDATE tickets SET ${sets.join(', ')} WHERE id=$1 RETURNING *`, params);
 
-    await sql.query(
-      `INSERT INTO ticket_events (organization_id, ticket_id, actor_id, event_type, detail)
-       VALUES ($1,$2,$3,'status_changed',$4)`,
-      [t.organization_id, id, actor.id, { from: t.status, to }],
-    );
-    await audit(actor, { action: 'ticket.update', organizationId: t.organization_id, resourceType: 'ticket', resourceId: id, detail: { to } });
-    publish('ticket.status_changed', t.organization_id, { ticket_id: id, org_id: t.organization_id, from: t.status, to });
-    if (to === 'resolved') publish('ticket.resolved', t.organization_id, { ticket_id: id, org_id: t.organization_id, resolution_code: opts.resolutionCode });
-    if (to === 'closed') publish('ticket.closed', t.organization_id, { ticket_id: id, org_id: t.organization_id });
-    // Reopen = leaving a terminal state (resolved/closed) back into active work.
-    if (LEAVING_TERMINAL) {
-      publish('ticket.reopened', t.organization_id, { ticket_id: id, org_id: t.organization_id, from: t.status, to });
-    }
-    return rows[0];
-  });
+  // SLA clock follows on-hold states: pause when the ticket goes on hold (waiting on
+  // the customer/vendor), resume when work restarts. Resolution stop is handled above.
+  const ON_HOLD = new Set(['waiting_customer', 'waiting_vendor', 'on_hold']);
+  if (ON_HOLD.has(to) && !ON_HOLD.has(t.status)) await pauseTicketSlas(sql, id);
+  if (to === 'in_progress' && ON_HOLD.has(t.status)) await resumeTicketSlas(sql, id);
+
+  await sql.query(
+    `INSERT INTO ticket_events (organization_id, ticket_id, actor_id, event_type, detail)
+     VALUES ($1,$2,$3,'status_changed',$4)`,
+    [t.organization_id, id, actor?.id ?? null, { from: t.status, to }],
+  );
+  await audit(actor, { action: 'ticket.update', organizationId: t.organization_id, resourceType: 'ticket', resourceId: id, detail: { to } });
+  publish('ticket.status_changed', t.organization_id, { ticket_id: id, org_id: t.organization_id, from: t.status, to });
+  if (to === 'resolved') publish('ticket.resolved', t.organization_id, { ticket_id: id, org_id: t.organization_id, resolution_code: opts.resolutionCode });
+  if (to === 'closed') publish('ticket.closed', t.organization_id, { ticket_id: id, org_id: t.organization_id });
+  // Reopen = leaving a terminal state (resolved/closed) back into active work.
+  if (LEAVING_TERMINAL) {
+    publish('ticket.reopened', t.organization_id, { ticket_id: id, org_id: t.organization_id, from: t.status, to });
+  }
+  return rows[0];
 }
 
 /** Manually pause a ticket's running SLA clocks (e.g. blocked on a third party). */

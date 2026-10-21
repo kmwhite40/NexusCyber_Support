@@ -194,7 +194,9 @@ function BoardEditor({ organizationId, canListPlatformUsers }: { organizationId:
       setBoard(next);
       setSaved(true);
     } catch (e) {
-      setErr(e instanceof ApiError ? e.detail : 'Failed to save the board');
+      // Anything that is not an ApiError never reached the API (a network or CORS failure);
+      // say what it was rather than hiding it behind a generic line.
+      setErr(e instanceof ApiError ? e.detail : `Failed to save the board: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSaving(false);
     }

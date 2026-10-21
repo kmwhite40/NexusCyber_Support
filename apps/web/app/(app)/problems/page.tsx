@@ -1,8 +1,8 @@
 'use client';
 import * as React from 'react';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
-import { Card, CardHeader, CardTitle, CardBody, Button, Badge, Input, Textarea } from '@/components/ui/primitives';
+import { Card, CardHeader, CardTitle, CardBody, Button, Badge, Input, Select, Textarea } from '@/components/ui/primitives';
 import { DataTable, EmptyState, Skeleton } from '@/components/ui/data';
 
 interface Problem {
@@ -13,19 +13,34 @@ interface ProblemDetail extends Problem { description: string | null; incidents:
 interface Candidate { key: string; count: number; ticketIds: string[]; sampleSubject: string }
 
 const tone = (s: string) => (s === 'resolved' || s === 'closed' ? 'success' : s === 'known_error' ? 'warning' : 'neutral');
+/** The API's floor for a problem title (POST /problems: z.string().min(3)). */
+const MIN_TITLE = 3;
 const nextStatus: Record<string, string[]> = {
   open: ['investigating'], investigating: ['known_error', 'resolved'], known_error: ['resolved'], resolved: ['closed'], closed: [],
 };
 
 export default function ProblemsPage() {
-  const { can } = useAuth();
+  const { can, me } = useAuth();
   const [rows, setRows] = React.useState<Problem[] | null>(null);
   const [cands, setCands] = React.useState<Candidate[]>([]);
   const [sel, setSel] = React.useState<ProblemDetail | null>(null);
   const [title, setTitle] = React.useState('');
   const [edit, setEdit] = React.useState({ rootCause: '', workaround: '' });
+  const [orgs, setOrgs] = React.useState<Array<{ id: string; name: string }>>([]);
+  const [orgId, setOrgId] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
 
   const canManage = can('problem.manage');
+  // Staff have no organization of their own, so a problem they create must name its
+  // customer — the API refuses one that does not ("organizationId required").
+  const isAgent = me?.plane === 'nexus';
+  const canCreate = title.trim().length >= MIN_TITLE && (!isAgent || !!orgId) && !busy;
+
+  React.useEffect(() => {
+    if (!canManage || !isAgent) return;
+    api.get<{ data: Array<{ id: string; name: string }> }>('/organizations').then((r) => setOrgs(r.data)).catch(() => setOrgs([]));
+  }, [canManage, isAgent]);
 
   const load = React.useCallback(() => {
     api.get<{ data: Problem[] }>('/problems').then((r) => setRows(r.data)).catch(() => setRows([]));
@@ -37,9 +52,18 @@ export default function ProblemsPage() {
     api.get<ProblemDetail>(`/problems/${id}`).then((p) => { setSel(p); setEdit({ rootCause: p.root_cause ?? '', workaround: p.workaround ?? '' }); }).catch(() => {});
   }
   async function create() {
-    if (!title.trim()) return;
-    const p = await api.post<Problem>('/problems', { title });
-    setTitle(''); load(); open(p.id);
+    if (!canCreate) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const p = await api.post<Problem>('/problems', isAgent ? { title: title.trim(), organizationId: orgId } : { title: title.trim() });
+      setTitle(''); load(); open(p.id);
+    } catch (e) {
+      // Keep the title so it can be retried; a swallowed 400 here used to look like a dead button.
+      setError(e instanceof ApiError ? e.detail : 'Could not create problem');
+    } finally {
+      setBusy(false);
+    }
   }
   async function saveEdit(knownError?: boolean) {
     if (!sel) return;
@@ -79,11 +103,18 @@ export default function ProblemsPage() {
             <CardTitle>Problems</CardTitle>
             {canManage && (
               <div className="flex gap-2">
-                <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="New problem title" className="w-56" />
-                <Button size="sm" onClick={create} disabled={!title.trim()}>Create</Button>
+                {isAgent && (
+                  <Select aria-label="Customer organization" value={orgId} onChange={(e) => setOrgId(e.target.value)} className="w-44">
+                    <option value="">Organization…</option>
+                    {orgs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                  </Select>
+                )}
+                <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="New problem title" className="w-56" minLength={MIN_TITLE} />
+                <Button size="sm" onClick={create} disabled={!canCreate}>{busy ? 'Creating…' : 'Create'}</Button>
               </div>
             )}
           </div>
+          {error && <p className="border-b border-border px-4 py-2 text-xs text-danger">{error}</p>}
           <CardBody className="px-0 pt-0">
             {!rows ? (
               <div className="space-y-2 p-5">{[0, 1].map((i) => <Skeleton key={i} className="h-12" />)}</div>
