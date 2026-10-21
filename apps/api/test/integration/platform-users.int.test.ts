@@ -114,6 +114,66 @@ describeDb('platform user administration (real Postgres)', () => {
     await expect(pu.updatePlatformUser(delegated, inScope, { status: 'suspended' })).resolves.toEqual({ id: inScope });
   });
 
+  // A ServiceDeskManager scoped to ALL organizations carries allOrgs=true and no assignedOrgs,
+  // and the scope guard read only assignedOrgs — so every org was "outside your own scope".
+  it('lets an all-organizations delegated admin grant per-org access anywhere', async () => {
+    const sdm = (await q(`INSERT INTO users (plane, email) VALUES ('nexus', $1) RETURNING id`, [mail('actor-sdm-all')]))[0].id;
+    const allOrgsAdmin = principal({ id: sdm, allOrgs: true, assignedOrgs: [] });
+
+    const { id } = await pu.createPlatformUser(allOrgsAdmin, {
+      email: mail('all-sdm-tier1'), roleKeys: ['Tier1'], scope: { mode: 'orgs', orgIds: [orgA] },
+    });
+    expect(await rolesOf(id)).toEqual([{ key: 'Tier1', organization_id: orgA }]);
+
+    const existing = (await pu.createPlatformUser(superActor, {
+      email: mail('all-sdm-target'), roleKeys: ['Tier1'], scope: { mode: 'orgs', orgIds: [orgA] },
+    })).id;
+    await expect(pu.setPlatformUserRoles(allOrgsAdmin, existing, ['Tier1', 'Tier2'])).resolves.toEqual({ id: existing });
+    expect(await rolesOf(existing)).toEqual([
+      { key: 'Tier1', organization_id: orgA },
+      { key: 'Tier2', organization_id: orgA },
+    ]);
+  });
+
+  it('still keeps the SuperAdmin-only grants from an all-organizations delegated admin', async () => {
+    const sdm = (await q(`INSERT INTO users (plane, email) VALUES ('nexus', $1) RETURNING id`, [mail('actor-sdm-all-2')]))[0].id;
+    const allOrgsAdmin = principal({ id: sdm, allOrgs: true, assignedOrgs: [] });
+
+    await expect(pu.createPlatformUser(allOrgsAdmin, {
+      email: mail('all-sdm-wants-all'), roleKeys: ['Tier1'], scope: { mode: 'all' },
+    })).rejects.toMatchObject({ status: 403 });
+    await expect(pu.createPlatformUser(allOrgsAdmin, {
+      email: mail('all-sdm-wants-super'), roleKeys: ['SuperAdmin'], scope: { mode: 'orgs', orgIds: [orgA] },
+    })).rejects.toMatchObject({ status: 403 });
+    expect(await q(`SELECT 1 FROM users WHERE email IN ($1, $2)`, [mail('all-sdm-wants-all'), mail('all-sdm-wants-super')])).toHaveLength(0);
+
+    const inA = (await pu.createPlatformUser(superActor, {
+      email: mail('all-sdm-no-promote'), roleKeys: ['Tier1'], scope: { mode: 'orgs', orgIds: [orgA] },
+    })).id;
+    await expect(pu.setPlatformUserAccess(allOrgsAdmin, inA, { roleKeys: ['Tier1'], scope: { mode: 'all' } }))
+      .rejects.toMatchObject({ status: 403 });
+    await expect(pu.setPlatformUserRoles(allOrgsAdmin, inA, ['SuperAdmin'])).rejects.toMatchObject({ status: 403 });
+    expect(await rolesOf(inA)).toEqual([{ key: 'Tier1', organization_id: orgA }]);
+
+    // An all-organizations user is a SuperAdmin's to manage, even for a peer with the same reach.
+    const allUser = (await pu.createPlatformUser(superActor, {
+      email: mail('all-sdm-peer'), roleKeys: ['Tier2'], scope: { mode: 'all' },
+    })).id;
+    await expect(pu.setPlatformUserAccess(allOrgsAdmin, allUser, { roleKeys: ['Tier1'], scope: { mode: 'orgs', orgIds: [orgA] } }))
+      .rejects.toMatchObject({ status: 403 });
+    await expect(pu.updatePlatformUser(allOrgsAdmin, allUser, { password: 'a-new-password-123' }))
+      .rejects.toMatchObject({ status: 403 });
+    expect(await rolesOf(allUser)).toEqual([{ key: 'Tier2', organization_id: null }]);
+  });
+
+  it('lets a SuperAdmin promote an existing Tier1 user to SuperAdmin', async () => {
+    const { id } = await pu.createPlatformUser(superActor, {
+      email: mail('promote-me'), roleKeys: ['Tier1'], scope: { mode: 'orgs', orgIds: [orgA] },
+    });
+    await expect(pu.setPlatformUserRoles(superActor, id, ['Tier1', 'SuperAdmin'])).resolves.toEqual({ id });
+    expect((await rolesOf(id)).map((r) => r.key)).toEqual(['SuperAdmin', 'Tier1']);
+  });
+
   it('takes over the Entra identity of the same person\'s customer account', async () => {
     const oid = randomUUID();
     const twin = (await q(

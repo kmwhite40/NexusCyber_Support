@@ -31,6 +31,25 @@ export default function TeamPage() {
 
   const orgName = React.useCallback((id: string) => orgs.find((o) => o.id === id)?.name ?? id.slice(0, 8), [orgs]);
 
+  // A delegated admin grants only within their own org scope (the API refuses anything else):
+  // every org when they hold an all-orgs grant, otherwise just the orgs they are assigned.
+  const managesAllOrgs = isSuper || !!me?.all_orgs;
+  const manageableOrgs = React.useMemo(
+    () => (managesAllOrgs ? orgs : orgs.filter((o) => me?.assigned_orgs?.includes(o.id))),
+    [orgs, managesAllOrgs, me],
+  );
+  /** Why this admin may not edit `u`, or null when they may. Mirrors the API's assertCanManageTarget. */
+  const lockReason = (u: PlatformUser): string | null => {
+    if (isSuper) return null;
+    if (u.roles.includes('SuperAdmin') || u.all_orgs) {
+      return 'Only a SuperAdmin can manage a SuperAdmin or an all-organizations user. You can view this account, but not change it.';
+    }
+    if (!managesAllOrgs && u.org_ids.some((id) => !me?.assigned_orgs?.includes(id))) {
+      return 'This user has access to organizations outside your organization scope, so you can view this account, but not change it.';
+    }
+    return null;
+  };
+
   if (!canManage) {
     return <EmptyState title="Access denied" description="You need the platform user-administration permission to view this page." />;
   }
@@ -40,7 +59,7 @@ export default function TeamPage() {
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Platform users</h1>
-          <p className="mt-1 text-sm text-muted">Staff accounts and the organizations each can see. {isSuper ? 'You can grant all-orgs scope and the SuperAdmin role.' : 'You can manage users within your own organization scope.'}</p>
+          <p className="mt-1 text-sm text-muted">Staff accounts and the organizations each can see. {isSuper ? 'You can grant all-orgs scope and the SuperAdmin role.' : managesAllOrgs ? 'You can manage users in any organization.' : 'You can manage users within your own organization scope.'}</p>
         </div>
         <Button onClick={() => { setErr(null); setCreating(true); }}>New platform user</Button>
       </div>
@@ -81,7 +100,8 @@ export default function TeamPage() {
         <UserModal
           mode="create"
           assignable={assignable}
-          orgs={orgs}
+          orgs={manageableOrgs}
+          orgName={orgName}
           isSuper={isSuper}
           onClose={() => setCreating(false)}
           onSaved={(msg) => { setCreating(false); setErr(null); setNotice(msg ?? null); refresh(); }}
@@ -92,9 +112,11 @@ export default function TeamPage() {
           mode="edit"
           user={editing}
           assignable={assignable}
-          orgs={orgs}
+          orgs={manageableOrgs}
+          orgName={orgName}
           isSuper={isSuper}
           isSelf={editing.id === me?.id}
+          readOnlyReason={lockReason(editing)}
           onClose={() => setEditing(null)}
           onSaved={(msg) => { setEditing(null); setErr(null); setNotice(msg ?? null); refresh(); }}
         />
@@ -104,14 +126,18 @@ export default function TeamPage() {
 }
 
 function UserModal({
-  mode, user, assignable, orgs, isSuper, isSelf = false, onClose, onSaved,
+  mode, user, assignable, orgs, orgName, isSuper, isSelf = false, readOnlyReason = null, onClose, onSaved,
 }: {
   mode: 'create' | 'edit';
   user?: PlatformUser;
   assignable: string[];
+  /** The orgs this admin may grant — already narrowed to their own scope. */
   orgs: OrgSummary[];
+  orgName: (id: string) => string;
   isSuper: boolean;
   isSelf?: boolean;
+  /** Set when this admin may not change `user`: shown up front instead of a save that fails. */
+  readOnlyReason?: string | null;
   onClose: () => void;
   onSaved: (message?: string) => void;
 }) {
@@ -175,6 +201,27 @@ function UserModal({
       setError(e instanceof ApiError ? e.detail : 'Delete failed');
       setConfirmDelete(false);
     } finally { setBusy(false); }
+  }
+
+  if (readOnlyReason && user) {
+    return (
+      <Dialog title={user.display_name ?? user.email} onClose={onClose} size="xl">
+        <p role="note" className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">{readOnlyReason}</p>
+        <dl className="grid grid-cols-[10rem_1fr] gap-y-1.5 text-sm">
+          <dt className="text-muted">Email</dt>
+          <dd>{user.email}</dd>
+          <dt className="text-muted">Roles</dt>
+          <dd>{user.roles.length ? user.roles.join(', ') : '—'}</dd>
+          <dt className="text-muted">Organization scope</dt>
+          <dd>{user.all_orgs ? 'All organizations' : user.org_ids.length ? user.org_ids.map(orgName).join(', ') : 'No orgs'}</dd>
+          <dt className="text-muted">Status</dt>
+          <dd>{user.status}</dd>
+        </dl>
+        <div className="flex justify-end pt-1">
+          <Button variant="outline" onClick={onClose}>Close</Button>
+        </div>
+      </Dialog>
+    );
   }
 
   return (
