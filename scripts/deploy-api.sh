@@ -12,9 +12,14 @@
 #
 # Usage:
 #   scripts/deploy-api.sh
-#   RG=... APP=... ACR=... scripts/deploy-api.sh
+#   RG=... APP=... ACR=... SUBSCRIPTION=... scripts/deploy-api.sh
 set -euo pipefail
 
+# Every ARM call names the subscription explicitly. Relying on the az default broke a deploy:
+# a tenant-level login (no subscription) was the default, and `az acr build` passed the TENANT
+# id as a subscription id -> SubscriptionNotFound. Pinning it here also leaves the operator's
+# default az context alone.
+SUBSCRIPTION="${SUBSCRIPTION:-e04de2b6-2100-4637-9fac-6c8a0debd7a0}"
 RG="${RG:-anchor-gov-rg}"
 APP="${APP:-anchor-api}"
 ACR="${ACR:-anchoracrxvcecept2lc66}"
@@ -29,23 +34,26 @@ echo "▶ Deploying apps/api -> Azure Gov container app '$APP' (rg=$RG, acr=$ACR
 az account show >/dev/null 2>&1 || { echo "✗ az not logged in: az cloud set --name AzureUSGovernment && az login" >&2; exit 1; }
 cloud="$(az cloud show --query name -o tsv)"
 [ "$cloud" = "AzureUSGovernment" ] || { echo "✗ az cloud is '$cloud', expected AzureUSGovernment" >&2; exit 1; }
+SUB=(--subscription "$SUBSCRIPTION")
+az group show -n "$RG" "${SUB[@]}" -o none 2>/dev/null \
+  || { echo "✗ resource group '$RG' not reachable in subscription $SUBSCRIPTION — signed in with the right account? (az account list --all)" >&2; exit 1; }
 
 # 1) Build + push in ACR (no local Docker).
 echo "▶ Building image in ACR…"
-az acr build --registry "$ACR" --image "$IMAGE:$TAG" --image "$IMAGE:latest" \
+az acr build "${SUB[@]}" --registry "$ACR" --image "$IMAGE:$TAG" --image "$IMAGE:latest" \
   --build-arg "BUILD_SHA=$TAG" --file apps/api/Dockerfile "$ROOT" >/tmp/deploy-api-build.log 2>&1 \
   || { echo "✗ ACR build failed — see /tmp/deploy-api-build.log"; tail -20 /tmp/deploy-api-build.log; exit 1; }
 
 # 2) Resolve the immutable digest and pin the container to it.
-DIGEST="$(az acr repository show -n "$ACR" --image "$IMAGE:$TAG" --query digest -o tsv)"
+DIGEST="$(az acr repository show "${SUB[@]}" -n "$ACR" --image "$IMAGE:$TAG" --query digest -o tsv)"
 [ -n "$DIGEST" ] || { echo "✗ could not resolve digest for $IMAGE:$TAG" >&2; exit 1; }
-REF="$(az acr show -n "$ACR" --query loginServer -o tsv)/$IMAGE@$DIGEST"
+REF="$(az acr show "${SUB[@]}" -n "$ACR" --query loginServer -o tsv)/$IMAGE@$DIGEST"
 echo "▶ Pinning $APP to $REF"
-az webapp config container set -g "$RG" -n "$APP" --container-image-name "$REF" -o none
+az webapp config container set "${SUB[@]}" -g "$RG" -n "$APP" --container-image-name "$REF" -o none
 
 # 3) Restart and wait for readiness.
-az webapp restart -g "$RG" -n "$APP"
-host="$(az webapp show -g "$RG" -n "$APP" --query defaultHostName -o tsv)"
+az webapp restart "${SUB[@]}" -g "$RG" -n "$APP"
+host="$(az webapp show "${SUB[@]}" -g "$RG" -n "$APP" --query defaultHostName -o tsv)"
 # Wait for THIS BUILD to answer, not merely for something to return 200.
 #
 # During an App Service container swap the OLD container keeps serving, so polling /readyz until
@@ -68,7 +76,7 @@ if [ -z "$live" ]; then
   echo "✗ $APP is serving build '${last_seen:-<no build field>}', not '$TAG'." >&2
   echo "  The old container may still be serving, or the new one failed to start." >&2
   echo "  With RUN_MIGRATIONS_ON_BOOT=true a failing migration aborts startup — check:" >&2
-  echo "    az webapp log download -g $RG -n $APP --log-file /tmp/anchor-logs.zip" >&2
+  echo "    az webapp log download --subscription $SUBSCRIPTION -g $RG -n $APP --log-file /tmp/anchor-logs.zip" >&2
   echo "  A '<no build field>' above means the running image predates build-stamping;" >&2
   echo "  deploy once more and it will report properly." >&2
   exit 1
