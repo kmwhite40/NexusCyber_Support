@@ -288,7 +288,7 @@ export function parseAutoCloseResolvedDays(env: NodeJS.ProcessEnv): number {
 
 /** Microsoft's SSPR portal per cloud. A gov (GCC High) account cannot reset on the .com page. */
 const SSPR_DEFAULT: Record<Enclave, string> = {
-  gov: 'https://passwordreset.microsoftonline.us',
+  gov: 'https://passwordreset.activedirectory.windowsazure.us',
   commercial: 'https://passwordreset.microsoftonline.com',
 };
 

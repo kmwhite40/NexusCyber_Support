@@ -28,7 +28,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
 const config = vi.mocked(auth.config);
 
 const SSO_OFF = { oidcEnabled: false, oidcLabel: '', customerOidcEnabled: false, customerOidcLabel: '' };
-const GOV = 'https://passwordreset.microsoftonline.us';
+const GOV = 'https://passwordreset.activedirectory.windowsazure.us';
 
 beforeEach(() => {
   config.mockReset();
