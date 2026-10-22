@@ -6,7 +6,7 @@
 // every user for editing, so those refusals only surfaced as a failed save.
 import * as React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import TeamPage from '@/app/(app)/team/page';
 import { api, type Me, type PlatformUser } from '@/lib/api';
@@ -24,7 +24,12 @@ vi.mock('@/lib/api', async (importOriginal) => {
   return {
     ...actual,
     api: mock,
-    platformUsersApi: { ...actual.platformUsersApi, list: () => mock.get('/platform/users') },
+    platformUsersApi: {
+      ...actual.platformUsersApi,
+      list: () => mock.get('/platform/users'),
+      setAccess: (id: string, roleKeys: string[], scope: unknown) => mock.put(`/platform/users/${id}/access`, { roleKeys, scope }),
+      update: (id: string, b: unknown) => mock.patch(`/platform/users/${id}`, b),
+    },
     customersApi: { ...actual.customersApi, list: () => mock.get('/organizations').then((r: { data: unknown }) => r.data) },
   };
 });
@@ -114,5 +119,41 @@ describe('TeamPage for a delegated admin', () => {
     render(<TeamPage />);
     await userEvent.click(await screen.findByText('Tess Tier1'));
     expect(within(screen.getByRole('dialog')).getByRole('button', { name: /^save$/i })).toBeInTheDocument();
+  });
+});
+
+// An all-organizations account is only emailed about a customer's tickets when it also has a
+// per-org assignment for that customer. The dialog hid the org list in "all" mode, so saving
+// silently dropped those assignments — and the emails with them.
+describe('TeamPage for a SuperAdmin editing an all-organizations user', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authState.me = {
+      id: 'me', plane: 'nexus', email: 'root@nexus.example', organization_id: null,
+      roles: ['SuperAdmin'], capabilities: ['admin.superuser', 'admin.users.manage'], assigned_orgs: [], all_orgs: true,
+    } as Me;
+    authState.can = () => true;
+    const mixed = platformUser({ id: 'u-mix', display_name: 'Kai Mixed', roles: ['Tier1'], all_orgs: true, org_ids: [ORG_A] });
+    mockedApi.get.mockImplementation((url: string) => {
+      if (url === '/platform/users') return Promise.resolve({ data: [mixed], assignable_roles: ['Tier1', 'SuperAdmin'] });
+      if (url.startsWith('/organizations')) return Promise.resolve({ data: [{ id: ORG_A, name: 'Acme Federal' }, { id: ORG_B, name: 'Globex' }] });
+      return Promise.resolve({ data: [] });
+    });
+    mockedApi.put.mockResolvedValue({ id: 'u-mix' });
+    mockedApi.patch.mockResolvedValue({ id: 'u-mix' });
+  });
+
+  it('keeps the ticket-notification organizations when saving', async () => {
+    render(<TeamPage />);
+    await userEvent.click(await screen.findByText('Kai Mixed'));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText(/ticket notifications/i)).toBeInTheDocument();
+    expect(within(dialog).getByRole('checkbox', { name: 'Acme Federal' })).toBeChecked();
+    await userEvent.click(within(dialog).getByRole('checkbox', { name: 'Globex' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(mockedApi.put).toHaveBeenCalledWith('/platform/users/u-mix/access', {
+      roleKeys: ['Tier1'],
+      scope: { mode: 'all', notifyOrgIds: [ORG_A, ORG_B] },
+    }));
   });
 });

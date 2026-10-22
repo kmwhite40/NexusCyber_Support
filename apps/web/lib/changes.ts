@@ -349,6 +349,8 @@ export const changesApi = {
     api.post<SubmitCabResult>(`/changes/${id}/submit-cab`, body),
   vote: (id: string, vote: VoteValue, reason?: string) =>
     api.post<VoteResult>(`/changes/${id}/vote`, reason ? { vote, reason } : { vote }),
+  resendVoteRequest: (id: string) =>
+    api.post<{ resent: true; voters: number }>(`/changes/${id}/resend-vote-request`, {}),
   cancel: (id: string, reason?: string) =>
     api.post<{ status: 'cancelled' }>(`/changes/${id}/cancel`, reason ? { reason } : {}),
   pir: (id: string, outcome: PirOutcome, notes?: string) =>

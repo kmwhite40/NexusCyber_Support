@@ -3,7 +3,7 @@ import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AtSign } from 'lucide-react';
-import { auth, setToken, homePath, ApiError, oidcStartUrl, oidcCustomerStartUrl } from '@/lib/api';
+import { auth, setToken, homePath, takeReturnPath, ApiError, oidcStartUrl, oidcCustomerStartUrl } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
 import { Button, Card, Input, Badge } from '@/components/ui/primitives';
 import { BrandMark } from '@/components/ui/brand';
@@ -61,7 +61,7 @@ export default function LoginPage() {
       const { token, principal } = await p;
       setToken(token);
       await refresh();
-      router.push(homePath(principal.plane));
+      router.push(takeReturnPath() ?? homePath(principal.plane));
     } catch (e) {
       setError(e instanceof ApiError ? e.detail : 'Sign-in failed');
     } finally {

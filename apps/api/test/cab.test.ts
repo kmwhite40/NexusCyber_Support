@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  resolveWriteScope, resolveReadScope, holdsGlobalCabGrant, raisesChanges, type CabScopeActor,
+  resolveWriteScope, resolveReadScope, holdsGlobalCabGrant, raisesChanges, sodReason, type CabScopeActor,
 } from '../src/modules/cab.js';
 
 // A per-customer or single-org platform admin: holds cab.manage, but NOT the platform-wide
@@ -88,5 +88,25 @@ describe('raisesChanges — segregation of duties backstop', () => {
     // can() would resolve change.create for a superuser and lock break-glass admins out of
     // CAB configuration entirely; the literal list does not.
     expect(raisesChanges({ permissions: ['admin.superuser'] })).toBe(false);
+  });
+});
+
+// The bare rule ("use a role holding cab.manage without change.create") left an admin holding
+// five stacked roles with no idea which one to remove. The reason names the source.
+describe('sodReason — tells the blocked admin what to change', () => {
+  it('names the role that grants change.create and where to remove it', () => {
+    const r = sodReason(['Tier2']);
+    expect(r).toMatch(/^segregation of duties/);
+    expect(r).toContain('your Tier2 role');
+    expect(r).toContain('Platform users');
+  });
+  it('lists every granting role', () => {
+    expect(sodReason(['SecurityAnalyst', 'Tier2'])).toContain('your SecurityAnalyst and Tier2 roles');
+    expect(sodReason(['A', 'B', 'C'])).toContain('your A, B and C roles');
+  });
+  it('blames an elevation grant when no role carries it', () => {
+    const r = sodReason([]);
+    expect(r).toContain('active elevation');
+    expect(r).not.toContain('Platform users');
   });
 });

@@ -4,8 +4,9 @@ import { withSystemContext } from '../../src/db/pool.js';
 import { loadPrincipal } from '../../src/auth/principal.js';
 import {
   createChange, submitForCab, castVote, cancelChange, recordPir,
-  addComment, listComments, scheduleChange, transitionChange, getChange,
+  addComment, listComments, scheduleChange, transitionChange, getChange, resendVoteRequest,
 } from '../../src/modules/changes.js';
+import { subscribe, type DomainEvent } from '../../src/events/bus.js';
 import { putBoard, createTemplate, deleteTemplate } from '../../src/modules/cab.js';
 import type { Principal } from '../../src/types.js';
 
@@ -119,6 +120,32 @@ describeDb('change management + CAB voting (integration)', () => {
     expect(full.votes.length).toBe(2);
     expect(full.cab_tally).toMatchObject({ approve: 2, cast: 2, pending: 0 });
     expect(full.pir_outcome).toBe('successful');
+  });
+
+  // The first vote request carried no details or link; the board needs it again. A resend is
+  // a reminder to the SAME ballots — it never changes who votes.
+  it('resends the vote request to every ballot holder, for the raiser or a CAB admin only', async () => {
+    const sent: DomainEvent[] = [];
+    subscribe('change.cab_requested', (e) => { sent.push(e); });
+    const c = await createChange(agent, { title: 'Team Cross Communication', changeType: 'normal', organizationId: acmeId });
+
+    await expect(resendVoteRequest(agent, c.id)).rejects.toMatchObject({ status: 409 }); // still a draft
+    await submitForCab(agent, c.id, {});
+    const before = sent.length;
+
+    expect(await resendVoteRequest(agent, c.id)).toEqual({ resent: true, voters: 2 });     // the raiser
+    expect(await resendVoteRequest(manager, c.id)).toEqual({ resent: true, voters: 2 });   // a CAB admin
+    await expect(resendVoteRequest(analyst, c.id)).rejects.toMatchObject({ status: 403 }); // another raiser
+
+    await new Promise((r) => setTimeout(r, 0)); // handlers run on a microtask
+    const resent = sent.slice(before).filter((e) => e.data.change_id === c.id);
+    expect(resent).toHaveLength(2);
+    expect(resent[0].organization_id).toBe(acmeId);
+    expect(resent[0].data.vote_deadline).toBeTruthy();
+
+    const audited = await withSystemContext(async (sql) =>
+      (await sql.query(`SELECT count(*)::int AS n FROM audit_logs WHERE action='change.resend_vote_request' AND resource_id=$1`, [c.id])).rows[0].n);
+    expect(audited).toBe(2);
   });
 
   it('a CAB rejection rejects the change once passing is impossible', async () => {

@@ -33,7 +33,10 @@ const ASSIGNABLE_NEXUS_ROLES = [
   'SuperAdmin',
 ] as const;
 
-export type ScopeInput = { mode: 'all' } | { mode: 'orgs'; orgIds: string[] };
+// `notifyOrgIds` (all mode only) keeps per-org rows beside the org-NULL grant. They add no
+// access — the all-orgs grant already covers every org — but they are what makes the user a
+// covering agent for that org's ticket notifications (notifications-recipients.ts).
+export type ScopeInput = { mode: 'all'; notifyOrgIds?: string[] } | { mode: 'orgs'; orgIds: string[] };
 
 export interface PlatformUser {
   id: string;
@@ -393,7 +396,7 @@ async function assertNotLastSuperAdmin(sql: Sql, target: Target): Promise<void> 
 
 /**
  * Rewrite role_assignments so the user has exactly `roleKeys` at exactly `scope`.
- * - all  -> one org-NULL row per role
+ * - all  -> one org-NULL row per role, plus one row per (role, notify org)
  * - orgs -> one row per (role, org)
  */
 async function applyScope(sql: Sql, userId: string, roleKeys: string[], scope: ScopeInput): Promise<void> {
@@ -401,20 +404,20 @@ async function applyScope(sql: Sql, userId: string, roleKeys: string[], scope: S
   const ids = await Promise.all([...new Set(roleKeys)].map((k) => roleIdByKey(sql, k)));
   await sql.query(`DELETE FROM role_assignments WHERE user_id = $1`, [userId]);
   for (const roleId of ids) {
+    const orgIds = scope.mode === 'all' ? scope.notifyOrgIds ?? [] : scope.orgIds;
     if (scope.mode === 'all') {
       await sql.query(
         `INSERT INTO role_assignments (user_id, role_id, organization_id) VALUES ($1, $2, NULL)
          ON CONFLICT (user_id, role_id, organization_id) DO NOTHING`,
         [userId, roleId],
       );
-    } else {
-      for (const orgId of [...new Set(scope.orgIds)]) {
-        await sql.query(
-          `INSERT INTO role_assignments (user_id, role_id, organization_id) VALUES ($1, $2, $3)
-           ON CONFLICT (user_id, role_id, organization_id) DO NOTHING`,
-          [userId, roleId, orgId],
-        );
-      }
+    }
+    for (const orgId of [...new Set(orgIds)]) {
+      await sql.query(
+        `INSERT INTO role_assignments (user_id, role_id, organization_id) VALUES ($1, $2, $3)
+         ON CONFLICT (user_id, role_id, organization_id) DO NOTHING`,
+        [userId, roleId, orgId],
+      );
     }
   }
 }

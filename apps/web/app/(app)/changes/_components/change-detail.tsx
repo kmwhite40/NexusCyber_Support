@@ -36,6 +36,8 @@ export interface ChangeDetailPerms {
   create: boolean;
   vote: boolean;
   implement: boolean;
+  /** cab.manage — may resend a vote request on a change they did not raise. */
+  manageCab?: boolean;
 }
 
 export function ChangeDetail({
@@ -61,10 +63,12 @@ export function ChangeDetail({
   // freeze window in CAB settings and watch changes get scheduled straight through it with
   // no sign anywhere. So the scheduler is told, and the change is still scheduled.
   const [sched, setSched] = React.useState<ScheduleResult | null>(null);
+  const [notice, setNotice] = React.useState<string | null>(null);
 
   const changeId = change?.id;
   React.useEffect(() => {
     setErr(null);
+    setNotice(null);
     setPirOutcome('');
     setPirNotes('');
     setSched(null);
@@ -244,6 +248,16 @@ export function ChangeDetail({
               Advance to {next}
             </Button>
           )}
+          {change.status === 'cab_review' && (perms.manageCab || (perms.create && !!meId && change.created_by === meId)) && (
+            // Same ballots as the original request — a reminder never changes who votes.
+            <Button size="sm" variant="subtle" disabled={busy} onClick={() => run(async () => {
+              setNotice(null);
+              const r = await changesApi.resendVoteRequest(change.id);
+              setNotice(`Vote request sent again to ${r.voters} board member${r.voters === 1 ? '' : 's'}.`);
+            }, 'Failed to resend the vote request')}>
+              Resend vote request
+            </Button>
+          )}
           {CANCELLABLE.has(change.status) && (perms.implement || (!!meId && change.created_by === meId)) && (
             <Button size="sm" variant="ghost" disabled={busy} onClick={() => run(() => changesApi.cancel(change.id), 'Failed to cancel the change')}>
               Cancel change
@@ -264,6 +278,7 @@ export function ChangeDetail({
           </p>
         )}
 
+        {notice && <p role="status" className="text-xs text-success">{notice}</p>}
         {err && <p className="text-xs text-danger">{err}</p>}
       </CardBody>
     </Card>

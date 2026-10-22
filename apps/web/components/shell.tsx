@@ -3,6 +3,7 @@ import * as React from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { cn } from '@/lib/cn';
+import { rememberReturnPath } from '@/lib/api';
 import { useAuth } from './auth-context';
 import { Badge } from './ui/primitives';
 import { Avatar, AvatarFallback } from './ui/avatar';
@@ -61,7 +62,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
 
   React.useEffect(() => {
-    if (!loading && !me) router.replace('/login');
+    if (!loading && !me) {
+      rememberReturnPath(window.location.pathname + window.location.search);
+      router.replace('/login');
+    }
   }, [loading, me, router]);
 
   if (loading || !me) {

@@ -676,6 +676,34 @@ export async function cancelChange(actor: Principal, changeId: string, reason?: 
   });
 }
 
+/**
+ * Re-send the CAB vote request (change.cab_requested) for a change under review — a reminder,
+ * or a second copy when the first went out without what the board needed. It goes to the
+ * ballots cut at submit time and never adds or removes one: who judges a change is fixed
+ * when it is submitted. The raiser's own act, or a CAB administrator's (as submitForCab).
+ */
+export async function resendVoteRequest(actor: Principal, changeId: string) {
+  return withOrgContext(orgContextFor(actor), async (sql) => {
+    const change = (await sql.query('SELECT * FROM changes WHERE id=$1', [changeId])).rows[0];
+    if (!change) throw Errors.notFound('change not found');
+    const org = { organizationId: change.organization_id };
+    const raiser = change.created_by === actor.id && can(actor, 'change.create', org);
+    if (!raiser && !can(actor, 'cab.manage', org)) {
+      throw Errors.forbidden('only the change raiser or a CAB administrator may resend the vote request');
+    }
+    if (change.status !== 'cab_review') throw Errors.conflict(`change is ${change.status}, not awaiting a CAB vote`);
+    const voters = (await sql.query('SELECT voter_id FROM change_votes WHERE change_id=$1', [changeId])).rows.map((r) => r.voter_id as string);
+    await audit(actor, { action: 'change.resend_vote_request', organizationId: change.organization_id, resourceType: 'change', resourceId: changeId, detail: { voters: voters.length } });
+    publish('change.cab_requested', change.organization_id, {
+      change_id: changeId,
+      voter_ids: voters,
+      vote_deadline: change.vote_deadline ? new Date(change.vote_deadline).toISOString() : null,
+      resent: true,
+    });
+    return { resent: true as const, voters: voters.length };
+  });
+}
+
 export type PirOutcome = 'successful' | 'failed' | 'rolled_back' | 'partial';
 
 /** Record the post-implementation review; closes the change when it is in `review`. */

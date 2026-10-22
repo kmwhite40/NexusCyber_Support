@@ -28,6 +28,18 @@ export interface TemplateContext {
   changeTitle?: string;
   voteDeadline?: string;
   windowStart?: string;
+  // The change record, for the vote request (change.cab_requested) only.
+  changeType?: string;
+  changeRisk?: string;
+  changeImpact?: string;
+  changeLikelihood?: string;
+  changeRaisedBy?: string;
+  changeWindowStart?: string;
+  changeWindowEnd?: string;
+  changeDescription?: string;
+  changeImplementationPlan?: string;
+  changeTestPlan?: string;
+  changeBackoutPlan?: string;
   [k: string]: unknown;
 }
 
@@ -69,10 +81,10 @@ function titleize(s?: string): string {
 // Free-text the customer wrote. Desk alerts carry enough to triage from the
 // inbox, not the whole mail thread (ingested email bodies can be huge).
 const EXCERPT_MAX = 500;
-function excerpt(s?: string): string {
+function excerpt(s?: string, max = EXCERPT_MAX): string {
   const t = (s ?? '').replace(/\r\n/g, '\n').trim();
   if (!t) return '';
-  return t.length <= EXCERPT_MAX ? t : `${t.slice(0, EXCERPT_MAX).trimEnd()}…`;
+  return t.length <= max ? t : `${t.slice(0, max).trimEnd()}…`;
 }
 
 // "Label: value" rows, dropping the ones we have no data for — a desk alert
@@ -89,6 +101,30 @@ function wrap(title: string, lines: string[]): RenderedTemplate {
 }
 
 type Renderer = (c: TemplateContext) => RenderedTemplate;
+
+/**
+ * Where the email's subject lives in the web app, so every notification is one click from it.
+ * Tickets (and their SLA clocks and approvals) share /tickets/:id across both planes. The CSAT
+ * survey is deliberately absent: it carries its own public, sign-in-free link.
+ */
+function resourceLink(eventType: string, c: TemplateContext): { url: string; label: string } | null {
+  if (!c.webOrigin) return null;
+  if (eventType.startsWith('change.')) {
+    return c.changeId ? { url: `${c.webOrigin}/changes?change=${encodeURIComponent(c.changeId)}`, label: 'Open the change' } : null;
+  }
+  if (eventType.startsWith('ticket.') || eventType.startsWith('sla.') || eventType.startsWith('approval.')) {
+    return c.ticketId ? { url: `${c.webOrigin}/tickets/${encodeURIComponent(c.ticketId)}`, label: 'Open the ticket' } : null;
+  }
+  if (eventType.startsWith('posture.')) return { url: `${c.webOrigin}/posture`, label: 'Open security posture' };
+  if (eventType.startsWith('oncall.')) return { url: `${c.webOrigin}/oncall`, label: 'Open on-call' };
+  return null;
+}
+
+/** "Label: url" for the text body, a link for the HTML one. Empty when there is no link. */
+function linkLines(link: { url: string; label: string } | null): { text: string[]; html: string } {
+  if (!link) return { text: [], html: '' };
+  return { text: [`${link.label}: ${link.url}`, ''], html: `<p><a href="${escapeHtml(link.url)}">${escapeHtml(link.label)} &rarr;</a></p>` };
+}
 
 const TEMPLATES: Record<string, Renderer> = {
   // Agent-facing: the service desk triages straight from this email, so it carries
@@ -151,6 +187,7 @@ const TEMPLATES: Record<string, Renderer> = {
   },
   'ticket.acknowledged': (c) => {
     const brand = 'Anchor Support';
+    const link = linkLines(resourceLink('ticket.acknowledged', c));
     const name = (c.customerName ?? '').trim() || 'there';
     const summary = c.subject || '(no summary provided)';
     const when = fmtWhen(c.submittedAt);
@@ -170,6 +207,7 @@ const TEMPLATES: Record<string, Renderer> = {
       '',
       'Please keep this ticket number for reference in any future communication about this request.',
       '',
+      ...link.text,
       'Thank you,',
       brand,
       'Automated Notification',
@@ -186,6 +224,7 @@ const TEMPLATES: Record<string, Renderer> = {
       `<li><strong>Priority:</strong> ${escapeHtml(priority)}</li>` +
       `</ul>` +
       `<p>Please keep this ticket number for reference in any future communication about this request.</p>` +
+      link.html +
       `<p>Thank you,<br/>${brand}<br/><em>Automated Notification</em></p>`;
     return { subject: `[${c.ticketNumber ?? 'Ticket'}] We received your support request`, html, text };
   },
@@ -200,6 +239,7 @@ const TEMPLATES: Record<string, Renderer> = {
         `Subject: ${c.subject ?? ''}`,
       ].filter(Boolean));
     }
+    const link = linkLines(resourceLink('ticket.commented', c));
     const text = [
       `Hello,`,
       '',
@@ -212,6 +252,7 @@ const TEMPLATES: Record<string, Renderer> = {
       '',
       `You can reply to this email or sign in to the support portal to continue the conversation. Please keep ticket ${c.ticketNumber} in the subject for reference.`,
       '',
+      ...link.text,
       'Thank you,',
       brand,
       'Automated Notification',
@@ -224,11 +265,13 @@ const TEMPLATES: Record<string, Renderer> = {
         : `<p>Please sign in to the support portal to view the latest update.</p>`) +
       `<p><strong>Subject:</strong> ${escapeHtml(c.subject ?? '')}</p>` +
       `<p>You can reply to this email or sign in to continue the conversation. Please keep ticket ${escapeHtml(c.ticketNumber ?? '')} referenced.</p>` +
+      link.html +
       `<p>Thank you,<br/>${brand}<br/><em>Automated Notification</em></p>`;
     return { subject: `[${c.ticketNumber}] New reply from ${brand}`, html, text };
   },
   'ticket.resolved': (c) => {
     const brand = 'Anchor Support';
+    const link = linkLines(resourceLink('ticket.resolved', c));
     const text = [
       `Hello,`,
       '',
@@ -241,6 +284,7 @@ const TEMPLATES: Record<string, Renderer> = {
       '',
       `If your issue is fully addressed, no action is needed. If you still need help, reply to this email (keep ticket ${c.ticketNumber} in the subject) or sign in to the portal to reopen the request.`,
       '',
+      ...link.text.filter(Boolean),
       'Thank you for letting us help,',
       brand,
       'Automated Notification',
@@ -255,6 +299,7 @@ const TEMPLATES: Record<string, Renderer> = {
       (c.resolutionCode ? `<li><strong>Resolution:</strong> ${escapeHtml(c.resolutionCode)}</li>` : '') +
       `</ul>` +
       `<p>If your issue is fully addressed, no action is needed. If you still need help, reply to this email (keep ticket ${escapeHtml(c.ticketNumber ?? '')} in the subject) or sign in to the portal to reopen the request.</p>` +
+      link.html +
       `<p>Thank you for letting us help,<br/>${brand}<br/><em>Automated Notification</em></p>`;
     return { subject: `[${c.ticketNumber}] Your request has been resolved`, html, text };
   },
@@ -354,17 +399,63 @@ const TEMPLATES: Record<string, Renderer> = {
     wrap(`New posture finding (${c.severity ?? 'finding'})`, [
       `A new ${c.severity ?? ''} posture finding was created for ${c.orgName ?? 'your organization'}.`,
     ]),
-  // CAB voting lifecycle (spec 2026-06-25). No sensitive detail beyond the change's own
-  // title/id — never risk/impact narrative, votes, or reasons.
+  // CAB voting lifecycle (spec 2026-06-25). The vote request carries the change record and a
+  // deep link so a board member can judge it from the email; recipients are only the members
+  // holding a ballot on it (notifications-recipients.ts). The other change.* notices stay at
+  // title only — never votes or reasons.
   'change.cab_requested': (c) => {
+    const brand = 'Anchor Support';
     const title = c.changeTitle ?? '(untitled change)';
-    const deadline = fmtWhen(c.voteDeadline);
-    return wrap(`CAB vote requested: ${title}`, [
-      `A change is awaiting your CAB vote${c.orgName ? ` for ${c.orgName}` : ''}.`,
-      `Change: ${title}`,
-      deadline ? `Vote deadline: ${deadline}` : '',
-      'Please cast your vote (approve, reject, or abstain) in the portal before the deadline.',
-    ].filter(Boolean));
+    const link = c.webOrigin && c.changeId ? `${c.webOrigin}/changes?change=${encodeURIComponent(c.changeId)}` : '';
+    const start = fmtWhen(c.changeWindowStart);
+    const end = fmtWhen(c.changeWindowEnd);
+    const rows = detailRows([
+      ['Change', title],
+      ['Organization', c.orgName],
+      ['Type', titleize(c.changeType)],
+      ['Risk', titleize(c.changeRisk)],
+      ['Impact', titleize(c.changeImpact)],
+      ['Likelihood', titleize(c.changeLikelihood)],
+      ['Requested By', c.changeRaisedBy],
+      ['Planned Window', start && end ? `${start} – ${end}` : start],
+      ['Vote Deadline', fmtWhen(c.voteDeadline)],
+    ]);
+    // Plans can run long; the email carries enough to judge, the portal has the rest.
+    const sections = detailRows([
+      ['Description', excerpt(c.changeDescription, 1500)],
+      ['Implementation plan', excerpt(c.changeImplementationPlan, 1500)],
+      ['Test plan', excerpt(c.changeTestPlan, 1500)],
+      ['Backout plan', excerpt(c.changeBackoutPlan, 1500)],
+    ]);
+    const headline = `A change is awaiting your CAB vote${c.orgName ? ` for ${c.orgName}` : ''}.`;
+    const ask = 'Please cast your vote (approve, reject, or abstain) in the portal before the deadline.';
+    const text = [
+      headline,
+      '',
+      'Change Details:',
+      ...rows.map(([k, v]) => `${k}: ${v}`),
+      ...sections.flatMap(([k, v]) => ['', `${k}:`, v]),
+      '',
+      ask,
+      link ? `Open the change and vote: ${link}` : 'Sign in to the portal to open the change.',
+      '',
+      brand,
+      'Automated Notification',
+    ].join('\n');
+    const html =
+      `<h2>CAB vote requested: ${escapeHtml(title)}</h2>` +
+      `<p>${escapeHtml(headline)}</p>` +
+      `<p><strong>Change Details:</strong></p>` +
+      `<ul>` +
+      rows.map(([k, v]) => `<li><strong>${k}:</strong> ${escapeHtml(v)}</li>`).join('') +
+      `</ul>` +
+      sections.map(([k, v]) => `<p><strong>${k}:</strong></p><blockquote style="white-space:pre-wrap">${escapeHtml(v)}</blockquote>`).join('') +
+      `<p>${escapeHtml(ask)}</p>` +
+      (link
+        ? `<p><a href="${escapeHtml(link)}">Open the change and vote &rarr;</a></p>`
+        : `<p>Sign in to the portal to open the change.</p>`) +
+      `<p>${brand}<br/><em>Automated Notification</em></p>`;
+    return { subject: `CAB vote requested: ${title}`, html, text: `CAB vote requested: ${title}\n\n${text}` };
   },
   'change.vote_cast': (c) => {
     const title = c.changeTitle ?? '(untitled change)';
@@ -411,8 +502,13 @@ const TEMPLATES: Record<string, Renderer> = {
 
 export function renderTemplate(eventType: string, ctx: TemplateContext): RenderedTemplate {
   const renderer = TEMPLATES[eventType];
-  if (renderer) return renderer(ctx);
-  return wrap(`Notification for ${ctx.orgName ?? 'your organization'}`, [
-    `Event: ${eventType}`,
-  ]);
+  const out = renderer
+    ? renderer(ctx)
+    : wrap(`Notification for ${ctx.orgName ?? 'your organization'}`, [`Event: ${eventType}`]);
+  // Templates that place the link themselves (ticket.created, the vote request, the customer
+  // letters) already carry it; the short wrap() notices get it appended.
+  const link = resourceLink(eventType, ctx);
+  if (!link || out.text.includes(link.url)) return out;
+  const extra = linkLines(link);
+  return { ...out, text: `${out.text}\n\n${extra.text[0]}`, html: out.html + extra.html };
 }
