@@ -190,4 +190,29 @@ describe('ChangeDetail', () => {
     await userEvent.click(screen.getByRole('button', { name: /submit to cab/i }));
     expect(await screen.findByText(/no CAB voters/i)).toBeInTheDocument();
   });
+
+  // The first vote request went out without details or a link; the raiser or a CAB admin can
+  // send it again to the same board.
+  it('lets the raiser resend the vote request while the change is under CAB review', async () => {
+    mockedApi.post.mockResolvedValue({ resent: true, voters: 6 });
+    render(<ChangeDetail change={makeChange({ status: 'cab_review' })} meId={ME} perms={ALL} onChanged={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /resend vote request/i }));
+    expect(mockedApi.post).toHaveBeenCalledWith('/changes/c1/resend-vote-request', {});
+    expect(await screen.findByText(/sent again to 6 board members/i)).toBeInTheDocument();
+  });
+
+  it('offers the resend to a CAB admin who did not raise the change, and to nobody else', () => {
+    const other = makeChange({ status: 'cab_review', created_by: 'someone-else' });
+    const { unmount } = render(<ChangeDetail change={other} meId={ME} perms={{ ...ALL, manageCab: true }} onChanged={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /resend vote request/i })).toBeInTheDocument();
+    unmount();
+    render(<ChangeDetail change={other} meId={ME} perms={ALL} onChanged={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: /resend vote request/i })).not.toBeInTheDocument();
+  });
+
+  it('does not offer a resend outside CAB review', () => {
+    render(<ChangeDetail change={makeChange({ status: 'draft' })} meId={ME} perms={{ ...ALL, manageCab: true }} onChanged={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: /resend vote request/i })).not.toBeInTheDocument();
+  });
 });
+

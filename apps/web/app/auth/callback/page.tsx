@@ -1,7 +1,7 @@
 'use client';
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { auth, setToken, homePath } from '@/lib/api';
+import { auth, setToken, homePath, takeReturnPath } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
 import { BrandMark } from '@/components/ui/brand';
 
@@ -33,7 +33,7 @@ export default function OidcCallbackPage() {
         window.history.replaceState(null, '', '/auth/callback');
         const me = await auth.me();
         await refresh();
-        router.replace(homePath(me.plane));
+        router.replace(takeReturnPath() ?? homePath(me.plane));
       } catch {
         setToken(null);
         setError('Could not establish a session. Please try signing in again.');

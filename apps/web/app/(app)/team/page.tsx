@@ -152,7 +152,8 @@ function UserModal({
   const [error, setError] = React.useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
 
-  const scope: OrgScope = scopeMode === 'all' ? { mode: 'all' } : { mode: 'orgs', orgIds };
+  // In "all" mode the checked orgs only route ticket notifications (see OrgScope).
+  const scope: OrgScope = scopeMode === 'all' ? { mode: 'all', notifyOrgIds: orgIds } : { mode: 'orgs', orgIds };
   const toggleRole = (r: string) => setRoles((s) => s.includes(r) ? s.filter((x) => x !== r) : [...s, r]);
   const toggleOrg = (id: string) => setOrgIds((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
 
@@ -280,16 +281,17 @@ function UserModal({
           </label>
         </div>
         {!isSuper && <p className="mt-1 text-[11px] text-muted">Only a SuperAdmin can grant all-organizations scope.</p>}
-        {scopeMode === 'orgs' && (
-          <div className="mt-2 max-h-44 space-y-1 overflow-auto rounded-md border border-border p-2">
-            {orgs.length === 0 ? <p className="text-xs text-muted">No organizations.</p> : orgs.map((o) => (
-              <label key={o.id} className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-surface-2">
-                <input type="checkbox" checked={orgIds.includes(o.id)} onChange={() => toggleOrg(o.id)} />
-                {o.name}
-              </label>
-            ))}
-          </div>
+        {scopeMode === 'all' && (
+          <p className="mt-2 text-[11px] text-muted">Ticket notifications: an all-organizations account is emailed about a customer&apos;s tickets only for the organizations ticked below. Ticking one grants no extra access.</p>
         )}
+        <div className="mt-2 max-h-44 space-y-1 overflow-auto rounded-md border border-border p-2">
+          {orgs.length === 0 ? <p className="text-xs text-muted">No organizations.</p> : orgs.map((o) => (
+            <label key={o.id} className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-surface-2">
+              <input type="checkbox" checked={orgIds.includes(o.id)} onChange={() => toggleOrg(o.id)} />
+              {o.name}
+            </label>
+          ))}
+        </div>
       </div>
 
       {error && <p className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">{error}</p>}

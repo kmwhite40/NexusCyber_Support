@@ -27,6 +27,7 @@ export default function ChangesPage() {
     implement: can('change.implement'),
   };
   const canManageCab = can('cab.manage');
+  const detailPerms = { ...perms, manageCab: canManageCab };
 
   // CAB config is per organization. A customer admin configures their own org and gets no
   // picker; a nexus admin chooses which customer's board they are editing. Neither ever
@@ -70,6 +71,12 @@ export default function ChangesPage() {
   const open = React.useCallback((id: string) => {
     changesApi.get(id).then(setSel).catch(() => {});
   }, []);
+
+  // Deep link: /changes?change=<id> (the CAB vote-request email) opens that change.
+  React.useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get('change');
+    if (id) open(id);
+  }, [open]);
 
   /** Re-read the open change and the list after any mutation. */
   const refresh = React.useCallback(() => {
@@ -204,7 +211,7 @@ export default function ChangesPage() {
       {view === 'list' && (
         <div className="grid gap-5 lg:grid-cols-[1fr_400px]">
           <ChangeList rows={rows} onOpen={open} />
-          <ChangeDetail change={sel} meId={me?.id} perms={perms} onChanged={refresh} />
+          <ChangeDetail change={sel} meId={me?.id} perms={detailPerms} onChanged={refresh} />
         </div>
       )}
     </div>

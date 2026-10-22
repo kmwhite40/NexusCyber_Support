@@ -20,6 +20,7 @@ function makeSql(opts: { cloud: string; emailCap: string; teamsCap: string; reci
       return { rows: [{ requester_id: 'r1', assigned_agent_id: 'ag1', organization_id: 'org-1' }] };
     }
     if (text.includes("u.plane = 'nexus'")) return { rows: opts.recipients }; // covering agents
+    if (text.includes('FROM change_votes')) return { rows: opts.recipients }; // CAB ballots
     return { rows: [] }; // usersByIds (assignee) — covered by covering-agents above
   });
   return { sql: { query } as any, inserts };
@@ -108,5 +109,20 @@ describe('dispatch', () => {
     const email = inserts.find((p) => p[2] === 'email' && p[4] === 'sent');
     expect(email).toBeTruthy();
     expect(email[7]).toBe(2); // attempts column reflects the retry
+  });
+
+  // A vote request is addressed to each board member. Teams is one shared channel post that
+  // names nobody, so letting it win the fallback chain meant no member was ever emailed.
+  it('emails every board member a vote request even when Teams is available', async () => {
+    const { sql, inserts } = makeSql({
+      cloud: 'commercial', emailCap: 'supported', teamsCap: 'supported',
+      recipients: [{ user_id: 'v1', email: 'a@x.gov' }, { user_id: 'v2', email: 'b@x.gov' }],
+    });
+    const adapter = adapterStub();
+    const cab: DomainEvent = { ...evt('change.cab_requested'), data: { change_id: 'chg-1' } };
+    await dispatch(sql, 'org-1', cab, adapter);
+    expect(adapter.sendTeams).not.toHaveBeenCalled();
+    expect(adapter.sendEmail).toHaveBeenCalledTimes(2);
+    expect(inserts.some((p) => p[2] === 'teams')).toBe(false);
   });
 });

@@ -44,9 +44,31 @@ async function ticketDetails(
  *  runs on the admin pool, so RLS does not bound it) — harmless today since a
  *  mis-addressed event already resolves zero recipients, but a mismatched org here should
  *  still surface nothing rather than another tenant's change title. */
-async function changeDetails(sql: Sql, changeId: string | undefined, orgId: string | null): Promise<{ title?: string }> {
+interface ChangeDetails {
+  title?: string;
+  change_type?: string;
+  risk?: string;
+  impact?: string | null;
+  likelihood?: string | null;
+  description?: string | null;
+  implementation_plan?: string | null;
+  test_plan?: string | null;
+  backout_plan?: string | null;
+  window_start?: Date | null;
+  window_end?: Date | null;
+  raised_by?: string | null;
+}
+
+async function changeDetails(sql: Sql, changeId: string | undefined, orgId: string | null): Promise<ChangeDetails> {
   if (!changeId) return {};
-  const { rows } = await sql.query('SELECT title FROM changes WHERE id = $1 AND organization_id = $2', [changeId, orgId]);
+  const { rows } = await sql.query(
+    `SELECT c.title, c.change_type, c.risk, c.impact, c.likelihood, c.description,
+            c.implementation_plan, c.test_plan, c.backout_plan, c.window_start, c.window_end,
+            COALESCE(u.display_name, u.email) AS raised_by
+       FROM changes c LEFT JOIN users u ON u.id = c.created_by
+      WHERE c.id = $1 AND c.organization_id = $2`,
+    [changeId, orgId],
+  );
   return rows[0] ?? {};
 }
 
@@ -133,10 +155,11 @@ export async function dispatch(
   const t = evt.type.startsWith('ticket.') || evt.type.startsWith('csat.') || evt.type.startsWith('approval.')
     ? await ticketDetails(sql, ref)
     : {};
-  // change.* events carry only change_id — look the title up once (never risk/impact/plan
-  // text; templates surface only title + id, per the "nothing sensitive" requirement).
+  // change.* events carry only change_id — look the record up once. Only the vote request
+  // (change.cab_requested) renders more than the title: a board member judges from it.
   const changeRef = d.change_id as string | undefined;
-  const c = evt.type.startsWith('change.') ? await changeDetails(sql, changeRef, orgId) : {};
+  const c: ChangeDetails = evt.type.startsWith('change.') ? await changeDetails(sql, changeRef, orgId) : {};
+  const iso = (v?: Date | null) => (v ? new Date(v).toISOString() : undefined);
   const tpl = renderTemplate(evt.type, {
     orgName: await orgName(sql, orgId),
     ticketId: ref,
@@ -163,12 +186,25 @@ export async function dispatch(
     changeTitle: c.title,
     voteDeadline: d.vote_deadline,
     windowStart: d.window_start,
+    changeType: c.change_type,
+    changeRisk: c.risk,
+    changeImpact: c.impact ?? undefined,
+    changeLikelihood: c.likelihood ?? undefined,
+    changeRaisedBy: c.raised_by ?? undefined,
+    changeWindowStart: iso(c.window_start),
+    changeWindowEnd: iso(c.window_end),
+    changeDescription: c.description ?? undefined,
+    changeImplementationPlan: c.implementation_plan ?? undefined,
+    changeTestPlan: c.test_plan ?? undefined,
+    changeBackoutPlan: c.backout_plan ?? undefined,
   });
 
   // Purely customer-facing messages must be email-only — never posted to the
-  // internal Teams channel via the fallback chain.
+  // internal Teams channel via the fallback chain. So is the CAB vote request: it is
+  // addressed to each board member, and a Teams post names nobody.
   const emailOnly =
-    evt.type === 'ticket.acknowledged' || evt.type === 'csat.survey_created' || evt.type.startsWith('approval.');
+    evt.type === 'ticket.acknowledged' || evt.type === 'csat.survey_created' || evt.type.startsWith('approval.') ||
+    evt.type === 'change.cab_requested';
   const channelOrder: Channel[] = emailOnly ? ['email'] : ['teams', 'email'];
   for (const channel of channelOrder) {
     const cap = await capability(sql, cloud, channel);

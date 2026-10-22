@@ -386,7 +386,7 @@ export async function registerRoutes(app: FastifyInstance) {
 
   // ---------------- Platform user administration (nexus staff) ----------------
   const scopeSchema = z.union([
-    z.object({ mode: z.literal('all') }),
+    z.object({ mode: z.literal('all'), notifyOrgIds: z.array(z.string().uuid()).optional() }),
     z.object({ mode: z.literal('orgs'), orgIds: z.array(z.string().uuid()) }),
   ]);
 
@@ -1290,6 +1290,12 @@ export async function registerRoutes(app: FastifyInstance) {
       .object({ vote: z.enum(['approve', 'reject', 'abstain']), reason: z.string().optional() })
       .parse(req.body);
     return changes.castVote(p, id, body.vote, body.reason);
+  });
+
+  app.post('/api/v1/changes/:id/resend-vote-request', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return changes.resendVoteRequest(p, id);
   });
 
   app.post('/api/v1/changes/:id/cancel', async (req) => {

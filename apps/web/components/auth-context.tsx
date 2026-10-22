@@ -1,7 +1,7 @@
 'use client';
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { auth, setToken, type Me } from '@/lib/api';
+import { auth, setToken, markSignedOut, type Me } from '@/lib/api';
 
 interface AuthState {
   me: Me | null;
@@ -35,6 +35,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = React.useCallback(() => {
     setToken(null);
+    markSignedOut();
     setMe(null);
     // Reset the welcome dialog so it shows again on the next login.
     try { sessionStorage.removeItem('anchor-welcome-seen'); } catch { /* ignore */ }

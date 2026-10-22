@@ -71,6 +71,40 @@ export function homePath(plane: 'nexus' | 'customer' | undefined): string {
   return plane === 'customer' ? '/portal' : '/dashboard';
 }
 
+// Where a signed-out visitor was headed (e.g. a change linked from a CAB vote-request email),
+// so sign-in — password or SSO, which returns to this tab — lands there instead of home.
+const RETURN_KEY = 'anchor-return-to';
+const SIGNED_OUT_KEY = 'anchor-signed-out';
+
+export function rememberReturnPath(path: string): void {
+  try {
+    // Logging out also drops the shell into its signed-out redirect; that page is not a
+    // destination, and the next person to sign in on this tab should not land on it.
+    if (sessionStorage.getItem(SIGNED_OUT_KEY)) {
+      sessionStorage.removeItem(SIGNED_OUT_KEY);
+      return;
+    }
+    sessionStorage.setItem(RETURN_KEY, path);
+  } catch { /* storage blocked: sign-in just lands on home */ }
+}
+
+export function markSignedOut(): void {
+  try {
+    sessionStorage.removeItem(RETURN_KEY);
+    sessionStorage.setItem(SIGNED_OUT_KEY, '1');
+  } catch { /* ignore */ }
+}
+
+/** The remembered path, consumed once. Same-site paths only — never "//host", an open redirect. */
+export function takeReturnPath(): string | null {
+  let path: string | null = null;
+  try {
+    path = sessionStorage.getItem(RETURN_KEY);
+    sessionStorage.removeItem(RETURN_KEY);
+  } catch { /* ignore */ }
+  return path && path.startsWith('/') && !path.startsWith('//') && !path.startsWith('/\\') ? path : null;
+}
+
 export interface Me {
   id: string;
   plane: 'nexus' | 'customer';
@@ -599,7 +633,8 @@ export interface PlatformUser {
   org_ids: string[];
   created_at: string;
 }
-export type OrgScope = { mode: 'all' } | { mode: 'orgs'; orgIds: string[] };
+// notifyOrgIds (all mode): per-org assignments kept for ticket notifications — they add no access.
+export type OrgScope = { mode: 'all'; notifyOrgIds?: string[] } | { mode: 'orgs'; orgIds: string[] };
 
 // ---- Per-customer Entra/Intune device sync ----
 // The client secret is write-only by design: it is POSTed on configure and never returned by

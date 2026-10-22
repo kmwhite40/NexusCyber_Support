@@ -7,7 +7,7 @@
 // — every tenant inherits the global default), which means RLS alone cannot protect them
 // from writes. So every mutation here resolves an explicit scope first: `cab.manage` for
 // the actor's own org, and the platform-wide `cab.manage.global` for any org-NULL row.
-import { withOrgContext, type Sql } from '../db/pool.js';
+import { withOrgContext, withSystemContext, type Sql } from '../db/pool.js';
 import { orgContextFor } from '../auth/principal.js';
 import { authorize, can } from '../authz/pdp.js';
 import { audit } from './audit.js';
@@ -115,8 +115,38 @@ export function raisesChanges(actor: { permissions: string[] }): boolean {
   return actor.permissions.includes('change.create');
 }
 
-const SOD_REASON =
-  'segregation of duties: a principal that can raise changes (change.create) may not configure the CAB that judges them — use a role holding cab.manage without change.create';
+/**
+ * The 403 reason for a raiser trying to configure the CAB. Pure. Names where `change.create`
+ * comes from — the bare rule left an admin with several stacked roles guessing which to drop.
+ * `grantingRoles` empty means no role carries it, so a JIT elevation grant must.
+ */
+export function sodReason(grantingRoles: string[]): string {
+  const rule = 'segregation of duties: you can raise changes (change.create), so you may not configure the CAB that judges them.';
+  if (!grantingRoles.length) {
+    return `${rule} It comes from an active elevation grant — wait for it to expire, or ask a CAB administrator who cannot raise changes.`;
+  }
+  const names = grantingRoles.length === 1
+    ? grantingRoles[0]
+    : `${grantingRoles.slice(0, -1).join(', ')} and ${grantingRoles[grantingRoles.length - 1]}`;
+  const noun = grantingRoles.length === 1 ? 'role' : 'roles';
+  return `${rule} It comes from your ${names} ${noun} — remove ${grantingRoles.length === 1 ? 'it' : 'them'} under Platform users, or ask a CAB administrator who cannot raise changes.`;
+}
+
+/** Which of the actor's roles carry `change.create` literally (see `raisesChanges`). */
+async function changeRaisingRoles(actor: Principal): Promise<string[]> {
+  if (!actor.roles.length) return [];
+  return withSystemContext(async (sql) =>
+    (await sql.query(
+      `SELECT DISTINCT r.key FROM roles r JOIN role_permissions rp ON rp.role_id = r.id
+        WHERE r.key = ANY($1) AND rp.permission_key = 'change.create' ORDER BY r.key`,
+      [actor.roles],
+    )).rows.map((r) => r.key as string));
+}
+
+/** Refuse a raiser, saying which grant to remove. */
+async function assertNotRaiser(actor: Principal): Promise<void> {
+  if (raisesChanges(actor)) throw Errors.forbidden(sodReason(await changeRaisingRoles(actor)));
+}
 
 function scopeActor(actor: Principal): CabScopeActor {
   return {
@@ -191,7 +221,7 @@ export async function getBoard(actor: Principal, orgId?: string | null) {
 /** Create or update the org's default standing board and its members (cab.manage). */
 export async function putBoard(actor: Principal, input: BoardInput) {
   // Composing the board is the act SoD exists to separate from raising changes.
-  if (raisesChanges(actor)) throw Errors.forbidden(SOD_REASON);
+  await assertNotRaiser(actor);
   const org = authorizeWrite(actor, input.organizationId);
   const members = input.members ?? [];
   return withOrgContext(orgContextFor(actor), async (sql) => {
@@ -303,9 +333,7 @@ export async function createTemplate(
 ) {
   // A `standard` template is a standing PRE-APPROVAL: changes created from it skip the CAB
   // entirely. Authoring one is therefore a CAB act, and closed to anyone who raises changes.
-  if ((input.changeType ?? 'normal') === 'standard' && raisesChanges(actor)) {
-    throw Errors.forbidden(SOD_REASON);
-  }
+  if ((input.changeType ?? 'normal') === 'standard') await assertNotRaiser(actor);
   const org = authorizeWrite(actor, input.organizationId);
   return withOrgContext(orgContextFor(actor), async (sql) => {
     const row = (

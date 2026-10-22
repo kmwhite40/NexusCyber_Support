@@ -118,20 +118,49 @@ describe('renderTemplate', () => {
   });
 
   describe('CAB voting lifecycle', () => {
-    it('cab_requested asks the board member to vote, with the deadline, and no sensitive detail', () => {
+    // Board members asked to vote from the email itself: it carries the change record and a
+    // link straight to it, not just a title and "go find it in the portal".
+    it('cab_requested carries the change details and a direct link to the change', () => {
       const out = renderTemplate('change.cab_requested', {
         orgName: 'Acme',
+        webOrigin: 'https://anchor.example',
         changeTitle: 'Upgrade firewall firmware',
         changeId: 'chg-1',
         voteDeadline: '2026-06-16T14:30:00.000Z',
+        changeType: 'normal',
+        changeRisk: 'high',
+        changeImpact: 'medium',
+        changeLikelihood: 'low',
+        changeRaisedBy: 'Dana Raiser',
+        changeWindowStart: '2026-06-20T02:00:00.000Z',
+        changeWindowEnd: '2026-06-20T04:00:00.000Z',
+        changeDescription: 'Move the edge firewalls to 7.4.3.',
+        changeImplementationPlan: 'Fail over, upgrade standby, fail back.',
+        changeTestPlan: 'VPN and web reachability checks.',
+        changeBackoutPlan: 'Reinstall 7.2.8 from the saved image.',
       });
-      expect(out.subject.toLowerCase()).toContain('vote requested');
-      expect(out.text).toContain('Upgrade firewall firmware');
-      expect(out.text).toContain('Vote deadline: 2026-06-16 14:30 UTC');
+      expect(out.subject).toBe('CAB vote requested: Upgrade firewall firmware');
+      for (const want of [
+        'Upgrade firewall firmware', 'Organization: Acme', 'Type: Normal', 'Risk: High', 'Impact: Medium',
+        'Likelihood: Low', 'Requested By: Dana Raiser', 'Planned Window: 2026-06-20 02:00 UTC – 2026-06-20 04:00 UTC',
+        'Vote Deadline: 2026-06-16 14:30 UTC', 'Move the edge firewalls to 7.4.3.', 'Fail over, upgrade standby, fail back.',
+        'VPN and web reachability checks.', 'Reinstall 7.2.8 from the saved image.',
+        'https://anchor.example/changes?change=chg-1',
+      ]) expect(out.text).toContain(want);
+      expect(out.html).toContain('<a href="https://anchor.example/changes?change=chg-1">');
       expect(out.text.toLowerCase()).toContain('approve, reject, or abstain');
-      // no risk/impact/plan narrative leaks into the notification
-      expect(out.text.toLowerCase()).not.toContain('risk');
-      expect(out.text.toLowerCase()).not.toContain('backout');
+    });
+
+    it('cab_requested escapes change text in the HTML body and drops empty fields', () => {
+      const out = renderTemplate('change.cab_requested', {
+        changeTitle: '<b>x</b>', changeId: 'chg-1', changeDescription: '<script>alert(1)</script>',
+      });
+      expect(out.html).not.toContain('<script>');
+      expect(out.html).toContain('&lt;script&gt;');
+      expect(out.text).not.toContain('Impact:');
+      expect(out.text).not.toContain('Backout plan');
+      // No web origin configured: no broken link, just the portal instruction.
+      expect(out.text).not.toContain('/changes?change=');
     });
 
     it('vote_cast tells the chair a vote landed, without saying which way', () => {
@@ -235,4 +264,49 @@ describe('ticket.created (service-desk alert)', () => {
     expect(out.html).not.toContain('<script>');
     expect(out.html).not.toContain('<img src=x');
   });
+
+  // Every automatic email links to the thing it is about, so the reader is one click from it.
+  describe('resource links', () => {
+    const W = 'https://anchor.example';
+    it.each([
+      'ticket.acknowledged', 'ticket.commented', 'ticket.resolved', 'ticket.assigned', 'ticket.closed',
+      'ticket.reopened', 'ticket.status_changed', 'approval.requested', 'approval.approved', 'approval.rejected',
+      'sla.warning', 'sla.breached', 'ticket.created',
+    ])('%s links to the ticket', (type) => {
+      const out = renderTemplate(type, { webOrigin: W, ticketId: 't-1', ticketNumber: 'ACME-1', subject: 'VPN' });
+      expect(out.text).toContain(`${W}/tickets/t-1`);
+      expect(out.html).toContain(`href="${W}/tickets/t-1"`);
+    });
+
+    it('links an internal note to the ticket too', () => {
+      const out = renderTemplate('ticket.commented', { webOrigin: W, ticketId: 't-1', ticketNumber: 'ACME-1', visibility: 'internal' });
+      expect(out.html).toContain(`href="${W}/tickets/t-1"`);
+    });
+
+    it.each(['change.cab_requested', 'change.vote_cast', 'change.approved', 'change.rejected', 'change.scheduled', 'change.vote_overdue'])(
+      '%s links to the change',
+      (type) => {
+        const out = renderTemplate(type, { webOrigin: W, changeId: 'chg-1', changeTitle: 'Firewall' });
+        expect(out.html).toContain(`href="${W}/changes?change=chg-1"`);
+        expect(out.text.match(/\/changes\?change=chg-1/g)).toHaveLength(1); // not twice
+      },
+    );
+
+    it('links posture and on-call notices to their pages', () => {
+      expect(renderTemplate('posture.finding_created', { webOrigin: W }).html).toContain(`href="${W}/posture"`);
+      expect(renderTemplate('oncall.acknowledgement_required', { webOrigin: W }).html).toContain(`href="${W}/oncall"`);
+    });
+
+    it('keeps the satisfaction survey on its public link, not a sign-in link', () => {
+      const out = renderTemplate('csat.survey_created', { webOrigin: W, ticketId: 't-1', ticketNumber: 'ACME-1', surveyToken: 'tok' });
+      expect(out.text).toContain(`${W}/survey/tok`);
+      expect(out.text).not.toContain('/tickets/t-1');
+    });
+
+    it('adds no link without a web origin or a resource id', () => {
+      expect(renderTemplate('ticket.closed', { ticketId: 't-1', ticketNumber: 'ACME-1' }).html).not.toContain('href=');
+      expect(renderTemplate('ticket.closed', { webOrigin: W, ticketNumber: 'ACME-1' }).html).not.toContain('href=');
+    });
+  });
 });
+

@@ -72,6 +72,22 @@ describe('ChangesPage', () => {
     });
   });
 
+  // The CAB vote-request email links to /changes?change=<id>; the page has no per-change
+  // route, so it opens the change named in the query.
+  it('opens the change named in ?change= (the vote-request email link)', async () => {
+    asUser({}, ['change.vote']);
+    mockedApi.get.mockImplementation((url: string) => Promise.resolve(
+      url === '/changes/c-42' ? changeRecordFixture({ id: 'c-42', title: 'Rotate VPN certificates' }) : { data: [] },
+    ));
+    window.history.replaceState(null, '', '/changes?change=c-42');
+    try {
+      render(<ChangesPage />);
+      expect(await screen.findByText('Rotate VPN certificates')).toBeInTheDocument();
+    } finally {
+      window.history.replaceState(null, '', '/');
+    }
+  });
+
   it('offers only list and calendar without cab.manage', async () => {
     asUser({}, ['change.create']);
     render(<ChangesPage />);

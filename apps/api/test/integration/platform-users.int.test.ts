@@ -94,6 +94,28 @@ describeDb('platform user administration (real Postgres)', () => {
     expect(rows.every((r) => r.organization_id === null)).toBe(true);
   });
 
+  // An org-NULL row does not make anyone a covering agent (notifications-recipients.ts keys on
+  // ra.organization_id = <org>), so an all-orgs admin silently lost every ticket email the
+  // moment the edit dialog rewrote their access as "all" alone.
+  it('keeps per-org notification rows alongside the all-organizations grant', async () => {
+    const { id } = await pu.createPlatformUser(superActor, {
+      email: mail('all-notify'), roleKeys: ['Tier1'], scope: { mode: 'all', notifyOrgIds: [orgA] },
+    });
+    const rows = await rolesOf(id);
+    expect(rows).toHaveLength(2);
+    expect(rows).toEqual(expect.arrayContaining([
+      { key: 'Tier1', organization_id: null },
+      { key: 'Tier1', organization_id: orgA },
+    ]));
+    const listed = (await pu.listPlatformUsers()).find((u) => u.id === id)!;
+    expect(listed.all_orgs).toBe(true);
+    expect(listed.org_ids).toEqual([orgA]);
+
+    // Re-saving as plain "all" drops them — the dialog sends the list back on every save.
+    await pu.setPlatformUserAccess(superActor, id, { roleKeys: ['Tier1'], scope: { mode: 'all' } });
+    expect(await rolesOf(id)).toEqual([{ key: 'Tier1', organization_id: null }]);
+  });
+
   it('stops a delegated admin from touching a SuperAdmin at all', async () => {
     await expect(pu.updatePlatformUser(delegated, superTarget, { password: 'a-new-password-123' }))
       .rejects.toMatchObject({ status: 403 });
