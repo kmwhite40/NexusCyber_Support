@@ -103,7 +103,7 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-11-01-preview' = {
 }
 
 // ---------- PostgreSQL Flexible Server ----------
-resource pg 'Microsoft.DBforPostgreSQL/flexibleServers@2023-06-01-preview' = {
+resource pg 'Microsoft.DBforPostgreSQL/flexibleServers@2025-08-01' = {
   name: '${name}-pg'
   location: location
   sku: { name: 'Standard_B1ms', tier: 'Burstable' }
@@ -116,18 +116,18 @@ resource pg 'Microsoft.DBforPostgreSQL/flexibleServers@2023-06-01-preview' = {
     highAvailability: { mode: 'Disabled' }
   }
 }
-resource pgDb 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2023-06-01-preview' = {
+resource pgDb 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2025-08-01' = {
   parent: pg
   name: dbName
   properties: { charset: 'UTF8', collation: 'en_US.utf8' }
 }
 // Azure PG allow-lists extensions; migration 0001 needs pgcrypto + citext.
-resource pgExtensions 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-06-01-preview' = {
+resource pgExtensions 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2025-08-01' = {
   parent: pg
   name: 'azure.extensions'
   properties: { value: 'PGCRYPTO,CITEXT', source: 'user-override' }
 }
-resource pgFwAzure 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-06-01-preview' = {
+resource pgFwAzure 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2025-08-01' = {
   parent: pg
   name: 'AllowAzureServices'
   properties: { startIpAddress: '0.0.0.0', endIpAddress: '0.0.0.0' }

@@ -44,7 +44,7 @@ resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
 }
 
 // ---------- PostgreSQL Flexible Server ----------
-resource pg 'Microsoft.DBforPostgreSQL/flexibleServers@2023-06-01-preview' = {
+resource pg 'Microsoft.DBforPostgreSQL/flexibleServers@2025-08-01' = {
   name: '${name}-pg'
   location: location
   sku: { name: 'Standard_B1ms', tier: 'Burstable' }
@@ -58,7 +58,7 @@ resource pg 'Microsoft.DBforPostgreSQL/flexibleServers@2023-06-01-preview' = {
   }
 }
 
-resource pgDb 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2023-06-01-preview' = {
+resource pgDb 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2025-08-01' = {
   parent: pg
   name: dbName
   properties: { charset: 'UTF8', collation: 'en_US.utf8' }
