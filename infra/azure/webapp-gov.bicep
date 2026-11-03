@@ -62,12 +62,15 @@ resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
 }
 
 // ---------- Container registry (gov: *.azurecr.us) ----------
-resource acr 'Microsoft.ContainerRegistry/registries@2023-11-01-preview' = {
+resource acr 'Microsoft.ContainerRegistry/registries@2025-11-01' = {
   name: acrName
   location: location
   sku: { name: 'Standard' }
   properties: {
     adminUserEnabled: false // pull via managed identity, not admin creds
+    // Pin current behaviour: AcrPull role assignments depend on legacy (non-ABAC) permissions.
+    roleAssignmentMode: 'LegacyRegistryPermissions'
+    networkRuleBypassAllowedForTasks: false
   }
 }
 
