@@ -1,0 +1,20 @@
+name: Azure API versions
+
+# Fails when infrastructure pins a preview Azure API version without an explicit
+# "api-preview-ok: <reason>" opt-in. Preview versions are what Azure retires
+# (e.g. advisory 9G9S-SHG, PostgreSQL previews retired 30 January 2027).
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check for preview Azure API versions
+        run: bash scripts/check-azure-api-versions.sh
