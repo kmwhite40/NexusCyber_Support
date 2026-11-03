@@ -101,7 +101,7 @@ resource secretAppDb 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
 }
 
 // ---------- PostgreSQL Flexible Server ----------
-resource pg 'Microsoft.DBforPostgreSQL/flexibleServers@2023-06-01-preview' = {
+resource pg 'Microsoft.DBforPostgreSQL/flexibleServers@2025-08-01' = {
   name: '${name}-pg'
   location: location
   sku: { name: 'Standard_B2s', tier: 'Burstable' }
@@ -114,14 +114,14 @@ resource pg 'Microsoft.DBforPostgreSQL/flexibleServers@2023-06-01-preview' = {
     highAvailability: { mode: 'Disabled' } // ZoneRedundant for production HA
   }
 }
-resource pgDb 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2023-06-01-preview' = {
+resource pgDb 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2025-08-01' = {
   parent: pg
   name: dbName
   properties: { charset: 'UTF8', collation: 'en_US.utf8' }
 }
 // Allow other Azure services (App Service, the migrate job) to reach Postgres.
 // Production: replace with VNet integration + Private Endpoint and remove this rule.
-resource pgFwAzure 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-06-01-preview' = {
+resource pgFwAzure 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2025-08-01' = {
   parent: pg
   name: 'AllowAzureServices'
   properties: { startIpAddress: '0.0.0.0', endIpAddress: '0.0.0.0' }
