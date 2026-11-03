@@ -203,6 +203,7 @@ resource apiAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 }
 
 // ---------- Diagnostics ----------
+// api-preview-ok: newest diagnosticSettings API (supports categoryGroup); the only GA is 2016-09-01
 resource apiDiag 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
   name: 'to-logs'
   scope: api
