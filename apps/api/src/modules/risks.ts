@@ -377,13 +377,16 @@ export async function updateRisk(actor: Principal, id: string, input: RiskInput)
     const nextReview = rescored ? nextReviewAt(next.residual_likelihood * next.residual_impact, now, reviewDays) : cur.next_review_at;
     // 'accept' is a strategy only the acceptance workflow may set; an edit setting it would claim an
     // acceptance nobody with risk.accept ever granted.
-    if (input.strategy === 'accept' && cur.strategy !== 'accept') {
+    // Gate on the ACCEPTANCE, not on the strategy field: a stale strategy='accept' left behind by an
+    // expired or cleared acceptance must not let an edit keep claiming one.
+    if (input.strategy === 'accept' && !acceptanceActive(cur)) {
       throw Errors.validation('use the acceptance workflow to accept a risk', [{ field: 'strategy', message: 'request acceptance instead' }]);
     }
     // An acceptance (granted or pending) is a decision about the score the approver SAW. Re-scoring
     // after the fact must void it: otherwise a risk accepted at residual 6 could be re-scored to 25
     // and still read as accepted — leadership "accepting" a risk it never looked at.
-    const voidAcceptance = rescored && (cur.acceptance_status === 'approved' || cur.acceptance_status === 'requested');
+    // The FAIR estimate is part of what was accepted too: changing the dollar exposure voids it as well.
+    const voidAcceptance = (rescored || fairChanged) && (cur.acceptance_status === 'approved' || cur.acceptance_status === 'requested');
     // A risk that is assessed for the first time leaves 'identified'; a voided acceptance leaves 'accepted'.
     const status =
       rescored && cur.status === 'identified' ? 'assessed'
@@ -455,7 +458,7 @@ export async function transitionRisk(actor: Principal, id: string, to: RiskStatu
     const clearAcceptance = cur.status === 'accepted';
     const { rows } = await sql.query(
       `UPDATE risks SET status=$2, closed_at=$3, updated_at=now()
-         ${clearAcceptance ? ", acceptance_status='none', acceptance_expires_at=NULL" : ''}
+         ${clearAcceptance ? ", acceptance_status='none', acceptance_expires_at=NULL, strategy=NULL" : ''}
         WHERE id=$1 RETURNING *`,
       [id, to, to === 'closed' ? new Date() : null],
     );

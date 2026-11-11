@@ -159,6 +159,24 @@ describeDb('risk register (integration)', () => {
     await expect(risks.decideAcceptance(manager, r.id, true)).rejects.toMatchObject({ status: 409 });
   });
 
+  it('voids an acceptance on a FAIR change, and leaves no stale strategy=accept behind', async () => {
+    const accept = async (id: string) => {
+      await risks.requestAcceptance(analyst, id, { justification: 'Low value asset, decommission planned', expiresAt: new Date(Date.now() + 90 * 86_400_000).toISOString() });
+      await risks.decideAcceptance(manager, id, true);
+    };
+    const r = await risks.createRisk(analyst, { organizationId: demoId, title: 'Integration: FAIR launder', inherentLikelihood: 2, inherentImpact: 2 });
+    await accept(r.id);
+    const requantified = await risks.updateRisk(analyst, r.id, { fair: { lef: { min: 1, likely: 5, max: 20 }, lm: { min: 1e6, likely: 5e6, max: 2e7 } } });
+    expect(requantified.acceptance_active).toBe(false);
+    expect(requantified.status).toBe('assessed');
+
+    // Re-open an accepted risk: strategy is cleared, and an edit cannot re-assert 'accept'.
+    await accept(r.id);
+    const reopened = await risks.transitionRisk(analyst, r.id, 'treating');
+    expect(reopened.strategy).toBeNull();
+    await expect(risks.updateRisk(analyst, r.id, { strategy: 'accept' })).rejects.toMatchObject({ status: 422 });
+  });
+
   it('runs a treatment plan and re-assesses', async () => {
     const r = await risks.createRisk(analyst, { organizationId: demoId, title: 'Integration: treat me', inherentLikelihood: 5, inherentImpact: 4, residualLikelihood: 5, residualImpact: 4 });
     const t = await risks.addTreatment(analyst, r.id, { title: 'Deploy EDR', dueAt: new Date(Date.now() + 86_400_000).toISOString() });
