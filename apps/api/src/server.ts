@@ -9,6 +9,7 @@ import { migrate } from './db/migrate.js';
 import { pool } from './db/pool.js';
 import { registerRoutes } from './http/routes.js';
 import { registerExtraRoutes } from './http/routes-extra.js';
+import { registerRiskRoutes } from './http/routes-risks.js';
 import { corsOptions } from './http/cors.js';
 import { registerIdempotency, IdempotencyStore } from './http/idempotency.js';
 import { registerNotificationHandlers } from './modules/notifications.js';
@@ -115,6 +116,7 @@ async function main() {
 
   await registerRoutes(app);
   await registerExtraRoutes(app);
+  await registerRiskRoutes(app);
 
   // Wire event consumers (notification dispatcher + automation engine).
   registerNotificationHandlers();
