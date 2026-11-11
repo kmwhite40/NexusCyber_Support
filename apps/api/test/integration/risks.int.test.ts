@@ -134,6 +134,31 @@ describeDb('risk register (integration)', () => {
     expect(reopened.acceptance_active).toBe(false);
   });
 
+  // Security review finding: an acceptance is a decision about the score the approver saw.
+  it('voids an acceptance when the risk is re-scored, and refuses strategy=accept by edit', async () => {
+    const r = await risks.createRisk(analyst, { organizationId: demoId, title: 'Integration: launder me', inherentLikelihood: 2, inherentImpact: 3 });
+    await expect(risks.updateRisk(analyst, r.id, { strategy: 'accept' })).rejects.toMatchObject({ status: 422 });
+
+    await risks.requestAcceptance(analyst, r.id, { justification: 'Low value asset, decommission planned', expiresAt: new Date(Date.now() + 90 * 86_400_000).toISOString() });
+    await risks.decideAcceptance(manager, r.id, true);
+
+    // Non-score edits leave the acceptance alone…
+    expect((await risks.updateRisk(analyst, r.id, { title: 'Integration: launder me (renamed)' })).acceptance_active).toBe(true);
+    // …but re-scoring to 25 must not inherit an approval granted at 6.
+    const bumped = await risks.updateRisk(analyst, r.id, { residualLikelihood: 5, residualImpact: 5 });
+    expect(bumped.residual_score).toBe(25);
+    expect(bumped.acceptance_status).toBe('none');
+    expect(bumped.acceptance_active).toBe(false);
+    expect(bumped.status).toBe('assessed');
+    expect(bumped.strategy).toBeNull();
+    expect((await risks.getRisk(analyst, r.id)).history.map((h: any) => h.kind)).toContain('acceptance_voided');
+
+    // A pending request is voided the same way, so an approver never decides on a stale score.
+    await risks.requestAcceptance(analyst, r.id, { justification: 'Low value asset, decommission planned', expiresAt: new Date(Date.now() + 90 * 86_400_000).toISOString() });
+    await risks.updateRisk(analyst, r.id, { residualLikelihood: 1, residualImpact: 1 });
+    await expect(risks.decideAcceptance(manager, r.id, true)).rejects.toMatchObject({ status: 409 });
+  });
+
   it('runs a treatment plan and re-assesses', async () => {
     const r = await risks.createRisk(analyst, { organizationId: demoId, title: 'Integration: treat me', inherentLikelihood: 5, inherentImpact: 4, residualLikelihood: 5, residualImpact: 4 });
     const t = await risks.addTreatment(analyst, r.id, { title: 'Deploy EDR', dueAt: new Date(Date.now() + 86_400_000).toISOString() });

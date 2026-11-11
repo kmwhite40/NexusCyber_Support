@@ -375,8 +375,21 @@ export async function updateRisk(actor: Principal, id: string, input: RiskInput)
     const now = new Date();
     const lastReviewed = rescored ? now : cur.last_reviewed_at;
     const nextReview = rescored ? nextReviewAt(next.residual_likelihood * next.residual_impact, now, reviewDays) : cur.next_review_at;
-    // A risk that is assessed for the first time leaves 'identified'.
-    const status = rescored && cur.status === 'identified' ? 'assessed' : cur.status;
+    // 'accept' is a strategy only the acceptance workflow may set; an edit setting it would claim an
+    // acceptance nobody with risk.accept ever granted.
+    if (input.strategy === 'accept' && cur.strategy !== 'accept') {
+      throw Errors.validation('use the acceptance workflow to accept a risk', [{ field: 'strategy', message: 'request acceptance instead' }]);
+    }
+    // An acceptance (granted or pending) is a decision about the score the approver SAW. Re-scoring
+    // after the fact must void it: otherwise a risk accepted at residual 6 could be re-scored to 25
+    // and still read as accepted — leadership "accepting" a risk it never looked at.
+    const voidAcceptance = rescored && (cur.acceptance_status === 'approved' || cur.acceptance_status === 'requested');
+    // A risk that is assessed for the first time leaves 'identified'; a voided acceptance leaves 'accepted'.
+    const status =
+      rescored && cur.status === 'identified' ? 'assessed'
+      : voidAcceptance && cur.status === 'accepted' ? 'assessed'
+      : cur.status;
+    const strategy = voidAcceptance && pick(input.strategy, cur.strategy) === 'accept' ? null : pick(input.strategy, cur.strategy);
 
     const { rows } = await sql.query(
       `UPDATE risks SET title=$2, description=$3, cause=$4, event=$5, consequence=$6, category=$7, threat_source=$8,
@@ -385,10 +398,11 @@ export async function updateRisk(actor: Principal, id: string, input: RiskInput)
           target_likelihood=$16, target_impact=$17, impact_dimensions=$18, velocity=$19,
           fair_inputs=$20, fair_results=$21, review_frequency_days=$22, last_reviewed_at=$23, next_review_at=$24,
           tags=$25, status=$26, updated_at=now()
+          ${voidAcceptance ? ", acceptance_status='none', acceptance_expires_at=NULL, acceptance_decided_by=NULL, acceptance_decided_at=NULL" : ''}
         WHERE id=$1 RETURNING *`,
       [id, pick(input.title, cur.title), pick(input.description, cur.description), pick(input.cause, cur.cause),
         pick(input.event, cur.event), pick(input.consequence, cur.consequence), pick(input.category, cur.category),
-        pick(input.threatSource, cur.threat_source), pick(input.strategy, cur.strategy),
+        pick(input.threatSource, cur.threat_source), strategy,
         pick(input.ownerId, cur.owner_id), pick(input.ownerName, cur.owner_name),
         next.inherent_likelihood, next.inherent_impact, next.residual_likelihood, next.residual_impact,
         next.target_likelihood, next.target_impact, JSON.stringify(dims ?? {}), pick(input.velocity, cur.velocity),
@@ -397,6 +411,10 @@ export async function updateRisk(actor: Principal, id: string, input: RiskInput)
         reviewDays, lastReviewed, nextReview, pick(input.tags, cur.tags), status],
     );
     const risk = rows[0];
+    if (voidAcceptance) {
+      await writeHistory(sql, actor, risk, 'acceptance_voided', `Re-scored from residual ${cur.residual_score}; the ${cur.acceptance_status} acceptance no longer applies`);
+      await audit(actor, { action: 'risk.acceptance.void', organizationId: cur.organization_id, resourceType: 'risk', resourceId: id, detail: { was: cur.acceptance_status, residual_from: cur.residual_score, residual_to: risk.residual_score } });
+    }
     if (rescored || fairChanged || input.note) {
       await writeHistory(sql, actor, risk, rescored || fairChanged ? 'reassessed' : 'note', input.note);
     }
