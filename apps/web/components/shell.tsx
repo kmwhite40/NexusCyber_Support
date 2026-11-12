@@ -44,6 +44,7 @@ const NEXUS_NAV: NavItem[] = [
   // Security
   { href: '/posture', label: 'Posture', icon: <IconShield />, anyPerm: ['posture.read'], section: 'Security' },
   { href: '/compliance', label: 'Compliance', icon: <IconClipboard />, anyPerm: ['compliance.read'], section: 'Security' },
+  { href: '/risks', label: 'Risk register', icon: <IconRisk />, anyPerm: ['risk.read'], section: 'Security' },
 ];
 
 const CUSTOMER_NAV: NavItem[] = [
@@ -53,6 +54,7 @@ const CUSTOMER_NAV: NavItem[] = [
   { href: '/catalog', label: 'Service catalog', icon: <IconCatalog /> },
   { href: '/posture', label: 'Security posture', icon: <IconShield />, anyPerm: ['posture.read'] },
   { href: '/compliance', label: 'Compliance', icon: <IconClipboard />, anyPerm: ['compliance.read'] },
+  { href: '/risks', label: 'Risk register', icon: <IconRisk />, anyPerm: ['risk.read'] },
   { href: '/analytics', label: 'Reports', icon: <IconChart />, anyPerm: ['report.read.customer'] },
 ];
 
@@ -171,6 +173,7 @@ function titleFor(path: string): string {
   if (path.startsWith('/oncall')) return 'On-call console';
   if (path.startsWith('/posture')) return 'Security posture';
   if (path.startsWith('/compliance')) return 'Compliance';
+  if (path.startsWith('/risks')) return 'Risk register';
   if (path.startsWith('/automations')) return 'Automation rules';
   if (path.startsWith('/analytics')) return 'Helpdesk analytics';
   if (path.startsWith('/audit')) return 'Audit log';
@@ -210,4 +213,5 @@ function IconBell() { return <svg width="18" height="18" viewBox="0 0 24 24" fil
 function IconPlug() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9 2v6M15 2v6M7 8h10v3a5 5 0 0 1-10 0V8zM12 16v6"/></svg>; }
 function IconGauge() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 13l4-4M5 19a9 9 0 1 1 14 0"/></svg>; }
 function IconRocket() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M5 15c-1.5 1.5-2 5-2 5s3.5-.5 5-2M9 11a4 4 0 0 1 4-4M14.5 4.5C17 3 21 3 21 3s0 4-1.5 6.5C18 12 13 16 11 16l-3-3c0-2 4-7 6.5-8.5z"/><circle cx="14.5" cy="9.5" r="1"/></svg>; }
+function IconRisk() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/><rect x="15" y="3" width="6" height="6" fill="currentColor" opacity="0.35" stroke="none"/></svg>; }
 function IconArchive() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M9 12h6"/></svg>; }

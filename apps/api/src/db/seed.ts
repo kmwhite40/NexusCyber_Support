@@ -80,6 +80,10 @@ const PERMISSIONS: Array<[string, string]> = [
   ['provisioning.execute', 'integration'],
   // Created by migration 0080; repeated here for the same reason as the two above.
   ['ticket.form.edit', 'ticket'],
+  // Risk register — created by migration 0085; repeated here for the same reason.
+  ['risk.read', 'risk'],
+  ['risk.manage', 'risk'],
+  ['risk.accept', 'risk'],
 ];
 
 // ---- Roles -> permission keys ----
@@ -95,11 +99,16 @@ const ROLES: Record<string, { plane: 'nexus' | 'customer'; perms: string[] }> = 
       'change.create', 'change.implement', 'problem.manage',
       'queue.read', 'service.read', 'org.read', 'notifications.read',
       'alert.read', 'alert.ack', 'dashboard.read', 'escalation.read',
+      // Migration 0085 — read-only view of the risk register.
+      'risk.read',
     ],
   },
   SecurityAnalyst: {
     plane: 'nexus',
-    perms: ['ticket.create', 'ticket.read.all_assigned_customers', 'ticket.escalate', 'posture.read', 'posture.write', 'posture.finding.manage', 'posture.request_exception', 'posture.approve_exception', 'oncall.acknowledge', 'oncall.page', 'audit.read', 'compliance.read', 'compliance.manage', 'elevation.request', 'elevation.break_glass', 'kb.read', 'kb.author', 'kb.publish', 'change.create', 'change.approve', 'change.vote', 'problem.manage', 'queue.read', 'service.read', 'org.read', 'notifications.read', 'alert.read', 'alert.ack', 'dashboard.read', 'escalation.read'],
+    perms: ['ticket.create', 'ticket.read.all_assigned_customers', 'ticket.escalate', 'posture.read', 'posture.write', 'posture.finding.manage', 'posture.request_exception', 'posture.approve_exception', 'oncall.acknowledge', 'oncall.page', 'audit.read', 'compliance.read', 'compliance.manage', 'elevation.request', 'elevation.break_glass', 'kb.read', 'kb.author', 'kb.publish', 'change.create', 'change.approve', 'change.vote', 'problem.manage', 'queue.read', 'service.read', 'org.read', 'notifications.read', 'alert.read', 'alert.ack', 'dashboard.read', 'escalation.read',
+      // Migration 0085. Writes risks up, but deliberately NOT risk.accept: the analyst proposing an
+      // acceptance must not be able to grant it.
+      'risk.read', 'risk.manage'],
   },
   // NOTE: no `change.create` — segregation of duties. This role holds `cab.manage`, and a
   // principal that can compose the CAB must not also be able to raise changes into it
@@ -113,12 +122,14 @@ const ROLES: Record<string, { plane: 'nexus' | 'customer'; perms: string[] }> = 
       // silently stripped the grants those migrations made.
       'pii.view', 'provisioning.execute',
       // Granted by migration 0080 — correcting a submitted request's answers. Same dual-write rule.
-      'ticket.form.edit'],
+      'ticket.form.edit',
+      // Granted by migration 0085 — the risk register. Same dual-write rule.
+      'risk.read', 'risk.manage', 'risk.accept'],
   },
   // Customer plane
-  OrgAdmin: { plane: 'customer', perms: ['ticket.create', 'ticket.read.organization', 'ticket.comment', 'posture.read', 'posture.request_exception', 'customer.admin.manage_users', 'report.read.customer', 'audit.read', 'compliance.read', 'kb.read', 'kb.author', 'kb.publish', 'integration.manage'] },
+  OrgAdmin: { plane: 'customer', perms: ['ticket.create', 'ticket.read.organization', 'ticket.comment', 'posture.read', 'posture.request_exception', 'customer.admin.manage_users', 'report.read.customer', 'audit.read', 'compliance.read', 'kb.read', 'kb.author', 'kb.publish', 'integration.manage', 'risk.read', 'risk.manage', 'risk.accept'] },
   EndUser: { plane: 'customer', perms: ['ticket.create', 'ticket.read.own', 'ticket.comment.own', 'ticket.comment', 'kb.read'] },
-  SecurityContact: { plane: 'customer', perms: ['ticket.read.organization', 'ticket.comment', 'posture.read', 'posture.request_exception', 'report.read.customer', 'compliance.read', 'kb.read'] },
+  SecurityContact: { plane: 'customer', perms: ['ticket.read.organization', 'ticket.comment', 'posture.read', 'posture.request_exception', 'report.read.customer', 'compliance.read', 'kb.read', 'risk.read'] },
 };
 
 async function run() {
@@ -1198,6 +1209,86 @@ async function run() {
             [demoOrgId, profile, title, domain, severity, severity === 'critical' ? 40 : severity === 'high' ? 25 : 12],
           );
         }
+      }
+
+      // ---- Demo risk register (migration 0085) ----
+      const rcount = await sql.query('SELECT count(*)::int AS n FROM risks WHERE organization_id=$1', [demoOrgId]);
+      if (rcount.rows[0].n === 0) {
+        const owner = (await sql.query("SELECT id FROM users WHERE email='analyst@nexus.example.com'")).rows[0]?.id ?? null;
+        const demoRisks: Array<{
+          title: string; category: string; cause: string; event: string; consequence: string;
+          il: number; ii: number; rl: number; ri: number; tl: number | null; ti: number | null;
+          status: string; strategy: string | null; fair?: { lef: [number, number, number]; lm: [number, number, number] };
+        }> = [
+          { title: 'Ransomware via phishing-delivered initial access', category: 'cybersecurity',
+            cause: 'Users without phishing-resistant MFA and legacy auth still enabled',
+            event: 'an attacker gains a foothold and deploys ransomware', consequence: 'multi-day outage and potential data exfiltration',
+            il: 4, ii: 5, rl: 3, ri: 5, tl: 2, ti: 4, status: 'treating', strategy: 'mitigate',
+            fair: { lef: [0.1, 0.3, 1], lm: [250_000, 900_000, 4_000_000] } },
+          { title: 'Single-region hosting of the case management system', category: 'technology',
+            cause: 'No secondary region or tested failover', event: 'a regional cloud outage',
+            consequence: 'case work halts for the length of the outage',
+            il: 3, ii: 4, rl: 3, ri: 4, tl: 2, ti: 3, status: 'assessed', strategy: 'mitigate',
+            fair: { lef: [0.2, 0.5, 1.5], lm: [20_000, 80_000, 300_000] } },
+          { title: 'Payroll processor lacks a current SOC 2 Type II report', category: 'third_party',
+            cause: 'Vendor attestation lapsed in Q2', event: 'an undetected control failure at the vendor',
+            consequence: 'exposure of employee PII and regulatory notification costs',
+            il: 3, ii: 4, rl: 2, ri: 4, tl: null, ti: null, status: 'monitoring', strategy: 'transfer' },
+          { title: 'DMARC not enforced on the primary mail domain', category: 'cybersecurity',
+            cause: 'DMARC policy set to p=none', event: 'executive impersonation via spoofed mail',
+            consequence: 'fraudulent wire transfer or credential theft',
+            il: 4, ii: 3, rl: 4, ri: 3, tl: 1, ti: 3, status: 'identified', strategy: null },
+          { title: 'CUI handled outside the GCC High enclave', category: 'compliance',
+            cause: 'Shadow file shares on commercial tenant', event: 'CUI is stored or shared outside the authorized boundary',
+            consequence: 'DFARS 7012 non-compliance and contract risk',
+            il: 3, ii: 5, rl: 2, ri: 5, tl: 1, ti: 5, status: 'treating', strategy: 'mitigate' },
+          { title: 'Key-person dependency on the sole network engineer', category: 'operational',
+            cause: 'Undocumented network configuration', event: 'the engineer leaves or is unavailable during an incident',
+            consequence: 'prolonged recovery time', il: 3, ii: 3, rl: 3, ri: 2, tl: null, ti: null, status: 'accepted', strategy: 'accept' },
+        ];
+        const { simulateFair, nextReviewAt } = await import('../modules/risk-scoring.js');
+        let n = 0;
+        for (const d of demoRisks) {
+          n++;
+          const fairInputs = d.fair ? { lef: { min: d.fair.lef[0], likely: d.fair.lef[1], max: d.fair.lef[2] }, lm: { min: d.fair.lm[0], likely: d.fair.lm[1], max: d.fair.lm[2] } } : null;
+          const fairResults = fairInputs ? simulateFair(fairInputs) : null;
+          const accepted = d.status === 'accepted';
+          const r = (await sql.query(
+            `INSERT INTO risks (organization_id, risk_number, title, cause, event, consequence, category, status, strategy, owner_id,
+                inherent_likelihood, inherent_impact, residual_likelihood, residual_impact, target_likelihood, target_impact,
+                fair_inputs, fair_results, next_review_at, acceptance_status, acceptance_justification, acceptance_expires_at, created_by)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$10) RETURNING *`,
+            [demoOrgId, n, d.title, d.cause, d.event, d.consequence, d.category, d.status, d.strategy, owner,
+              d.il, d.ii, d.rl, d.ri, d.tl, d.ti, fairInputs ? JSON.stringify(fairInputs) : null, fairResults ? JSON.stringify(fairResults) : null,
+              nextReviewAt(d.rl * d.ri, new Date()), accepted ? 'approved' : 'none',
+              accepted ? 'Cross-training scheduled next fiscal year; documented runbooks reduce impact meanwhile.' : null,
+              accepted ? new Date(Date.now() + 180 * 86_400_000) : null],
+          )).rows[0];
+          await sql.query(
+            `INSERT INTO risk_history (organization_id, risk_id, kind, inherent_score, residual_score, target_score, residual_likelihood, residual_impact, status, ale_p50, note, actor_id)
+             VALUES ($1,$2,'created',$3,$4,$5,$6,$7,$8,$9,'Seeded demo risk',$10)`,
+            [demoOrgId, r.id, r.inherent_score, r.residual_score, r.target_score, r.residual_likelihood, r.residual_impact, r.status, fairResults?.p50 ?? null, owner],
+          );
+          if (n === 1) { // the ransomware risk's treatment plan
+            for (const [title, status, days] of [
+              ['Enforce phishing-resistant MFA for all users', 'in_progress', 21],
+              ['Disable legacy authentication protocols', 'done', -10],
+              ['Quarterly restore test of immutable backups', 'planned', 60],
+            ] as const) {
+              await sql.query(
+                `INSERT INTO risk_treatments (organization_id, risk_id, title, status, due_at, owner_id, created_by, completed_at)
+                 VALUES ($1,$2,$3,$4, now() + ($5 || ' days')::interval, $6, $6, $7)`,
+                [demoOrgId, r.id, title, status, String(days), owner, status === 'done' ? new Date() : null],
+              );
+            }
+          }
+        }
+        // Demo Corp carries slightly more appetite than the platform default.
+        await sql.query(
+          `INSERT INTO risk_org_settings (organization_id, appetite_score, tolerance_score, max_acceptance_days)
+           VALUES ($1, 10, 16, 365) ON CONFLICT (organization_id) DO NOTHING`,
+          [demoOrgId],
+        );
       }
     }
   });
