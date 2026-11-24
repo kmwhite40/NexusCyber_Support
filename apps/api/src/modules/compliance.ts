@@ -10,7 +10,12 @@ import { publish } from '../events/bus.js';
 import { Errors } from '../errors.js';
 import type { Principal } from '../types.js';
 
-export type ControlStatus = 'satisfied' | 'partial' | 'gap';
+/**
+ * `not_assessed`: no evidence source is mapped to the control yet, so nothing is known about it.
+ * It is deliberately NOT a gap: with the full 800-53 catalog loaded (0088), calling every unmapped
+ * control a gap would report ~1,000 failures that no evidence supports.
+ */
+export type ControlStatus = 'satisfied' | 'partial' | 'gap' | 'not_assessed';
 
 export interface ControlSignal {
   mapped: number; // number of evidence mappings for the control
@@ -19,7 +24,8 @@ export interface ControlSignal {
 
 /** Pure classification of a control's status from its evidence tally. */
 export function classifyControl(s: ControlSignal): ControlStatus {
-  if (s.mapped === 0 || s.satisfied === 0) return 'gap';
+  if (s.mapped === 0) return 'not_assessed';
+  if (s.satisfied === 0) return 'gap';
   if (s.satisfied >= s.mapped) return 'satisfied';
   return 'partial';
 }
@@ -97,7 +103,7 @@ export interface EvidencePackage {
   organization_id: string;
   generated_at: string;
   controls: ControlCoverage[];
-  summary: { satisfied: number; partial: number; gap: number };
+  summary: { satisfied: number; partial: number; gap: number; not_assessed: number };
   manifest_sha256: string;
 }
 
@@ -109,6 +115,7 @@ export async function evidencePackage(actor: Principal, orgId: string): Promise<
     satisfied: controls.filter((c) => c.status === 'satisfied').length,
     partial: controls.filter((c) => c.status === 'partial').length,
     gap: controls.filter((c) => c.status === 'gap').length,
+    not_assessed: controls.filter((c) => c.status === 'not_assessed').length,
   };
   const generated_at = new Date().toISOString();
   const body = JSON.stringify({ organization_id: orgId, generated_at, controls, summary });
