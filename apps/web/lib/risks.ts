@@ -29,6 +29,7 @@ export const LIKELIHOOD_LABELS = ['Rare', 'Unlikely', 'Possible', 'Likely', 'Alm
 export const IMPACT_LABELS = ['Negligible', 'Minor', 'Moderate', 'Major', 'Severe'] as const;
 export const STATUSES: RiskStatus[] = ['identified', 'assessed', 'treating', 'monitoring', 'accepted', 'closed'];
 
+export const RATINGS_ORDER: readonly RiskRating[] = ['very_high', 'high', 'moderate', 'low', 'very_low'];
 export const RATING_LABEL: Record<RiskRating, string> = {
   very_low: 'Very low', low: 'Low', moderate: 'Moderate', high: 'High', very_high: 'Very high',
 };
@@ -194,7 +195,20 @@ function qs(params: Record<string, string | undefined | boolean>): string {
 
 export interface ListParams { status?: string; category?: string; rating?: string; q?: string; includeClosed?: boolean }
 
+/** One week of an organization's open risks (GET /risks/trend). Totals are sums of ordinal L×I
+ *  scores: an exposure indicator, never a loss estimate. */
+export interface TrendPoint {
+  week: string;
+  open: number;
+  inherent_total: number;
+  residual_total: number;
+  target_total: number | null;
+  by_inherent_rating: Record<RiskRating, number>;
+}
+
 export const risksApi = {
+  trend: async (organizationId: string | undefined, weeks = 12) =>
+    (await api.get<{ points: TrendPoint[] }>(`/risks/trend${qs({ organizationId, weeks: String(weeks) })}`)).points,
   portfolio: async () => (await api.get<{ data: PortfolioRow[] }>('/risks/portfolio')).data,
   list: async (organizationId: string | undefined, p: ListParams = {}) =>
     (await api.get<{ data: Risk[] }>(`/risks${qs({ organizationId, ...p })}`)).data,

@@ -22,7 +22,7 @@ import {
   score, rating, highWaterImpact, nextReviewAt, appetiteState, canTransition, acceptanceActive,
   treatmentProgress, overdueTreatments, simulateFair, summarizeOrg, rankPortfolio, fromFindingSeverity,
   riskRef, toCsv, DEFAULT_APPETITE, isLevel,
-  type Appetite, type FairInputs, type RiskStatus, type ImpactDimension, type RiskCategory, type OrgRiskSummary,
+  foldTrend, type Appetite, type FairInputs, type RiskStatus, type ImpactDimension, type RiskCategory, type OrgRiskSummary,
 } from './risk-scoring.js';
 
 // ---------------- Scope ----------------
@@ -700,4 +700,43 @@ export async function exportCsv(actor: Principal, orgId?: string | null): Promis
     r.target_score, r.appetite_state, r.acceptance_status, r.acceptance_expires_at, r.treatment_progress, r.fair_results?.p50, r.fair_results?.p90,
     r.next_review_at, r.created_at, r.tags,
   ]));
+}
+
+// ---------------- Trend (risk report) ----------------
+
+/**
+ * Week-by-week state of one organization's open risks, rebuilt from risk_history: for each week,
+ * every risk's latest snapshot taken before the week ended. Aggregated in the database by
+ * (week, inherent score), so the result is at most weeks x 25 rows whatever the register size.
+ */
+export async function trend(actor: Principal, orgId: string | null | undefined, weeks = 12) {
+  const org = resolveOrg(actor, orgId);
+  authorize(actor, 'risk.read', { organizationId: org });
+  const n = Math.min(Math.max(Math.trunc(weeks) || 12, 2), 104);
+  return withOrgContext(orgContextFor(actor), async (sql) => {
+    const { rows } = await sql.query(
+      `WITH b AS (
+         SELECT w::date AS week, w + interval '7 days' AS ends
+           FROM generate_series(date_trunc('week', now()) - ($2::int - 1) * interval '1 week',
+                                date_trunc('week', now()), interval '1 week') AS w
+       )
+       SELECT to_char(b.week, 'YYYY-MM-DD') AS at, s.inherent_score,
+              count(*)::int AS open, sum(s.inherent_score)::int AS inherent_sum,
+              sum(s.residual_score)::int AS residual_sum, sum(s.target_score)::int AS target_sum
+         FROM b
+         CROSS JOIN LATERAL (
+           SELECT DISTINCT ON (h.risk_id) h.inherent_score, h.residual_score, h.target_score, h.status
+             FROM risk_history h
+            WHERE h.organization_id = $1 AND h.created_at < b.ends
+            ORDER BY h.risk_id, h.created_at DESC
+         ) s
+        WHERE s.status <> 'closed' AND s.inherent_score IS NOT NULL
+        GROUP BY b.week, s.inherent_score`,
+      [org, n],
+    );
+    const weekStarts: string[] = (await sql.query(
+      `SELECT to_char(w, 'YYYY-MM-DD') AS d FROM generate_series(date_trunc('week', now()) - ($1::int - 1) * interval '1 week',
+         date_trunc('week', now()), interval '1 week') AS w`, [n])).rows.map((r: { d: string }) => r.d);
+    return { organization_id: org, weeks: n, points: foldTrend(rows, weekStarts) };
+  });
 }

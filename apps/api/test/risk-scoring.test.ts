@@ -219,3 +219,17 @@ describe('helpers', () => {
     expect(toCsv(['a', 'b'], [[1, 'x']])).toBe('a,b\r\n1,x\r\n');
   });
 });
+
+describe('foldTrend', () => {
+  it('folds per-score aggregates into weekly points, keeping empty weeks', async () => {
+    const { foldTrend } = await import('../src/modules/risk-scoring.js');
+    const pts = foldTrend([
+      { at: '2026-11-16', inherent_score: 20, open: 2, inherent_sum: 40, residual_sum: 12, target_sum: null },
+      { at: '2026-11-16', inherent_score: 4, open: 1, inherent_sum: 4, residual_sum: 2, target_sum: 1 },
+      { at: '1999-01-01', inherent_score: 9, open: 9, inherent_sum: 81, residual_sum: 81, target_sum: null },
+    ], ['2026-11-09', '2026-11-16']);
+    expect(pts[0]).toMatchObject({ week: '2026-11-09', open: 0, inherent_total: 0, target_total: null });
+    expect(pts[1]).toMatchObject({ open: 3, inherent_total: 44, residual_total: 14, target_total: 1 });
+    expect(pts[1].by_inherent_rating).toEqual({ very_low: 0, low: 1, moderate: 0, high: 0, very_high: 2 });
+  });
+});
