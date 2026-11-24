@@ -24,6 +24,13 @@ describe('text cleanup', () => {
     const html = 'When connecting&#58;<p><ol><li>Slow token</li><li>\nHangs</li></ol></p><img src="blob&#58;x" /><a href="https&#58;//x.test/a">link</a>';
     expect(htmlToText(html)).toBe('When connecting:\n• Slow token\n• Hangs\n\nlink (https://x.test/a)');
   });
+  it('leaves no markup behind, including nested and entity-encoded tags', () => {
+    expect(htmlToText('a<scr<b>ipt>alert(1)</scr</b>ipt>b')).toBe('aalert(1)b');
+    expect(htmlToText('x &lt;script&gt;alert(1)&lt;/script&gt; y')).toBe('x alert(1) y');
+    expect(htmlToText('<a href="https://x.test">&lt;img src=x onerror=1&gt;</a>')).toBe('https://x.test');
+    expect(htmlToText('5 &lt; 6 and 7 &gt; 3')).toBe('5 < 6 and 7 > 3');
+    expect(htmlToText('&lt;scr&lt;b&gt;ipt')).toBe('< script'); // never re-forms a tag
+  });
   it('redacts credentials typed into a ticket', () => {
     expect(redactSecrets('IP: 10.0.0.1\nLogin credentials: Tester/TestAutomation')).toEqual({
       text: 'IP: 10.0.0.1\nLogin credentials: [redacted at import]', redacted: true,

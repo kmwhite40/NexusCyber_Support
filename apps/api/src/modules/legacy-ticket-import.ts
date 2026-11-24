@@ -47,22 +47,35 @@ export function decodeEntities(s: string): string {
   });
 }
 
+/**
+ * Remove every tag, repeating until the text stops changing: a single pass over "<scr<b>ipt>"
+ * leaves "<script>" behind. Applied both before AND after entity decoding, because "&lt;script&gt;"
+ * only becomes a tag once decoded. The output is plain text; no markup survives in any form.
+ */
+export function stripTags(s: string): string {
+  let prev: string;
+  let t = s;
+  do { prev = t; t = t.replace(/<\/?[a-zA-Z!?][^<>]*>/g, ''); } while (t !== prev);
+  // A "<" that could still open a tag gets a space after it ("< script"), which no parser reads as
+  // markup; ordinary text such as "5 < 6" is left as written.
+  return t.replace(/<(?=[a-zA-Z/!?])/g, '< ');
+}
+
 /** SharePoint rich text to plain text: block tags become line breaks, list items get bullets,
  *  links keep their URL, images (dead blob: URLs) are dropped. */
 export function htmlToText(html: string): string {
   if (!html) return '';
   const t = html
     .replace(/<a\b[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (_m, href: string, label: string) => {
-      const l = label.replace(/<[^>]+>/g, '').trim();
-      const h = decodeEntities(href);
-      return l && decodeEntities(l) !== h ? `${l} (${h})` : h;
+      const l = stripTags(decodeEntities(stripTags(label))).trim();
+      const h = stripTags(decodeEntities(href));
+      return l && l !== h ? `${l} (${h})` : h;
     })
     .replace(/<img\b[^>]*>/gi, '')
     .replace(/<li\b[^>]*>/gi, '\n• ')
     .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|li|ul|ol|h\d)>/gi, '\n')
-    .replace(/<[^>]+>/g, '');
-  return decodeEntities(t)
+    .replace(/<\/(p|div|li|ul|ol|h\d)>/gi, '\n');
+  return stripTags(decodeEntities(stripTags(t)))
     .replace(/[ \t​]+\n/g, '\n')
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/\n[ \t]+/g, '\n')
