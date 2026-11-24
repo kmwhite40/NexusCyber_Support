@@ -131,6 +131,8 @@ export interface Ticket {
   tags: string[];
   created_at: string;
   category?: string;
+  impact?: number | null;
+  urgency?: number | null;
   assignment_group_id?: string | null;
   /** author_id is null for system/automation comments; `author` is then null too. */
   comments?: TicketComment[];

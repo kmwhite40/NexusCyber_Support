@@ -39,6 +39,7 @@ import * as forms from '../modules/forms.js';
 import * as sensitiveFields from '../modules/sensitive-fields.js';
 import * as ticketForm from '../modules/ticket-form.js';
 import * as ticketFormEdit from '../modules/ticket-form-edit.js';
+import * as ticketAdmin from '../modules/ticket-admin.js';
 import * as escalationPolicies from '../modules/escalation-policies.js';
 import * as provisioning from '../modules/provisioning/index.js';
 import * as offboarding from '../modules/offboarding/index.js';
@@ -518,6 +519,34 @@ export async function registerRoutes(app: FastifyInstance) {
     const comment = await tickets.addComment(p, id, body.body, body.visibility ?? 'customer');
     reply.status(201);
     return comment;
+  });
+
+  // Administrative correction of a ticket's own fields. Needs ticket.edit (ServiceDeskManager);
+  // refused (409) on closed tickets. Changing impact/urgency re-derives priority and moves the
+  // live SLA deadlines to the new priority's targets. Writes an 'edited' event + audit entry.
+  app.patch('/api/v1/tickets/:id', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z
+      .object({
+        subject: z.string().optional(),
+        description: z.string().nullable().optional(),
+        category: z.string().nullable().optional(),
+        impact: z.number().int().optional(),
+        urgency: z.number().int().optional(),
+        reason: z.string().max(2000).optional(),
+      })
+      .strict()
+      .parse(req.body);
+    const { reason, ...patch } = body;
+    return ticketAdmin.editTicket(p, id, patch, { reason });
+  });
+
+  // Who this ticket can be reassigned to: staff able to work its org, and groups available to it.
+  app.get('/api/v1/tickets/:id/assignees', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    return { data: await ticketAdmin.listAssignees(p, id) };
   });
 
   app.post('/api/v1/tickets/:id/assign', async (req) => {

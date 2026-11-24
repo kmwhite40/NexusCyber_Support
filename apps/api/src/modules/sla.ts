@@ -19,7 +19,7 @@ const DEFAULT_TARGETS_MINUTES: Record<string, Record<SlaMetric, number>> = {
   P4: { response: 2 * BUSINESS_DAY, resolution: 10 * BUSINESS_DAY, update: 480, remediation: 90 * 24 * 60 },
 };
 
-interface CalendarLike {
+export interface CalendarLike {
   coverage: '8x5' | '24x7';
   tz: string;
   /** ISO 'YYYY-MM-DD' holiday dates excluded from 8x5 business time. */
@@ -155,6 +155,56 @@ export function evaluateState(
   if (now >= instance.due_at) return 'breached';
   if (total > 0 && consumed / total >= 0.75) return 'warning';
   return 'running';
+}
+
+// ---- Re-target on priority change ----
+
+/** States whose deadline is still live. met/breached are history and never move. */
+const RETARGETABLE = new Set(['running', 'warning', 'paused']);
+
+/**
+ * The due date an instance WOULD have had if the ticket had carried `priority` from the start:
+ * the new priority's target in business minutes from the original start, plus the wall-clock
+ * time already spent paused (applyResume shifts due_at by exactly that). Pure. Returns null for
+ * an instance whose deadline is no longer live.
+ */
+export function retargetDue(
+  instance: { metric: string; state: string; started_at: Date; paused_minutes: number },
+  priority: string,
+  cal: CalendarLike,
+): Date | null {
+  if (!RETARGETABLE.has(instance.state)) return null;
+  const base = addBusinessMinutes(new Date(instance.started_at), targetMinutes(priority, instance.metric as SlaMetric), cal);
+  return new Date(base.getTime() + instance.paused_minutes * 60_000);
+}
+
+/**
+ * Move a ticket's live SLA deadlines to the targets of its new priority, and mirror them onto
+ * tickets.response_due_at / resolution_due_at. A deadline that is now in the past is left for the
+ * SLA sweeper to mark breached on its next pass, the same as any other overdue clock. Runs inside
+ * the caller's transaction.
+ */
+export async function retargetTicketSlas(
+  sql: Sql,
+  ticket: { id: string; organization_id: string },
+  priority: string,
+): Promise<number> {
+  const { rows } = await sql.query(
+    `SELECT id, metric, state, started_at, paused_minutes FROM sla_instances WHERE ticket_id=$1`,
+    [ticket.id],
+  );
+  if (!rows.length) return 0;
+  const cal = await loadCalendar(sql, ticket.organization_id);
+  let moved = 0;
+  for (const r of rows) {
+    const due = retargetDue(r, priority, cal);
+    if (!due) continue;
+    await sql.query('UPDATE sla_instances SET due_at=$2 WHERE id=$1', [r.id, due]);
+    if (r.metric === 'response') await sql.query('UPDATE tickets SET response_due_at=$2 WHERE id=$1', [ticket.id, due]);
+    if (r.metric === 'resolution') await sql.query('UPDATE tickets SET resolution_due_at=$2 WHERE id=$1', [ticket.id, due]);
+    moved++;
+  }
+  return moved;
 }
 
 // ---- Pause / resume (docs/nexus/04 §H.4) ----
