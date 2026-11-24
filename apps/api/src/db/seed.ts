@@ -80,6 +80,8 @@ const PERMISSIONS: Array<[string, string]> = [
   ['provisioning.execute', 'integration'],
   // Created by migration 0080; repeated here for the same reason as the two above.
   ['ticket.form.edit', 'ticket'],
+  // Created by migration 0090; repeated here for the same reason.
+  ['ticket.edit', 'ticket'],
   // Risk register — created by migration 0085; repeated here for the same reason.
   ['risk.read', 'risk'],
   ['risk.manage', 'risk'],
@@ -123,6 +125,8 @@ const ROLES: Record<string, { plane: 'nexus' | 'customer'; perms: string[] }> = 
       'pii.view', 'provisioning.execute',
       // Granted by migration 0080 — correcting a submitted request's answers. Same dual-write rule.
       'ticket.form.edit',
+      // Granted by migration 0090 — editing a ticket's own fields. Same dual-write rule.
+      'ticket.edit',
       // Granted by migration 0085 — the risk register. Same dual-write rule.
       'risk.read', 'risk.manage', 'risk.accept'],
   },

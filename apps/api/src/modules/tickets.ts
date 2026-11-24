@@ -13,6 +13,7 @@ import { resolveTransitions, isTransitionAllowed } from './workflows.js';
 import { redactEventsForCustomer, ticketUserIds, withTicketNames } from './ticket-people.js';
 import { resolveUserNames } from './user-names.js';
 import { Errors } from '../errors.js';
+import { assertAssignable } from './ticket-admin.js';
 import type { Principal } from '../types.js';
 
 // Impact x Urgency -> Priority (docs/nexus/03 §F.4)
@@ -584,8 +585,14 @@ export async function assignTicket(
 ) {
   authorize(actor, 'ticket.assign');
   return withOrgContext(orgContextFor(actor), async (sql) => {
-    const t = (await sql.query('SELECT organization_id, status FROM tickets WHERE id=$1', [id])).rows[0];
+    const t = (
+      await sql.query('SELECT organization_id, status, assigned_agent_id, assignment_group_id FROM tickets WHERE id=$1 FOR UPDATE', [id])
+    ).rows[0];
     if (!t) throw Errors.notFound('ticket not found');
+    // Scope the verb to this ticket's org, and only ever hand a ticket to staff who can work it
+    // (never a customer-plane user) or to a group available to this org.
+    authorize(actor, 'ticket.assign', { organizationId: t.organization_id });
+    await assertAssignable(t.organization_id, assignedAgentId, assignmentGroupId);
     const newStatus = t.status === 'triage' || t.status === 'new' ? 'assigned' : t.status;
     const { rows } = await sql.query(
       `UPDATE tickets SET assigned_agent_id=$1, assignment_group_id=$2, status=$3 WHERE id=$4 RETURNING *`,
@@ -594,9 +601,16 @@ export async function assignTicket(
     await sql.query(
       `INSERT INTO ticket_events (organization_id, ticket_id, actor_id, event_type, detail)
        VALUES ($1,$2,$3,'assigned',$4)`,
-      [t.organization_id, id, actor.id, { assignedAgentId, assignmentGroupId }],
+      [t.organization_id, id, actor.id, {
+        assignedAgentId, assignmentGroupId,
+        fromAgentId: t.assigned_agent_id, fromGroupId: t.assignment_group_id,
+        reassigned: !!(t.assigned_agent_id || t.assignment_group_id),
+      }],
     );
-    await audit(actor, { action: 'ticket.assign', organizationId: t.organization_id, resourceType: 'ticket', resourceId: id });
+    await audit(actor, {
+      action: 'ticket.assign', organizationId: t.organization_id, resourceType: 'ticket', resourceId: id,
+      detail: { from: { agent: t.assigned_agent_id, group: t.assignment_group_id }, to: { agent: assignedAgentId, group: assignmentGroupId } },
+    });
     // Picking up / assigning a ticket counts as the first response — stop the response SLA.
     if (assignedAgentId) await markResponseMet(sql, id);
     publish('ticket.assigned', t.organization_id, { ticket_id: id, org_id: t.organization_id, agent_id: assignedAgentId, group_id: assignmentGroupId });

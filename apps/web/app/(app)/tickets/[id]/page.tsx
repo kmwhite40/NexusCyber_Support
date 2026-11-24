@@ -13,6 +13,7 @@ import { ProvisioningPanel } from '@/components/provisioning-panel';
 import { OffboardingPanel } from '@/components/offboarding-panel';
 import { SubmittedForm } from '@/components/submitted-form';
 import { CardBoundary } from '@/components/card-boundary';
+import { TicketAdminPanel } from '@/components/ticket-admin-panel';
 import { TicketComments } from '@/components/ticket-conversation';
 import { assigneeSummary, personLabel } from '@/lib/ticket-people';
 
@@ -216,6 +217,14 @@ export default function TicketDetailPage() {
             <Button size="sm" variant="subtle" onClick={escalate} disabled={busy}>Escalate</Button>
           </CardBody>
         </Card>
+      )}
+
+      {/* Reassign to a specific agent / group (ticket.assign) and correct the ticket's own
+          fields (ticket.edit). Server-enforced; shown only to staff who hold either verb. */}
+      {isAgent && (can('ticket.assign') || can('ticket.edit')) && (
+        <CardBoundary name="Admin">
+          <TicketAdminPanel ticket={ticket} canAssign={can('ticket.assign')} canEdit={can('ticket.edit')} onChange={load} />
+        </CardBoundary>
       )}
 
       {approvalsPassed && (
