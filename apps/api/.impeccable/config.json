@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "broken-image",
+        "value": "*",
+        "files": [
+          "apps/api/src/modules/legacy-ticket-import.ts"
+        ],
+        "createdAt": "2026-11-24T15:42:48.388Z",
+        "reason": "Claude: the <img> is inside a regex that strips images from imported HTML, not markup"
+      }
+    ]
+  }
+}

@@ -96,9 +96,12 @@ export function ticketNumberPrefix(orgName: string | null | undefined): string {
 
 export async function nextTicketNumber(sql: Sql, orgId: string): Promise<string> {
   await sql.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [orgId]);
+  // Tickets imported from the retired SharePoint list keep their legacy ids (SPL-000072) and
+  // are excluded here, or the next new ticket would jump to the legacy maximum + 1.
   const { rows } = await sql.query(
     `SELECT COALESCE(MAX((regexp_replace(ticket_number, '\\D','','g'))::int), 0) + 1 AS n
-       FROM tickets WHERE organization_id = $1`,
+       FROM tickets WHERE organization_id = $1
+        AND external_source IS DISTINCT FROM 'sharepoint-legacy'`,
     [orgId],
   );
   const n = rows[0].n as number;
