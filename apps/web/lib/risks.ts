@@ -8,7 +8,7 @@
 import { api, API_BASE, getToken, ApiError } from '@/lib/api';
 
 export type RiskStatus = 'identified' | 'assessed' | 'treating' | 'monitoring' | 'accepted' | 'closed';
-export type RiskRating = 'very_low' | 'low' | 'moderate' | 'high' | 'very_high';
+export type RiskRating = 'very_low' | 'low' | 'moderate' | 'high' | 'very_high' | 'critical';
 export type AppetiteState = 'within' | 'above_appetite' | 'above_tolerance';
 export type Strategy = 'mitigate' | 'transfer' | 'avoid' | 'accept';
 export type LinkKind = 'control' | 'finding' | 'ticket' | 'problem' | 'change' | 'service';
@@ -29,18 +29,24 @@ export const LIKELIHOOD_LABELS = ['Rare', 'Unlikely', 'Possible', 'Likely', 'Alm
 export const IMPACT_LABELS = ['Negligible', 'Minor', 'Moderate', 'Major', 'Severe'] as const;
 export const STATUSES: RiskStatus[] = ['identified', 'assessed', 'treating', 'monitoring', 'accepted', 'closed'];
 
-export const RATINGS_ORDER: readonly RiskRating[] = ['very_high', 'high', 'moderate', 'low', 'very_low'];
+/** The ACTIVE methodology's ratings, worst first (nexus-5x5@2). Older risks may still carry 'very_low' (v1). */
+export const RATINGS_ORDER: readonly RiskRating[] = ['critical', 'very_high', 'high', 'moderate', 'low'];
 export const RATING_LABEL: Record<RiskRating, string> = {
-  very_low: 'Very low', low: 'Low', moderate: 'Moderate', high: 'High', very_high: 'Very high',
+  very_low: 'Very low', low: 'Low', moderate: 'Moderate', high: 'High', very_high: 'Very high', critical: 'Critical',
 };
 
-/** Mirrors risk-scoring.ts rating(): kept in step by test/risks-lib.test.ts. */
+/**
+ * PREVIEW banding with the active methodology (nexus-5x5@2: 1-4 Low, 5-9 Moderate, 10-14 High,
+ * 15-19 Very High, 20-25 Critical), for heat-map cells and score previews. A saved risk's rating
+ * comes from the API, which bands it with the methodology that scored it. Kept in step with
+ * risk-scoring.ts by test/risks-page.test.tsx.
+ */
 export function ratingFor(score: number): RiskRating {
-  if (score >= 20) return 'very_high';
-  if (score >= 15) return 'high';
-  if (score >= 8) return 'moderate';
-  if (score >= 4) return 'low';
-  return 'very_low';
+  if (score >= 20) return 'critical';
+  if (score >= 15) return 'very_high';
+  if (score >= 10) return 'high';
+  if (score >= 5) return 'moderate';
+  return 'low';
 }
 
 /**
@@ -52,10 +58,11 @@ export const RATING_FILL: Record<RiskRating, string> = {
   low: 'hsl(var(--success) / 0.45)',
   moderate: 'hsl(var(--warning) / 0.38)',
   high: 'hsl(var(--warning) / 0.7)',
-  very_high: 'hsl(var(--danger) / 0.75)',
+  very_high: 'hsl(var(--danger) / 0.6)',
+  critical: 'hsl(var(--danger) / 0.9)',
 };
 export const RATING_TONE: Record<RiskRating, 'success' | 'warning' | 'danger' | 'neutral'> = {
-  very_low: 'neutral', low: 'success', moderate: 'warning', high: 'danger', very_high: 'danger',
+  very_low: 'neutral', low: 'success', moderate: 'warning', high: 'danger', very_high: 'danger', critical: 'danger',
 };
 
 export function humanize(s: string | null | undefined): string {
@@ -97,6 +104,8 @@ export interface Risk {
   residual_likelihood: number; residual_impact: number; residual_score: number;
   target_likelihood: number | null; target_impact: number | null; target_score: number | null;
   inherent_rating: RiskRating; residual_rating: RiskRating; target_rating: RiskRating | null;
+  /** The scoring methodology version that produced the ratings above. */
+  methodology?: { key: string; version: number; name: string };
   impact_dimensions: Record<string, number>;
   velocity: string | null;
   fair_inputs: FairInputs | null;
