@@ -44,16 +44,27 @@ const result = await withSystemContext(async (sql) => {
   console.log(`organization : ${org.name} (${org.id})`);
   console.log(`mode         : ${APPLY ? 'APPLY' : 'dry run (pass --apply to write)'}`);
 
-  // People are matched by name within the org: "Wise, Taylor" -> users.display_name "Taylor Wise",
-  // falling back to the email local part (taylor.wise@...). Unmatched names stay as text.
+  // People are matched by name: "Wise, Taylor" -> display_name "Taylor Wise", falling back to the
+  // email local part (taylor.wise@...). The organization's own users are tried first; then platform
+  // staff (plane 'nexus', who have no organization) whose email domain belongs to this organization,
+  // i.e. a domain registered in organization_domains or one its own users use. Admins such as
+  // kevin.white@<org domain> match that way; staff of another customer never do. Unmatched names
+  // stay as text on the record.
   const users = (await sql.query(
-    `SELECT id, display_name, email FROM users WHERE organization_id=$1`, [ORG_ID])).rows as Array<{ id: string; display_name: string | null; email: string }>;
+    `WITH org_domains AS (
+       SELECT lower(domain) AS d FROM organization_domains WHERE organization_id=$1
+       UNION SELECT DISTINCT split_part(lower(email::text), '@', 2) FROM users WHERE organization_id=$1
+     )
+     SELECT id, display_name, email::text AS email, (organization_id = $1) AS own FROM users
+      WHERE organization_id=$1
+         OR (plane='nexus' AND split_part(lower(email::text), '@', 2) IN (SELECT d FROM org_domains))
+      ORDER BY (organization_id = $1) DESC NULLS LAST`, [ORG_ID])).rows as Array<{ id: string; display_name: string | null; email: string; own: boolean | null }>;
   const byKey = new Map<string, string>();
-  for (const u of users) {
-    if (u.display_name) byKey.set(personKey(u.display_name), u.id);
-    const local = u.email.split('@')[0];
-    if (!byKey.has(personKey(local))) byKey.set(personKey(local), u.id);
+  for (const u of users) { // org members first, so they win a name collision with staff
+    const keys = [u.display_name, u.email.split('@')[0]].filter(Boolean).map((k) => personKey(k as string));
+    for (const k of keys) if (k && !byKey.has(k)) byKey.set(k, u.id);
   }
+  console.log(`people       : ${users.filter((u) => u.own).length} organization users, ${users.filter((u) => !u.own).length} platform staff in its email domain(s)`);
   const who = (name: string | null) => (name ? byKey.get(personKey(name)) ?? null : null);
 
   const seenT = new Set((await sql.query(
@@ -136,8 +147,35 @@ const result = await withSystemContext(async (sql) => {
   }
   for (const r of newR) if (!r.tags.includes(r.legacyId)) r.tags.push(r.legacyId);
 
-  if (!APPLY) return { ticketIds: [] as string[], changeIds: [] as string[], riskIds: [] as string[] };
+  // Relink: fill person fields left EMPTY on rows already imported, now that more people match.
+  // Never overwrites a value (someone may have set it by hand since the import).
+  const existingT = new Map<string, any>((await sql.query(
+    `SELECT id, external_ref, requester_id, assigned_agent_id FROM tickets WHERE organization_id=$1 AND external_source=$2`,
+    [ORG_ID, LEGACY_SOURCE])).rows.map((r: any) => [r.external_ref, r]));
+  const existingC = new Map<string, any>((await sql.query(
+    `SELECT id, external_ref, created_by, implementer_id FROM changes WHERE organization_id=$1 AND external_source=$2`,
+    [ORG_ID, LEGACY_SOURCE])).rows.map((r: any) => [r.external_ref, r]));
+  const relinkT = tickets.flatMap((t) => {
+    const row = existingT.get(t.externalRef);
+    if (!row) return [];
+    const requester = row.requester_id ? null : who(t.requesterName);
+    const agent = row.assigned_agent_id ? null : who(t.assignedTo[0] ?? null);
+    return requester || agent ? [{ id: row.id as string, number: t.ticketNumber, requester, agent }] : [];
+  });
+  const relinkC = changes.flatMap((c) => {
+    const row = existingC.get(c.externalRef);
+    if (!row) return [];
+    const creator = row.created_by ? null : who(c.createdByName);
+    const implementer = row.implementer_id ? null : who(c.implementerName);
+    return creator || implementer ? [{ id: row.id as string, title: c.title, creator, implementer }] : [];
+  });
+  console.log(`\nrelink people on already-imported records: ${relinkT.length} tickets, ${relinkC.length} changes`);
+  for (const t of relinkT) console.log(`  ${t.number}${t.requester ? ' requester' : ''}${t.agent ? ' assigned-agent' : ''}`);
+  for (const c of relinkC) console.log(`  change "${c.title.slice(0, 55)}"${c.creator ? ' creator' : ''}${c.implementer ? ' implementer' : ''}`);
+
+  if (!APPLY) return { ticketIds: [] as string[], changeIds: [] as string[], riskIds: [] as string[], relinked: [] as Array<{ kind: 'ticket' | 'change'; id: string }> };
   const riskIds: string[] = [];
+  const relinked: Array<{ kind: 'ticket' | 'change'; id: string }> = [];
 
   const ticketIds: string[] = [];
   const changeIds: string[] = [];
@@ -148,13 +186,14 @@ const result = await withSystemContext(async (sql) => {
         'SELECT external_ref FROM tickets WHERE organization_id=$1 AND ticket_number=$2', [ORG_ID, t.ticketNumber])).rows[0];
       if (clash) throw new Error(`${t.ticketNumber} already exists in this org with a different origin (${clash.external_ref ?? 'native'})`);
       const requester = who(t.requesterName);
+      const agent = who(t.assignedTo[0] ?? null);
       const { rows } = await sql.query(
         `INSERT INTO tickets
-           (organization_id, ticket_number, type, requester_id, affected_user_id, source_channel, subject,
+           (organization_id, ticket_number, type, requester_id, affected_user_id, assigned_agent_id, source_channel, subject,
             description, category, impact, urgency, priority, status, tags, custom_fields,
             external_ref, external_source, resolution_code, closure_notes,
             created_at, updated_at, resolved_at, closed_at)
-         VALUES ($1,$2,$3,$4,$4,'import',$5,$6,$7,$8,$9,$10,'closed',$11,$12,$13,$14,'legacy_import',$15,$16,$16,NULL,NULL)
+         VALUES ($1,$2,$3,$4,$4,$17,'import',$5,$6,$7,$8,$9,$10,'closed',$11,$12,$13,$14,'legacy_import',$15,$16,$16,NULL,NULL)
          RETURNING id`,
         [
           ORG_ID, t.ticketNumber, t.type, requester, t.subject, t.description, t.category,
@@ -166,7 +205,7 @@ const result = await withSystemContext(async (sql) => {
               had_attachments: t.hadAttachments,
             },
           },
-          t.externalRef, LEGACY_SOURCE, t.resolution, t.createdAt,
+          t.externalRef, LEGACY_SOURCE, t.resolution, t.createdAt, agent,
         ],
       );
       const id = rows[0].id as string;
@@ -240,12 +279,25 @@ const result = await withSystemContext(async (sql) => {
         [ORG_ID, id, rows[0].inherent_score, rows[0].residual_score, r.residual.likelihood, r.residual.impact, r.status,
           `Imported from the SBSFederal risk register spreadsheet (${r.legacyId})${r.note ? `. Legacy comment: ${r.note}` : ''}`]);
     }
+    for (const t of relinkT) {
+      const { rowCount } = await sql.query(
+        `UPDATE tickets SET requester_id = COALESCE(requester_id, $2), affected_user_id = COALESCE(affected_user_id, $2),
+                assigned_agent_id = COALESCE(assigned_agent_id, $3)
+          WHERE id = $1 AND organization_id = $4`, [t.id, t.requester, t.agent, ORG_ID]);
+      if (rowCount) relinked.push({ kind: 'ticket', id: t.id });
+    }
+    for (const c of relinkC) {
+      const { rowCount } = await sql.query(
+        `UPDATE changes SET created_by = COALESCE(created_by, $2), implementer_id = COALESCE(implementer_id, $3)
+          WHERE id = $1 AND organization_id = $4`, [c.id, c.creator, c.implementer, ORG_ID]);
+      if (rowCount) relinked.push({ kind: 'change', id: c.id });
+    }
     await sql.query('COMMIT');
   } catch (err) {
     await sql.query('ROLLBACK');
     throw err;
   }
-  return { ticketIds, changeIds, riskIds };
+  return { ticketIds, changeIds, riskIds, relinked };
 });
 
 if (APPLY) {
@@ -259,6 +311,9 @@ if (APPLY) {
   for (const id of result.riskIds) {
     await audit(null, { action: 'risk.import.legacy', organizationId: ORG_ID, resourceType: 'risk', resourceId: id, detail: { source: LEGACY_SOURCE } });
   }
-  console.log(`\nRESULT created ${result.ticketIds.length} tickets (closed), ${result.changeIds.length} changes (closed), ${result.riskIds.length} risks`);
+  for (const r of result.relinked) {
+    await audit(null, { action: `${r.kind}.import.legacy.relink_people`, organizationId: ORG_ID, resourceType: r.kind, resourceId: r.id, detail: { source: LEGACY_SOURCE } });
+  }
+  console.log(`\nRESULT created ${result.ticketIds.length} tickets (closed), ${result.changeIds.length} changes (closed), ${result.riskIds.length} risks; linked people on ${result.relinked.length} existing records`);
 }
 process.exit(0);

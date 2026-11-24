@@ -26,7 +26,7 @@ describeDb('compliance (integration)', () => {
   it('computes control coverage for an org', async () => {
     const coverage = await controlCoverage(analyst, acmeId);
     expect(coverage.length).toBeGreaterThan(0);
-    for (const c of coverage) expect(['satisfied', 'partial', 'gap']).toContain(c.status);
+    for (const c of coverage) expect(['satisfied', 'partial', 'gap', 'not_assessed']).toContain(c.status);
   });
 
   it('enforces separation of duties on exceptions', async () => {

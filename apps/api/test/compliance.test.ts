@@ -4,8 +4,10 @@ import { classifyControl, type ControlSignal } from '../src/modules/compliance.j
 const base: ControlSignal = { mapped: 0, satisfied: 0 };
 
 describe('classifyControl', () => {
-  it('returns "gap" when a control has no mappings', () => {
-    expect(classifyControl({ ...base, mapped: 0, satisfied: 0 })).toBe('gap');
+  it('returns "not_assessed" (not "gap") when no evidence is mapped to a control', () => {
+    // An unmapped control has no evidence either way; reporting it as a gap would turn the full
+    // 800-53 catalog into ~1,000 unsupported failures in coverage and evidence packages.
+    expect(classifyControl({ ...base, mapped: 0, satisfied: 0 })).toBe('not_assessed');
   });
 
   it('returns "satisfied" when every mapped signal is satisfied', () => {

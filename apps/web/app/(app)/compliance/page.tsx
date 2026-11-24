@@ -13,16 +13,21 @@ interface Coverage {
   title: string;
   mapped: number;
   satisfied: number;
-  status: 'satisfied' | 'partial' | 'gap';
+  /** not_assessed: no evidence source is mapped to the control yet; unknown, not failing. */
+  status: 'satisfied' | 'partial' | 'gap' | 'not_assessed';
 }
 
-const tone = (s: Coverage['status']) => (s === 'satisfied' ? 'success' : s === 'partial' ? 'warning' : 'danger');
+const tone = (s: Coverage['status']) =>
+  s === 'satisfied' ? 'success' : s === 'partial' ? 'warning' : s === 'gap' ? 'danger' : 'neutral';
+const STATUS_LABEL: Record<Coverage['status'], string> = { satisfied: 'satisfied', partial: 'partial', gap: 'gap', not_assessed: 'not assessed' };
 
 export default function CompliancePage() {
   const { me, can } = useAuth();
   const isAgent = me?.plane === 'nexus';
   const [rows, setRows] = React.useState<Coverage[] | null>(null);
   const [exporting, setExporting] = React.useState(false);
+  // The full 800-53 catalog is ~1,000 controls; by default list the ones with evidence mapped.
+  const [showAll, setShowAll] = React.useState(false);
 
   // Coverage is per-tenant: nexus operators pick a customer; a customer's own org is implicit.
   const [orgId, setOrgId] = React.useState('');
@@ -59,6 +64,7 @@ export default function CompliancePage() {
     }
   }
 
+  const visible = (rows ?? []).filter((c) => showAll || c.status !== 'not_assessed');
   const counts = (rows ?? []).reduce<Record<string, number>>((a, c) => ((a[c.status] = (a[c.status] ?? 0) + 1), a), {});
 
   return (
@@ -91,27 +97,36 @@ export default function CompliancePage() {
         </Card>
       ) : (
         <>
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard label="Satisfied" value={counts.satisfied ?? 0} tone="success" />
             <StatCard label="Partial" value={counts.partial ?? 0} tone="warning" />
             <StatCard label="Gaps" value={counts.gap ?? 0} tone="danger" />
+            <StatCard label="Not assessed (no evidence mapped)" value={counts.not_assessed ?? 0} />
           </div>
 
           <Card>
-            <CardHeader><CardTitle>Controls</CardTitle></CardHeader>
+            <CardHeader className="flex flex-row items-center justify-between gap-3">
+              <CardTitle>Controls</CardTitle>
+              {(counts.not_assessed ?? 0) > 0 && (
+                <label className="flex items-center gap-2 text-xs text-muted">
+                  <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
+                  Show the full catalog ({counts.not_assessed} not assessed)
+                </label>
+              )}
+            </CardHeader>
             <CardBody className="px-0 pt-0">
               {!rows ? (
                 <div className="space-y-2 p-5">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-12" />)}</div>
               ) : (
                 <DataTable<Coverage>
-                  rows={rows}
+                  rows={visible}
                   empty={<EmptyState title="No controls" description="No compliance controls are configured." />}
                   columns={[
                     { key: 'id', header: 'Control', render: (c) => <span className="font-medium text-fg">{c.control_id}</span> },
                     { key: 'framework', header: 'Framework', render: (c) => <span className="text-xs text-muted">{c.framework}</span> },
                     { key: 'title', header: 'Title', render: (c) => <span className="text-sm text-fg">{c.title}</span> },
                     { key: 'evidence', header: 'Evidence', render: (c) => <span className="tabular-nums text-xs text-muted">{c.satisfied}/{c.mapped}</span> },
-                    { key: 'status', header: 'Status', render: (c) => <Badge tone={tone(c.status)}>{c.status}</Badge> },
+                    { key: 'status', header: 'Status', render: (c) => <Badge tone={tone(c.status)}>{STATUS_LABEL[c.status]}</Badge> },
                   ]}
                 />
               )}
