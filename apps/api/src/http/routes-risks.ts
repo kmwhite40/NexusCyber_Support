@@ -64,6 +64,13 @@ export async function registerRiskRoutes(app: FastifyInstance): Promise<void> {
     return { data: await risks.portfolio(p) };
   });
 
+  // Week-by-week open-risk scores and rating mix for one organization (the risk report).
+  app.get('/api/v1/risks/trend', async (req) => {
+    const p = await requirePrincipal(req);
+    const q = orgQuery.extend({ weeks: z.coerce.number().int().min(2).max(104).optional() }).parse(req.query);
+    return risks.trend(p, q.organizationId, q.weeks);
+  });
+
   app.get('/api/v1/risks/settings', async (req) => {
     const p = await requirePrincipal(req);
     const q = orgQuery.parse(req.query);

@@ -382,3 +382,39 @@ export function csvCell(v: unknown): string {
 export function toCsv(headers: string[], rows: unknown[][]): string {
   return [headers.map(csvCell).join(','), ...rows.map((r) => r.map(csvCell).join(','))].join('\r\n') + '\r\n';
 }
+
+// ---------------- Trend (risk report) ----------------
+
+export interface TrendCell { at: string; inherent_score: number; open: number; inherent_sum: number; residual_sum: number; target_sum: number | null }
+export interface TrendPoint {
+  week: string; // ISO date of the week start
+  open: number;
+  /** Sums of ordinal L×I scores: a workload / exposure INDICATOR, never a loss estimate. */
+  inherent_total: number;
+  residual_total: number;
+  target_total: number | null; // null when no open risk has a target set
+  by_inherent_rating: Record<RiskRating, number>;
+}
+
+/**
+ * Fold the database's per-(week, inherent score) aggregates into one point per week. Weeks with
+ * no open risk still appear (as zeros) so the chart's x-axis is continuous, but a week BEFORE the
+ * register's first record is reported as null-free zeros only because the series starts there —
+ * callers show "insufficient history" when every point is empty.
+ */
+export function foldTrend(cells: TrendCell[], weekStarts: string[]): TrendPoint[] {
+  const zero = (): Record<RiskRating, number> => ({ very_low: 0, low: 0, moderate: 0, high: 0, very_high: 0 });
+  const byWeek = new Map(weekStarts.map((w) => [w, {
+    week: w, open: 0, inherent_total: 0, residual_total: 0, target_total: null as number | null, by_inherent_rating: zero(),
+  }]));
+  for (const c of cells) {
+    const p = byWeek.get(c.at);
+    if (!p) continue;
+    p.open += c.open;
+    p.inherent_total += c.inherent_sum;
+    p.residual_total += c.residual_sum;
+    if (c.target_sum !== null) p.target_total = (p.target_total ?? 0) + c.target_sum;
+    p.by_inherent_rating[rating(c.inherent_score)] += c.open;
+  }
+  return [...byWeek.values()];
+}

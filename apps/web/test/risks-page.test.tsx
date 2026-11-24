@@ -65,6 +65,11 @@ describe('RisksPage', () => {
         });
       }
       if (url.startsWith('/risks/settings')) return Promise.resolve(SETTINGS);
+      if (url.startsWith('/risks/trend')) {
+        const pt = (week: string, open: number) => ({ week, open, inherent_total: open * 12, residual_total: open * 6, target_total: null,
+          by_inherent_rating: { very_low: 0, low: 0, moderate: open, high: 0, very_high: 0 } });
+        return Promise.resolve({ points: [pt('2026-11-09', 0), pt('2026-11-16', 2)] });
+      }
       // Single-risk read (the detail dialog opens after a create): answered bare, not enveloped.
       if (/^\/risks\/r-/.test(url)) {
         return Promise.resolve({ ...risk({ id: 'r-new' }), settings: SETTINGS, treatments: [], links: [], history: [], treatments_overdue: 0, acceptance_requested_by_user: null, acceptance_decided_by_user: null });
@@ -121,6 +126,17 @@ describe('RisksPage', () => {
     await waitFor(() => expect(mockedApi.post).toHaveBeenCalledWith('/risks', expect.objectContaining({
       organizationId: GLOBEX, title: 'Unpatched VPN appliance', inherentLikelihood: 4, inherentImpact: 5,
     })));
+  });
+
+  it('shows a risk report from the organization\'s trend, with a table view', async () => {
+    asUser({}, ['risk.read']);
+    render(<RisksPage />);
+    await screen.findByText('Ransomware via phishing');
+    await userEvent.click(screen.getByRole('tab', { name: 'Risk report' }));
+    expect(await screen.findByRole('img', { name: /risk score totals by week/ })).toBeTruthy();
+    expect(screen.getByRole('img', { name: /Open risks by inherent rating/ })).toBeTruthy();
+    expect(screen.getByText(/not financial exposure/)).toBeTruthy();
+    expect(mockedApi.get).toHaveBeenCalledWith('/risks/trend?weeks=12'); // customer: no organizationId sent
   });
 });
 

@@ -212,4 +212,25 @@ describeDb('risk register (integration)', () => {
     const s = await risks.putSettings(otherAdmin, undefined, { appetiteScore: 4, toleranceScore: 8 });
     expect(s).toMatchObject({ organization_id: otherId, appetite_score: 4, is_default: false });
   });
+
+  it('rebuilds a weekly trend from history, per organization only', async () => {
+    const r = await risks.createRisk(analyst, {
+      organizationId: demoId, title: 'Integration: trend probe',
+      inherentLikelihood: 5, inherentImpact: 5, residualLikelihood: 2, residualImpact: 2,
+    });
+    const t = await risks.trend(analyst, demoId, 4);
+    expect(t.points).toHaveLength(4);
+    const now = t.points[t.points.length - 1];
+    expect(now.by_inherent_rating.very_high).toBeGreaterThanOrEqual(1);
+    expect(now.inherent_total).toBeGreaterThanOrEqual(25);
+    expect(t.points[0].week < now.week).toBe(true);
+    // Another organization's admin cannot read Demo Corp's trend, and sees only their own.
+    await expect(risks.trend(otherAdmin, demoId, 4)).rejects.toMatchObject({ status: 403 });
+    const own = await risks.trend(otherAdmin, undefined, 4);
+    expect(own.organization_id).toBe(otherId);
+    expect(own.points[3].open).toBeLessThan(now.open);
+    await risks.transitionRisk(analyst, r.id, 'closed', 'probe done');
+    const after = await risks.trend(analyst, demoId, 4);
+    expect(after.points[3].open).toBe(now.open - 1);
+  });
 });

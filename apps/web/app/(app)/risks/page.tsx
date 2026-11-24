@@ -16,6 +16,7 @@ import {
 } from '@/lib/risks';
 import { HeatMap, RatingBadge, ScoreChip } from './_components/matrix';
 import { Portfolio } from './_components/portfolio';
+import { RiskReport } from './_components/report';
 import { RiskForm } from './_components/risk-form';
 import { RiskDetailDialog, AppetiteBadge } from './_components/risk-detail';
 import { AppetiteDialog, FindingImportDialog } from './_components/governance';
@@ -45,6 +46,7 @@ export default function RisksPage() {
   const [flags, setFlags] = React.useState<Set<Flag>>(new Set());
   const [cell, setCell] = React.useState<{ l: number; i: number } | null>(null);
   const [basis, setBasis] = React.useState<HeatmapBasis>('residual');
+  const [view, setView] = React.useState<'register' | 'report'>('register');
   const [sort, setSort] = React.useState<Sort>('residual');
 
   const [openId, setOpenId] = React.useState<string | null>(null);
@@ -177,6 +179,15 @@ export default function RisksPage() {
             <StatCard label="Exposure (ALE P50)" value={risks ? money(kpi.ale) : '—'} tone="accent" />
           </div>
 
+          <div className="flex justify-end">
+            <SegmentedControl<'register' | 'report'> size="sm" value={view} onChange={setView}
+              options={[{ value: 'register', label: 'Register' }, { value: 'report', label: 'Risk report' }]} />
+          </div>
+
+          {view === 'report' ? (
+            <RiskReport organizationId={org} risks={risks ?? []} settings={settings} />
+          ) : (<>
+
           <div className="grid gap-6 lg:grid-cols-5">
             <Card className="lg:col-span-3">
               <div className="flex flex-wrap items-center justify-between gap-2 p-5 pb-3">
@@ -297,6 +308,7 @@ export default function RisksPage() {
               )}
             </CardBody>
           </Card>
+          </>)}
         </>
       )}
 
