@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { Public_Sans, JetBrains_Mono } from 'next/font/google';
+import localFont from 'next/font/local';
 import './globals.css';
 import { AuthProvider } from '@/components/auth-context';
 import { WelcomeDialog } from '@/components/welcome-dialog';
@@ -7,17 +7,22 @@ import { HotlineBanner } from '@/components/hotline-banner';
 
 // Public Sans is the official U.S. government typeface (USWDS) — a deliberate,
 // context-specific choice for a gov control plane. JetBrains Mono carries machine
-// data (ticket IDs, timestamps, metrics). next/font self-hosts both at build time,
-// so there is no runtime egress to Google Fonts (gov-enclave friendly).
-const sans = Public_Sans({
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700', '800'],
+// data (ticket IDs, timestamps, metrics).
+//
+// Both are committed under app/fonts (SIL Open Font License 1.1, Latin subset, variable
+// weight) and loaded with next/font/local: the build makes NO network call. next/font/google
+// fetched Google's CSS at build time, which broke every image build when that response
+// changed (TypeError reading '1' in next/font), and is an egress a gov-cloud build should
+// not depend on anyway.
+const sans = localFont({
+  src: './fonts/PublicSans-Variable-latin.woff2',
+  weight: '400 800',
   variable: '--font-sans',
   display: 'swap',
 });
-const mono = JetBrains_Mono({
-  subsets: ['latin'],
-  weight: ['400', '500', '600'],
+const mono = localFont({
+  src: './fonts/JetBrainsMono-Variable-latin.woff2',
+  weight: '400 600',
   variable: '--font-mono',
   display: 'swap',
 });
