@@ -233,4 +233,30 @@ describeDb('risk register (integration)', () => {
     const after = await risks.trend(analyst, demoId, 4);
     expect(after.points[3].open).toBe(now.open - 1);
   });
+
+  it('keeps a risk on the methodology that scored it until it is re-scored', async () => {
+    const r = await risks.createRisk(analyst, {
+      organizationId: demoId, title: 'Integration: methodology probe',
+      inherentLikelihood: 4, inherentImpact: 4, residualLikelihood: 4, residualImpact: 4,
+    });
+    expect(r.methodology.key).toBe('nexus-5x5@2');
+    expect(r.residual_rating).toBe('very_high'); // 16 under v2
+    // A risk assessed before the change (what migration 0087 gives every existing row).
+    await withSystemContext((sql) => sql.query(`UPDATE risks SET methodology='nexus-5x5@1' WHERE id=$1`, [r.id]));
+    const legacy = await risks.getRisk(analyst, r.id);
+    expect(legacy.methodology.key).toBe('nexus-5x5@1');
+    expect(legacy.residual_rating).toBe('high'); // 16 under v1: its recorded rating is not silently re-banded
+    // An edit that does not touch the scores leaves the methodology alone…
+    const renamed = await risks.updateRisk(analyst, r.id, { title: 'Integration: methodology probe (renamed)' });
+    expect(renamed.methodology.key).toBe('nexus-5x5@1');
+    // …a re-score is a new assessment, made under the methodology in force now, and history says so.
+    const rescored = await risks.updateRisk(analyst, r.id, { residualLikelihood: 3 });
+    expect(rescored.methodology.key).toBe('nexus-5x5@2');
+    expect(rescored.residual_rating).toBe('high'); // 12 under v2
+    const hist = await withSystemContext(async (sql) => (await sql.query(
+      `SELECT kind, methodology FROM risk_history WHERE risk_id=$1 ORDER BY created_at`, [r.id])).rows);
+    expect(hist[0]).toMatchObject({ kind: 'created', methodology: 'nexus-5x5@2' });
+    expect(hist[hist.length - 1]).toMatchObject({ kind: 'reassessed', methodology: 'nexus-5x5@2' });
+    expect(risks.methodologies().active).toBe('nexus-5x5@2');
+  });
 });

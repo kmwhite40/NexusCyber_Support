@@ -19,7 +19,7 @@ import { resolveUserNames, nameRef } from './user-names.js';
 import { readableOrganizations } from './posture.js';
 import type { Principal } from '../types.js';
 import {
-  score, rating, highWaterImpact, nextReviewAt, appetiteState, canTransition, acceptanceActive,
+  score, rating, methodology as methodologyOf, METHODOLOGIES, ACTIVE_METHODOLOGY, highWaterImpact, nextReviewAt, appetiteState, canTransition, acceptanceActive,
   treatmentProgress, overdueTreatments, simulateFair, summarizeOrg, rankPortfolio, fromFindingSeverity,
   riskRef, toCsv, DEFAULT_APPETITE, isLevel,
   foldTrend, type Appetite, type FairInputs, type RiskStatus, type ImpactDimension, type RiskCategory, type OrgRiskSummary,
@@ -83,15 +83,27 @@ export async function putSettings(actor: Principal, orgId: string | null | undef
 
 // ---------------- Decoration ----------------
 
+const methodologyRef = (key: string) => { const m = methodologyOf(key); return { key: m.key, version: m.version, name: m.name }; };
+
+/** The methodology catalog: every version a risk may carry, and which one new assessments use. */
+export function methodologies() {
+  return {
+    active: ACTIVE_METHODOLOGY,
+    data: Object.values(METHODOLOGIES).map((m) => ({ ...m, active: m.key === ACTIVE_METHODOLOGY })),
+  };
+}
+
 /** Derived fields every reader gets, computed in one place. */
 function decorate(r: any, settings: Appetite, extra: { treatments?: any[] } = {}, now = new Date()) {
   const treatments = extra.treatments;
   return {
     ...r,
     ref: riskRef(r.risk_number),
-    inherent_rating: rating(r.inherent_score),
-    residual_rating: rating(r.residual_score),
-    target_rating: r.target_score ? rating(r.target_score) : null,
+    // Ratings use the methodology version that scored THIS risk, never a later one.
+    methodology: methodologyRef(r.methodology),
+    inherent_rating: rating(r.inherent_score, r.methodology),
+    residual_rating: rating(r.residual_score, r.methodology),
+    target_rating: r.target_score ? rating(r.target_score, r.methodology) : null,
     appetite_state: appetiteState(r.residual_score, settings),
     acceptance_active: acceptanceActive(r, now),
     review_overdue: r.status !== 'closed' && new Date(r.next_review_at).getTime() < now.getTime(),
@@ -143,7 +155,8 @@ export async function listRisks(actor: Principal, orgId: string | null | undefin
       owner: nameRef(names, r.owner_id),
       treatment_progress: r.treatment_count ? Math.round((r.treatment_done / r.treatment_count) * 100) : null,
     }));
-    return filter.rating ? out.filter((r: any) => r.residual_rating === filter.rating) : out;
+    // Filter on the ACTIVE bands, so the filter agrees with the heat map and rating panels.
+    return filter.rating ? out.filter((r: any) => rating(r.residual_score) === filter.rating) : out;
   });
 }
 
@@ -251,10 +264,10 @@ async function checkOwner(orgId: string, ownerId: string | null | undefined) {
 async function writeHistory(sql: Sql, actor: Principal | null, r: any, kind: string, note?: string | null) {
   await sql.query(
     `INSERT INTO risk_history (organization_id, risk_id, kind, inherent_score, residual_score, target_score,
-        residual_likelihood, residual_impact, status, ale_p50, note, actor_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        residual_likelihood, residual_impact, status, ale_p50, note, actor_id, methodology)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
     [r.organization_id, r.id, kind, r.inherent_score, r.residual_score, r.target_score, r.residual_likelihood,
-      r.residual_impact, r.status, r.fair_results?.p50 ?? null, note ?? null, actor?.id ?? null],
+      r.residual_impact, r.status, r.fair_results?.p50 ?? null, note ?? null, actor?.id ?? null, r.methodology],
   );
 }
 
@@ -400,7 +413,7 @@ export async function updateRisk(actor: Principal, id: string, input: RiskInput)
           inherent_likelihood=$12, inherent_impact=$13, residual_likelihood=$14, residual_impact=$15,
           target_likelihood=$16, target_impact=$17, impact_dimensions=$18, velocity=$19,
           fair_inputs=$20, fair_results=$21, review_frequency_days=$22, last_reviewed_at=$23, next_review_at=$24,
-          tags=$25, status=$26, updated_at=now()
+          tags=$25, status=$26, methodology=$27, updated_at=now()
           ${voidAcceptance ? ", acceptance_status='none', acceptance_expires_at=NULL, acceptance_decided_by=NULL, acceptance_decided_at=NULL" : ''}
         WHERE id=$1 RETURNING *`,
       [id, pick(input.title, cur.title), pick(input.description, cur.description), pick(input.cause, cur.cause),
@@ -411,7 +424,9 @@ export async function updateRisk(actor: Principal, id: string, input: RiskInput)
         next.target_likelihood, next.target_impact, JSON.stringify(dims ?? {}), pick(input.velocity, cur.velocity),
         fairChanged ? (input.fair ? JSON.stringify(input.fair) : null) : cur.fair_inputs ? JSON.stringify(cur.fair_inputs) : null,
         fairResults ? JSON.stringify(fairResults) : null,
-        reviewDays, lastReviewed, nextReview, pick(input.tags, cur.tags), status],
+        reviewDays, lastReviewed, nextReview, pick(input.tags, cur.tags), status,
+        // A re-scored risk is re-assessed under the methodology in force now; an untouched one keeps its own.
+        rescored ? ACTIVE_METHODOLOGY : cur.methodology],
     );
     const risk = rows[0];
     if (voidAcceptance) {

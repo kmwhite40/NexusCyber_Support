@@ -141,8 +141,9 @@ describe('RisksPage', () => {
 });
 
 describe('lib/risks helpers', () => {
-  it('bands scores like the API', () => {
-    expect([3, 4, 8, 15, 20].map(ratingFor)).toEqual(['very_low', 'low', 'moderate', 'high', 'very_high']);
+  it('previews scores with the active methodology bands, exactly like the API (nexus-5x5@2)', () => {
+    const api = (s: number) => (s >= 20 ? 'critical' : s >= 15 ? 'very_high' : s >= 10 ? 'high' : s >= 5 ? 'moderate' : 'low');
+    for (let s = 1; s <= 25; s++) expect([s, ratingFor(s)]).toEqual([s, api(s)]);
   });
   it('builds a heat map that skips closed risks', () => {
     const g = heatmap([RISKS[0], { ...RISKS[0], status: 'closed' }], 'residual');

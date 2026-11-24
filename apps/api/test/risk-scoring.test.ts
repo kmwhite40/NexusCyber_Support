@@ -3,6 +3,7 @@ import {
   score, rating, highWaterImpact, nextReviewAt, appetiteState, canTransition, acceptanceActive,
   treatmentProgress, overdueTreatments, simulateFair, samplePert, prng, heatmap, summarizeOrg,
   rankPortfolio, fromFindingSeverity, riskRef, csvCell, toCsv, type ScoredRisk,
+  methodology, ratingsOf, ACTIVE_METHODOLOGY, METHODOLOGIES, REVIEW_DAYS,
 } from '../src/modules/risk-scoring.js';
 
 const NOW = new Date('2026-11-11T00:00:00Z');
@@ -29,12 +30,37 @@ describe('score / rating', () => {
     expect(() => score(3, 6)).toThrow(RangeError);
     expect(() => score(2.5, 3)).toThrow(RangeError);
   });
-  it('bands every reachable score', () => {
-    expect([1, 2, 3].map(rating)).toEqual(['very_low', 'very_low', 'very_low']);
-    expect([4, 5, 6].map(rating)).toEqual(['low', 'low', 'low']);
-    expect([8, 9, 10, 12].map(rating)).toEqual(['moderate', 'moderate', 'moderate', 'moderate']);
-    expect([15, 16].map(rating)).toEqual(['high', 'high']);
-    expect([20, 25].map(rating)).toEqual(['very_high', 'very_high']);
+  // Every score the 5x5 matrix can produce, and every band boundary, under both versions.
+  const REACHABLE = [...new Set([1, 2, 3, 4, 5].flatMap((l) => [1, 2, 3, 4, 5].map((i) => l * i)))].sort((a, b) => a - b);
+  it('v1 (original, frozen) bands every reachable score', () => {
+    const v1 = (s: number) => rating(s, 'nexus-5x5@1');
+    expect([1, 2, 3].map(v1)).toEqual(['very_low', 'very_low', 'very_low']);
+    expect([4, 5, 6].map(v1)).toEqual(['low', 'low', 'low']);
+    expect([8, 9, 10, 12].map(v1)).toEqual(['moderate', 'moderate', 'moderate', 'moderate']);
+    expect([15, 16].map(v1)).toEqual(['high', 'high']);
+    expect([20, 25].map(v1)).toEqual(['very_high', 'very_high']);
+  });
+  it('v2 (Anchor default, active) bands every reachable score: 1-4 Low, 5-9 Moderate, 10-14 High, 15-19 Very High, 20-25 Critical', () => {
+    expect(ACTIVE_METHODOLOGY).toBe('nexus-5x5@2');
+    const expected = (s: number) => (s >= 20 ? 'critical' : s >= 15 ? 'very_high' : s >= 10 ? 'high' : s >= 5 ? 'moderate' : 'low');
+    for (const s of REACHABLE) expect([s, rating(s)]).toEqual([s, expected(s)]);
+    // The boundaries themselves, including scores the matrix cannot produce (e.g. 7, 11, 14, 19).
+    expect([4, 5, 9, 10, 14, 15, 19, 20, 25].map((s) => rating(s))).toEqual(
+      ['low', 'moderate', 'moderate', 'high', 'high', 'very_high', 'very_high', 'critical', 'critical']);
+  });
+  it('treats each methodology version as an ordered, complete, immutable band set', () => {
+    for (const m of Object.values(METHODOLOGIES)) {
+      const mins = m.bands.map((b) => b.min);
+      expect(mins).toEqual([...mins].sort((a, b) => b - a)); // worst first, strictly descending
+      expect(mins[mins.length - 1]).toBe(1); // every score 1-25 lands in a band
+      expect(m.key).toBe(`${m.family}@${m.version}`);
+    }
+    expect(ratingsOf()).toEqual(['critical', 'very_high', 'high', 'moderate', 'low']);
+    expect(() => methodology('nexus-5x5@99')).toThrow(/unknown scoring methodology/);
+  });
+  it('keeps review cadence on the score, not on the re-banded label', () => {
+    // 16 is "high" under v1 and "very_high" under v2; its review interval must not move.
+    expect(nextReviewAt(16, NOW).getTime() - NOW.getTime()).toBe(REVIEW_DAYS.high * 86_400_000);
   });
 });
 
@@ -185,7 +211,9 @@ describe('portfolio', () => {
     expect(s.above_tolerance).toBe(1);
     expect(s.overdue_reviews).toBe(1);
     expect(s.worst_residual).toBe(20);
-    expect(s.by_rating.very_high).toBe(1);
+    expect(s.by_rating.critical).toBe(1); // 20 under the active (v2) bands
+    expect(s.by_rating.high).toBe(1); // 12
+    expect(s.by_rating.low).toBe(1); // 2
     expect(s.ale_p50).toBeNull(); // nothing quantified is not $0
   });
   it('sums quantified exposure', () => {
@@ -230,6 +258,6 @@ describe('foldTrend', () => {
     ], ['2026-11-09', '2026-11-16']);
     expect(pts[0]).toMatchObject({ week: '2026-11-09', open: 0, inherent_total: 0, target_total: null });
     expect(pts[1]).toMatchObject({ open: 3, inherent_total: 44, residual_total: 14, target_total: 1 });
-    expect(pts[1].by_inherent_rating).toEqual({ very_low: 0, low: 1, moderate: 0, high: 0, very_high: 2 });
+    expect(pts[1].by_inherent_rating).toEqual({ very_low: 0, low: 1, moderate: 0, high: 0, very_high: 0, critical: 2 });
   });
 });

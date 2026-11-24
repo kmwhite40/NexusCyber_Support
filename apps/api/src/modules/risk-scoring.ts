@@ -27,8 +27,59 @@ export const IMPACT_DIMENSIONS = [
 export type ImpactDimension = (typeof IMPACT_DIMENSIONS)[number];
 
 export type RiskStatus = 'identified' | 'assessed' | 'treating' | 'monitoring' | 'accepted' | 'closed';
-export type RiskRating = 'very_low' | 'low' | 'moderate' | 'high' | 'very_high';
-export const RATINGS: readonly RiskRating[] = ['very_low', 'low', 'moderate', 'high', 'very_high'];
+export type RiskRating = 'very_low' | 'low' | 'moderate' | 'high' | 'very_high' | 'critical';
+export const RATINGS: readonly RiskRating[] = ['very_low', 'low', 'moderate', 'high', 'very_high', 'critical'];
+
+// ---------------- Scoring methodologies (versioned) ----------------
+//
+// A methodology version is immutable once shipped: a risk records the version that scored it
+// (risks.methodology, risk_history.methodology), so its rating never changes underneath it when
+// the active version moves on. New and re-scored risks take ACTIVE_METHODOLOGY. Aggregates
+// (portfolio, heat maps, trend) band every score with the ACTIVE version so counts are coherent.
+
+export interface Band { min: number; rating: RiskRating; label: string }
+export interface Methodology { key: string; family: string; version: number; name: string; bands: readonly Band[] }
+
+/** v1 — the register's original bands (conventional 5x5 heat map). Frozen. */
+const NEXUS_5X5_V1: Methodology = {
+  key: 'nexus-5x5@1', family: 'nexus-5x5', version: 1, name: 'Likelihood x Impact, 5 bands (original)',
+  bands: [
+    { min: 20, rating: 'very_high', label: 'Very high' },
+    { min: 15, rating: 'high', label: 'High' },
+    { min: 8, rating: 'moderate', label: 'Moderate' },
+    { min: 4, rating: 'low', label: 'Low' },
+    { min: 1, rating: 'very_low', label: 'Very low' },
+  ],
+};
+/** v2 — Anchor Risk Management default: 1-4 Low, 5-9 Moderate, 10-14 High, 15-19 Very High, 20-25 Critical. */
+const NEXUS_5X5_V2: Methodology = {
+  key: 'nexus-5x5@2', family: 'nexus-5x5', version: 2, name: 'Likelihood x Impact, Anchor default bands',
+  bands: [
+    { min: 20, rating: 'critical', label: 'Critical' },
+    { min: 15, rating: 'very_high', label: 'Very high' },
+    { min: 10, rating: 'high', label: 'High' },
+    { min: 5, rating: 'moderate', label: 'Moderate' },
+    { min: 1, rating: 'low', label: 'Low' },
+  ],
+};
+
+export const METHODOLOGIES: Readonly<Record<string, Methodology>> = {
+  [NEXUS_5X5_V1.key]: NEXUS_5X5_V1,
+  [NEXUS_5X5_V2.key]: NEXUS_5X5_V2,
+};
+/** Must equal the DEFAULT of risks.methodology (migration 0087). */
+export const ACTIVE_METHODOLOGY = NEXUS_5X5_V2.key;
+
+export function methodology(key: string | null | undefined): Methodology {
+  const m = METHODOLOGIES[key ?? ACTIVE_METHODOLOGY];
+  if (!m) throw new RangeError(`unknown scoring methodology ${key}`);
+  return m;
+}
+
+/** The ratings a methodology can produce, worst first (for legends, filters and zero maps). */
+export function ratingsOf(key: string = ACTIVE_METHODOLOGY): RiskRating[] {
+  return methodology(key).bands.map((b) => b.rating);
+}
 
 /** Likelihood x impact, both 1-5. Throws on anything off the matrix rather than inventing a score. */
 export function score(likelihood: number, impact: number): number {
@@ -45,12 +96,15 @@ export function isLevel(n: unknown): n is 1 | 2 | 3 | 4 | 5 {
  * what risk committees already read: the only scores possible are products of 1-5, and every
  * cell on a given anti-diagonal lands in the same or an adjacent band.
  */
-export function rating(s: number): RiskRating {
-  if (s >= 20) return 'very_high';
-  if (s >= 15) return 'high';
-  if (s >= 8) return 'moderate';
-  if (s >= 4) return 'low';
-  return 'very_low';
+export function rating(s: number, methodologyKey: string = ACTIVE_METHODOLOGY): RiskRating {
+  const bands = methodology(methodologyKey).bands;
+  for (const b of bands) if (s >= b.min) return b.rating;
+  return bands[bands.length - 1].rating;
+}
+
+/** A zero count for every rating any methodology can produce. */
+export function zeroByRating(): Record<RiskRating, number> {
+  return { very_low: 0, low: 0, moderate: 0, high: 0, very_high: 0, critical: 0 };
 }
 
 /**
@@ -71,13 +125,16 @@ export function highWaterImpact(dims: Partial<Record<ImpactDimension, number>> |
   return max === 0 ? null : max;
 }
 
-/** Days between reviews, by residual rating. Hotter risks are looked at more often. */
+/**
+ * Days between reviews, by residual score. Deliberately keyed to the v1 bands and NOT to the active
+ * methodology: re-banding the labels must not silently move every risk's review date.
+ */
 export const REVIEW_DAYS: Record<RiskRating, number> = {
-  very_high: 30, high: 60, moderate: 90, low: 180, very_low: 365,
+  critical: 30, very_high: 30, high: 60, moderate: 90, low: 180, very_low: 365,
 };
 
 export function nextReviewAt(residualScore: number, from: Date, overrideDays?: number | null): Date {
-  const days = overrideDays && overrideDays > 0 ? overrideDays : REVIEW_DAYS[rating(residualScore)];
+  const days = overrideDays && overrideDays > 0 ? overrideDays : REVIEW_DAYS[rating(residualScore, 'nexus-5x5@1')];
   return new Date(from.getTime() + days * 86_400_000);
 }
 
@@ -297,7 +354,7 @@ export interface OrgRiskSummary {
  */
 export function summarizeOrg(orgId: string, risks: ScoredRisk[], a: Appetite = DEFAULT_APPETITE, now: Date = new Date()): OrgRiskSummary {
   const open = risks.filter((r) => r.status !== 'closed');
-  const by_rating: Record<RiskRating, number> = { very_low: 0, low: 0, moderate: 0, high: 0, very_high: 0 };
+  const by_rating = zeroByRating();
   let above_appetite = 0;
   let above_tolerance = 0;
   let overdue = 0;
@@ -403,7 +460,7 @@ export interface TrendPoint {
  * callers show "insufficient history" when every point is empty.
  */
 export function foldTrend(cells: TrendCell[], weekStarts: string[]): TrendPoint[] {
-  const zero = (): Record<RiskRating, number> => ({ very_low: 0, low: 0, moderate: 0, high: 0, very_high: 0 });
+  const zero = zeroByRating;
   const byWeek = new Map(weekStarts.map((w) => [w, {
     week: w, open: 0, inherent_total: 0, residual_total: 0, target_total: null as number | null, by_inherent_rating: zero(),
   }]));

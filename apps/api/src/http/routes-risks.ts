@@ -71,6 +71,12 @@ export async function registerRiskRoutes(app: FastifyInstance): Promise<void> {
     return risks.trend(p, q.organizationId, q.weeks);
   });
 
+  // Scoring methodology catalog: the bands every version uses and which one new assessments take.
+  app.get('/api/v1/risks/methodologies', async (req) => {
+    await requirePrincipal(req);
+    return risks.methodologies();
+  });
+
   app.get('/api/v1/risks/settings', async (req) => {
     const p = await requirePrincipal(req);
     const q = orgQuery.parse(req.query);

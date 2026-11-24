@@ -12,7 +12,7 @@ import { MiniBars } from '@/components/ui/charts';
 import { cn } from '@/lib/cn';
 import {
   CATEGORIES, IMPACT_LABELS, LIKELIHOOD_LABELS, RATING_LABEL, STATUSES, heatmap, humanize, money, risksApi,
-  type HeatmapBasis, type PortfolioRow, type Risk, type RiskRating, type RiskSettings,
+  RATINGS_ORDER, type HeatmapBasis, type PortfolioRow, type Risk, type RiskRating, type RiskSettings,
 } from '@/lib/risks';
 import { HeatMap, RatingBadge, ScoreChip } from './_components/matrix';
 import { Portfolio } from './_components/portfolio';
@@ -211,7 +211,7 @@ export default function RisksPage() {
               <Card>
                 <CardHeader><CardTitle>By residual rating</CardTitle></CardHeader>
                 <CardBody className="space-y-2">
-                  {(['very_high', 'high', 'moderate', 'low', 'very_low'] as RiskRating[]).map((r) => {
+                  {RATINGS_ORDER.map((r) => {
                     const n = open.filter((x) => x.residual_rating === r).length;
                     const active = rating === r;
                     return (

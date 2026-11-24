@@ -168,6 +168,7 @@ function Overview({ r }: { r: RiskDetail }) {
             Controls reduce this risk by <strong className="text-fg">{r.inherent_score - r.residual_score}</strong> points
             {r.target_score !== null && <>; the plan promises <strong className="text-fg">{r.residual_score - r.target_score}</strong> more</>}.
             Organization appetite ≤{r.settings.appetite_score}, tolerance ≤{r.settings.tolerance_score}.
+            {r.methodology && <> Rated with {r.methodology.name} (v{r.methodology.version}){r.methodology.version < 2 && '; re-scoring it moves it to the current bands'}.</>}
           </p>
         </div>
         {r.fair_results && (

@@ -6,17 +6,17 @@ import * as React from 'react';
 import { Card, Badge } from '@/components/ui/primitives';
 import { EmptyState, StatCard } from '@/components/ui/data';
 import { cn } from '@/lib/cn';
-import { RATING_FILL, RATING_LABEL, money, ratingFor, type PortfolioRow, type RiskRating } from '@/lib/risks';
+import { RATINGS_ORDER, RATING_FILL, RATING_LABEL, money, ratingFor, type PortfolioRow, type RiskRating } from '@/lib/risks';
 import { RatingBadge } from './matrix';
 
-const ORDER: RiskRating[] = ['very_high', 'high', 'moderate', 'low', 'very_low'];
+const ORDER = RATINGS_ORDER;
 
 function RatingBar({ by }: { by: Record<RiskRating, number> }) {
-  const total = ORDER.reduce((a, r) => a + by[r], 0);
+  const total = ORDER.reduce((a, r) => a + (by[r] ?? 0), 0);
   if (total === 0) return <div className="h-2 rounded-full bg-surface-2" aria-label="No open risks" />;
   return (
     <div className="flex h-2 overflow-hidden rounded-full bg-surface-2" role="img"
-      aria-label={ORDER.filter((r) => by[r]).map((r) => `${by[r]} ${RATING_LABEL[r]}`).join(', ')}>
+      aria-label={ORDER.filter((r) => (by[r] ?? 0) > 0).map((r) => `${by[r]} ${RATING_LABEL[r]}`).join(', ')}>
       {ORDER.map((r) => by[r] ? <div key={r} style={{ width: `${(by[r] / total) * 100}%`, background: RATING_FILL[r] }} /> : null)}
     </div>
   );
