@@ -6,7 +6,7 @@ import { Dialog } from '@/components/ui/dialog';
 import { Badge, Button, Input, Select, SegmentedControl, Textarea } from '@/components/ui/primitives';
 import { Skeleton } from '@/components/ui/data';
 import { Sparkline } from '@/components/ui/charts';
-import { ApiError } from '@/lib/api';
+import { ApiError, attachmentsApi } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { humanize, money, risksApi, type LinkKind, type RiskDetail, type RiskStatus } from '@/lib/risks';
 import { RatingBadge, ScoreChip, ScoreTrail } from './matrix';
@@ -306,6 +306,8 @@ function AcceptanceTab({ r, canManage, canAccept, meId, act, busy }: ActProps & 
   const [why, setWhy] = React.useState('');
   const [expires, setExpires] = React.useState(defaultExpiry);
   const isRequester = r.acceptance_requested_by === meId;
+  const issued = r.acceptance_packages.find((p) => p.status === 'issued');
+  const signed = r.acceptance_packages.find((p) => p.status === 'signed');
 
   return (
     <div className="space-y-4">
@@ -324,9 +326,22 @@ function AcceptanceTab({ r, canManage, canAccept, meId, act, busy }: ActProps & 
           Acceptances are time-boxed (max {max} days here) and need a second person holding risk-acceptance authority.
           {r.appetite_state === 'above_tolerance' && <strong className="text-danger"> This risk is above tolerance — accepting it is an executive decision.</strong>}
         </p>
+        {issued ? (
+          <p className="mt-2 text-sm font-medium text-warning">Awaiting signed acceptance package {issued.number}</p>
+        ) : signed && (
+          <p className="mt-2 text-sm text-muted">
+            {signed.decision === 'accepted' ? <>Accepted by {signed.signed_by_name}, {signed.signed_by_title} on {signed.signed_on} · {signed.number}</>
+              : signed.decision === 'not_accepted' ? <>Not accepted by {signed.signed_by_name}, {signed.signed_by_title} on {signed.signed_on} · {signed.number}</>
+                : <>Left unmarked by {signed.signed_by_name} on {signed.number}</>}
+            {signed.signed_attachment_id && (
+              <> · <button type="button" className="text-brand underline"
+                onClick={() => act(() => attachmentsApi.download(signed.signed_attachment_id!, `${signed.number}-signed`))}>Download signed copy</button></>
+            )}
+          </p>
+        )}
       </div>
 
-      {r.acceptance_status === 'requested' && canAccept && (
+      {r.acceptance_status === 'requested' && canAccept && !issued && (
         isRequester ? (
           <p className="text-xs text-muted">You requested this acceptance, so someone else must decide it (separation of duties).</p>
         ) : (

@@ -15,6 +15,7 @@ import { authorize, can } from '../authz/pdp.js';
 import { audit } from './audit.js';
 import { publish } from '../events/bus.js';
 import { Errors } from '../errors.js';
+import { packageNumber } from './acceptance-package-render.js';
 import { resolveUserNames, nameRef } from './user-names.js';
 import { readableOrganizations } from './posture.js';
 import type { Principal } from '../types.js';
@@ -28,7 +29,7 @@ import {
 // ---------------- Scope ----------------
 
 /** The organization a call acts on. Customers act on their own org, whatever they send. */
-function resolveOrg(actor: Principal, orgId?: string | null): string {
+export function resolveOrg(actor: Principal, orgId?: string | null): string {
   if (actor.plane === 'customer') {
     if (!actor.organizationId) throw Errors.forbidden('no organization');
     if (orgId && orgId !== actor.organizationId) throw Errors.forbidden('out of organization scope');
@@ -42,7 +43,7 @@ function resolveOrg(actor: Principal, orgId?: string | null): string {
 
 export interface RiskSettings extends Appetite { organization_id: string; max_acceptance_days: number; is_default: boolean }
 
-async function loadSettings(sql: Sql, orgId: string): Promise<RiskSettings> {
+export async function loadSettings(sql: Sql, orgId: string): Promise<RiskSettings> {
   const row = (await sql.query('SELECT * FROM risk_org_settings WHERE organization_id=$1', [orgId])).rows[0];
   if (!row) return { organization_id: orgId, ...DEFAULT_APPETITE, max_acceptance_days: 365, is_default: true };
   return {
@@ -323,8 +324,17 @@ export async function createRisk(actor: Principal, input: CreateRiskInput, opts:
   });
 }
 
-async function loadRisk(sql: Sql, id: string) {
-  const r = (await sql.query('SELECT * FROM risks WHERE id=$1', [id])).rows[0];
+/** The issued (not void, not signed) acceptance package a risk is in, if any. */
+export async function issuedPackageFor(sql: Sql, riskId: string): Promise<{ id: string; packageNumber: string } | null> {
+  const row = (await sql.query(
+    `SELECT id, package_number FROM risk_acceptance_packages WHERE status='issued' AND $1 = ANY(risk_ids) LIMIT 1`,
+    [riskId],
+  )).rows[0];
+  return row ? { id: row.id, packageNumber: packageNumber(row.package_number) } : null;
+}
+
+async function loadRisk(sql: Sql, id: string, forUpdate = false) {
+  const r = (await sql.query(`SELECT * FROM risks WHERE id=$1${forUpdate ? ' FOR UPDATE' : ''}`, [id])).rows[0];
   if (!r) throw Errors.notFound('risk not found');
   return r;
 }
@@ -337,6 +347,12 @@ export async function getRisk(actor: Principal, id: string) {
     const treatments = (await sql.query('SELECT * FROM risk_treatments WHERE risk_id=$1 ORDER BY coalesce(due_at, created_at), created_at', [id])).rows;
     const links = (await sql.query('SELECT * FROM risk_links WHERE risk_id=$1 ORDER BY kind, created_at', [id])).rows;
     const history = (await sql.query('SELECT * FROM risk_history WHERE risk_id=$1 ORDER BY created_at', [id])).rows;
+    // Every package that ever carried this risk, newest first; the UI decides which to show.
+    const packages = (await sql.query(
+      `SELECT id, package_number, status, signed_by_name, signed_by_title, to_char(signed_on, 'YYYY-MM-DD') AS signed_on, signed_attachment_id,
+              decisions->>$2 AS decision
+         FROM risk_acceptance_packages WHERE $1::uuid = ANY(risk_ids) ORDER BY generated_at DESC, package_number DESC`, [id, id],
+    )).rows;
     const names = await resolveUserNames([
       r.owner_id, r.created_by, r.acceptance_requested_by, r.acceptance_decided_by,
       ...treatments.map((t: any) => t.owner_id), ...history.map((h: any) => h.actor_id),
@@ -351,6 +367,7 @@ export async function getRisk(actor: Principal, id: string) {
       treatments: treatments.map((t: any) => ({ ...t, owner: nameRef(names, t.owner_id) })),
       links,
       history: history.map((h: any) => ({ ...h, actor: nameRef(names, h.actor_id) })),
+      acceptance_packages: packages.map(({ package_number, ...p }: any) => ({ ...p, number: packageNumber(package_number) })),
     };
   });
 }
@@ -514,23 +531,36 @@ export async function requestAcceptance(actor: Principal, id: string, input: { j
 
 export async function decideAcceptance(actor: Principal, id: string, approve: boolean, note?: string) {
   return withOrgContext(orgContextFor(actor), async (sql) => {
-    const cur = await loadRisk(sql, id);
+    // Lock the row first: a package issue or a signature record on this risk waits for us, or we
+    // wait for it and then see its package (or its decision) below.
+    const cur = await loadRisk(sql, id, true);
     authorize(actor, 'risk.accept', { organizationId: cur.organization_id });
-    if (cur.acceptance_status !== 'requested') throw Errors.conflict('no acceptance is awaiting a decision');
-    if (cur.acceptance_requested_by === actor.id) throw Errors.forbidden('separation of duties: the requester cannot approve their own acceptance');
-    const { rows } = await sql.query(
-      approve
-        ? `UPDATE risks SET acceptance_status='approved', acceptance_decided_by=$2, acceptance_decided_at=now(),
-              status='accepted', strategy='accept', updated_at=now() WHERE id=$1 RETURNING *`
-        : `UPDATE risks SET acceptance_status='rejected', acceptance_decided_by=$2, acceptance_decided_at=now(),
-              updated_at=now() WHERE id=$1 RETURNING *`,
-      [id, actor.id],
-    );
-    await writeHistory(sql, actor, rows[0], approve ? 'accepted' : 'acceptance_rejected', note);
-    await audit(actor, { action: approve ? 'risk.acceptance.approve' : 'risk.acceptance.reject', organizationId: cur.organization_id, resourceType: 'risk', resourceId: id, detail: { residual: cur.residual_score } });
-    publish(approve ? 'risk.accepted' : 'risk.acceptance_rejected', cur.organization_id, { risk_id: id });
-    return decorate(rows[0], await loadSettings(sql, cur.organization_id));
+    // The signed paper decision is the only one while the risk sits in an issued package.
+    const held = await issuedPackageFor(sql, id);
+    if (held) throw Errors.conflict(`awaiting the signed acceptance package ${held.packageNumber}; void it to decide directly`);
+    return applyAcceptanceDecision(sql, actor, cur, approve, note);
   });
+}
+
+/** Record an approve/reject decision on an already-loaded, already-authorized risk row. */
+export async function applyAcceptanceDecision(sql: Sql, actor: Principal, cur: any, approve: boolean, note?: string) {
+  const id: string = cur.id;
+  if (cur.acceptance_status !== 'requested') throw Errors.conflict('no acceptance is awaiting a decision');
+  if (cur.acceptance_requested_by === actor.id) throw Errors.forbidden('separation of duties: the requester cannot approve their own acceptance');
+  const { rows } = await sql.query(
+    approve
+      ? `UPDATE risks SET acceptance_status='approved', acceptance_decided_by=$2, acceptance_decided_at=now(),
+            status='accepted', strategy='accept', updated_at=now() WHERE id=$1 AND acceptance_status='requested' RETURNING *`
+      : `UPDATE risks SET acceptance_status='rejected', acceptance_decided_by=$2, acceptance_decided_at=now(),
+            updated_at=now() WHERE id=$1 AND acceptance_status='requested' RETURNING *`,
+    [id, actor.id],
+  );
+  // Someone else decided between our read and this write.
+  if (!rows[0]) throw Errors.conflict('no acceptance is awaiting a decision');
+  await writeHistory(sql, actor, rows[0], approve ? 'accepted' : 'acceptance_rejected', note);
+  await audit(actor, { action: approve ? 'risk.acceptance.approve' : 'risk.acceptance.reject', organizationId: cur.organization_id, resourceType: 'risk', resourceId: id, detail: { residual: cur.residual_score } });
+  publish(approve ? 'risk.accepted' : 'risk.acceptance_rejected', cur.organization_id, { risk_id: id });
+  return decorate(rows[0], await loadSettings(sql, cur.organization_id));
 }
 
 // ---------------- Treatments ----------------

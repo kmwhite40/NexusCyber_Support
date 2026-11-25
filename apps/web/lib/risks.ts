@@ -149,6 +149,17 @@ export interface RiskDetail extends Risk {
   treatments_overdue: number;
   acceptance_requested_by_user: UserRef | null;
   acceptance_decided_by_user: UserRef | null;
+  /** Packages that carried this risk, newest first (includes void ones). */
+  acceptance_packages: RiskPackageRef[];
+}
+
+export interface RiskPackageRef {
+  id: string; number: string; status: string;
+  signed_by_name: string | null; signed_by_title: string | null;
+  /** YYYY-MM-DD */
+  signed_on: string | null; signed_attachment_id: string | null;
+  /** What the signed package decided for this risk; null until it is signed. */
+  decision: PackageDecision | null;
 }
 
 export interface PortfolioRow {
@@ -193,6 +204,50 @@ export interface RiskWrite {
   reviewFrequencyDays?: number | null;
   tags?: string[];
   note?: string;
+}
+
+export type PackageDecision = 'accepted' | 'not_accepted' | 'not_marked';
+
+/** Mirrors PackageSummary in apps/api/src/modules/acceptance-packages.ts. */
+export interface AcceptancePackage {
+  id: string;
+  organization_id: string;
+  number: string;
+  reference: string | null;
+  status: string;
+  risk_ids: string[];
+  /** The risks as the Authorizing Official saw them (from the package snapshot), in package order. */
+  risks: PackageRiskRef[];
+  sha256: string;
+  generated_at: string;
+  generated_by: string | null;
+  signed_by_name: string | null;
+  signed_by_title: string | null;
+  /** YYYY-MM-DD */
+  signed_on: string | null;
+  recorded_at: string | null;
+  signed_attachment_id: string | null;
+  decisions: unknown;
+}
+
+export interface PackageRiskRef { id: string; ref: string; title: string }
+
+export interface RecordPackagePayload {
+  signedByName: string;
+  signedByTitle: string;
+  signedOn: string;
+  decisions: Record<string, PackageDecision>;
+}
+
+function authHeaders(): Record<string, string> {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+async function failFrom(res: Response): Promise<ApiError> {
+  let detail = res.statusText;
+  try { const j = JSON.parse(await res.text()); detail = j?.detail ?? j?.title ?? detail; } catch { /* not JSON */ }
+  return new ApiError(res.status, detail);
 }
 
 function qs(params: Record<string, string | undefined | boolean>): string {
@@ -242,6 +297,45 @@ export const risksApi = {
   findingCandidates: async (organizationId: string | undefined) =>
     (await api.get<{ data: FindingCandidate[] }>(`/risks/finding-candidates${qs({ organizationId })}`)).data,
   fromFinding: (findingId: string) => api.post<Risk>(`/risks/from-finding/${findingId}`),
+
+  packages: async (organizationId: string | undefined) =>
+    (await api.get<{ data: AcceptancePackage[] }>(`/risks/acceptance-packages${qs({ organizationId })}`)).data,
+  issuePackage: (organizationId: string | undefined, riskIds: string[], reference: string) =>
+    api.post<AcceptancePackage>('/risks/acceptance-packages', {
+      organizationId,
+      riskIds,
+      reference: reference.trim() || undefined,
+    }),
+  voidPackage: (id: string, reason: string) => api.post<AcceptancePackage>(`/risks/acceptance-packages/${id}/void`, { reason }),
+  /** Multipart: the signed copy in `file`, the AO's details and per-risk decisions as JSON in `payload`. */
+  async recordPackage(id: string, payload: RecordPackagePayload, file: File): Promise<AcceptancePackage> {
+    const form = new FormData();
+    form.append('payload', JSON.stringify(payload));
+    form.append('file', file);
+    const res = await fetch(`${API_BASE}/risks/acceptance-packages/${id}/record`, { method: 'POST', headers: authHeaders(), body: form });
+    if (!res.ok) throw await failFrom(res);
+    return (await res.json()) as AcceptancePackage;
+  },
+  /**
+   * Open the stored print HTML in a new tab. The tab is opened FIRST, synchronously, so it counts as
+   * part of the user's click (a window opened after an await is treated as a pop-up and blocked).
+   */
+  async openPackage(id: string, opened?: Window | null): Promise<void> {
+    // `opened`: a tab the caller already opened inside its own click (Generate opens it before issuing).
+    const win = opened ?? window.open('', '_blank');
+    if (!win) throw new ApiError(0, 'Allow pop-ups for Anchor to print the package');
+    try {
+      const res = await fetch(`${API_BASE}/risks/acceptance-packages/${id}/html`, { headers: authHeaders() });
+      if (!res.ok) throw await failFrom(res);
+      const html = await res.text();
+      win.document.open();
+      win.document.write(html);
+      win.document.close();
+    } catch (e) {
+      win.close();
+      throw e;
+    }
+  },
 
   /** Fetch the CSV with the bearer token and hand it to the browser as a download. */
   async exportCsv(organizationId: string | undefined): Promise<void> {

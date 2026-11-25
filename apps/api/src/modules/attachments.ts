@@ -1,7 +1,9 @@
-// Ticket attachments: validate -> store -> scan -> serve (org-scoped streaming).
+// Attachments: validate -> store -> scan -> serve (org-scoped streaming).
 // Infected files are recorded but never served (docs/nexus/08 §Q.3, US-013).
+// An attachment belongs to exactly one parent: a ticket, or a risk acceptance package (its signed
+// copy). Package attachments have no ticket, so ticket listings never include them.
 import { createHash, randomUUID } from 'node:crypto';
-import { withOrgContext } from '../db/pool.js';
+import { withOrgContext, type Sql } from '../db/pool.js';
 import { orgContextFor } from '../auth/principal.js';
 import { authorize } from '../authz/pdp.js';
 import { audit } from './audit.js';
@@ -43,6 +45,40 @@ export async function upload(actor: Principal, input: UploadInput) {
   });
 }
 
+export interface PackageUploadInput {
+  packageId: string;
+  organizationId: string;
+  filename: string;
+  contentType: string;
+  bytes: Buffer;
+}
+
+/**
+ * Store and scan the signed copy of an acceptance package, inside the caller's transaction (the
+ * caller has loaded and authorized the package). Returns the scan result for the caller to act on,
+ * and the storage key so the caller can delete the blob if its transaction does not commit.
+ */
+export async function uploadForPackage(sql: Sql, actor: Principal, input: PackageUploadInput) {
+  const check = validateUpload({ contentType: input.contentType, size: input.bytes.length });
+  if (!check.ok) throw Errors.validation(check.reason);
+  const sha256 = createHash('sha256').update(input.bytes).digest('hex');
+  const storageKey = `${input.organizationId}/acceptance-packages/${input.packageId}/${randomUUID()}`;
+  await blobStore.put(storageKey, input.bytes);
+  try {
+    const scanStatus = await scanner.scan(input.bytes);
+    const { rows } = await sql.query(
+      `INSERT INTO attachments
+         (organization_id, acceptance_package_id, filename, content_type, size_bytes, sha256, scan_status, storage_key, uploaded_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, scan_status, sha256, storage_key`,
+      [input.organizationId, input.packageId, input.filename, input.contentType, input.bytes.length, sha256, scanStatus, storageKey, actor.id],
+    );
+    return rows[0] as { id: string; scan_status: string; sha256: string; storage_key: string };
+  } catch (e) {
+    await blobStore.delete(storageKey).catch(() => undefined);
+    throw e;
+  }
+}
+
 export async function listForTicket(actor: Principal, ticketId: string) {
   return withOrgContext(orgContextFor(actor), async (sql) => {
     const { rows } = await sql.query(
@@ -65,7 +101,8 @@ export async function download(actor: Principal, attachmentId: string): Promise<
   return withOrgContext(orgContextFor(actor), async (sql) => {
     const a = (await sql.query('SELECT * FROM attachments WHERE id=$1', [attachmentId])).rows[0];
     if (!a) throw Errors.notFound('attachment not found'); // RLS already scopes by org
-    authorize(actor, 'ticket.comment', { organizationId: a.organization_id });
+    // A package's signed copy is risk evidence: whoever can read the register can read it.
+    authorize(actor, a.acceptance_package_id ? 'risk.read' : 'ticket.comment', { organizationId: a.organization_id });
     if (a.scan_status !== 'clean') throw Errors.forbidden(`attachment is ${a.scan_status}; download blocked`);
     const bytes = await blobStore.get(a.storage_key);
     await audit(actor, { action: 'attachment.download', organizationId: a.organization_id, resourceType: 'attachment', resourceId: a.id });
