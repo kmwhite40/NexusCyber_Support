@@ -333,8 +333,8 @@ export async function issuedPackageFor(sql: Sql, riskId: string): Promise<{ id: 
   return row ? { id: row.id, packageNumber: packageNumber(row.package_number) } : null;
 }
 
-async function loadRisk(sql: Sql, id: string) {
-  const r = (await sql.query('SELECT * FROM risks WHERE id=$1', [id])).rows[0];
+async function loadRisk(sql: Sql, id: string, forUpdate = false) {
+  const r = (await sql.query(`SELECT * FROM risks WHERE id=$1${forUpdate ? ' FOR UPDATE' : ''}`, [id])).rows[0];
   if (!r) throw Errors.notFound('risk not found');
   return r;
 }
@@ -530,7 +530,9 @@ export async function requestAcceptance(actor: Principal, id: string, input: { j
 
 export async function decideAcceptance(actor: Principal, id: string, approve: boolean, note?: string) {
   return withOrgContext(orgContextFor(actor), async (sql) => {
-    const cur = await loadRisk(sql, id);
+    // Lock the row first: a package issue or a signature record on this risk waits for us, or we
+    // wait for it and then see its package (or its decision) below.
+    const cur = await loadRisk(sql, id, true);
     authorize(actor, 'risk.accept', { organizationId: cur.organization_id });
     // The signed paper decision is the only one while the risk sits in an issued package.
     const held = await issuedPackageFor(sql, id);
@@ -547,11 +549,13 @@ export async function applyAcceptanceDecision(sql: Sql, actor: Principal, cur: a
   const { rows } = await sql.query(
     approve
       ? `UPDATE risks SET acceptance_status='approved', acceptance_decided_by=$2, acceptance_decided_at=now(),
-            status='accepted', strategy='accept', updated_at=now() WHERE id=$1 RETURNING *`
+            status='accepted', strategy='accept', updated_at=now() WHERE id=$1 AND acceptance_status='requested' RETURNING *`
       : `UPDATE risks SET acceptance_status='rejected', acceptance_decided_by=$2, acceptance_decided_at=now(),
-            updated_at=now() WHERE id=$1 RETURNING *`,
+            updated_at=now() WHERE id=$1 AND acceptance_status='requested' RETURNING *`,
     [id, actor.id],
   );
+  // Someone else decided between our read and this write.
+  if (!rows[0]) throw Errors.conflict('no acceptance is awaiting a decision');
   await writeHistory(sql, actor, rows[0], approve ? 'accepted' : 'acceptance_rejected', note);
   await audit(actor, { action: approve ? 'risk.acceptance.approve' : 'risk.acceptance.reject', organizationId: cur.organization_id, resourceType: 'risk', resourceId: id, detail: { residual: cur.residual_score } });
   publish(approve ? 'risk.accepted' : 'risk.acceptance_rejected', cur.organization_id, { risk_id: id });

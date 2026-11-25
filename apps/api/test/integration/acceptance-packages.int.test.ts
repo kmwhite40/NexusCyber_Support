@@ -384,6 +384,29 @@ describeDb('risk acceptance packages (integration)', () => {
     expect((await risks.getRisk(owner, b.id)).acceptance_status).toBe('requested');
   });
 
+  it('a direct decision racing an issue or a record lands once', async () => {
+    for (let i = 0; i < 3; i++) {
+      await cleanPackages();
+      const a = await requested(analyst, ownId, `Race: issue vs decide ${i}`);
+      const [issued, decided] = await Promise.allSettled([
+        pkgs.issuePackage(owner, { organizationId: ownId, riskIds: [a.id] }),
+        risks.decideAcceptance(decider, a.id, true),
+      ]);
+      // Exactly one wins: a package of a risk that is still awaiting, or a decision outside any package.
+      expect([issued.status, decided.status].filter((x) => x === 'fulfilled'), `round ${i}`).toHaveLength(1);
+      const [row] = await sysQuery('SELECT acceptance_status FROM risks WHERE id=$1', [a.id]);
+      expect(row.acceptance_status).toBe(issued.status === 'fulfilled' ? 'requested' : 'approved');
+    }
+    await cleanPackages();
+    const b = await requested(analyst, ownId, 'Race: record vs decide');
+    const s = await pkgs.issuePackage(owner, { organizationId: ownId, riskIds: [b.id] });
+    const [rec, dec] = await Promise.allSettled([record(decider, s.id, { [b.id]: 'not_accepted' }), risks.decideAcceptance(decider, b.id, true)]);
+    expect(rec.status).toBe('fulfilled');
+    expect(dec).toMatchObject({ status: 'rejected', reason: { status: 409 } });
+    const decisions = await sysQuery(`SELECT kind FROM risk_history WHERE risk_id=$1 AND kind IN ('accepted','acceptance_rejected')`, [b.id]);
+    expect(decisions.map((h: any) => h.kind)).toEqual(['acceptance_rejected']);
+  });
+
   it('signed copy downloads with risk.read', async () => {
     await cleanPackages();
     const a = await requested(analyst, ownId, 'Rec: download');

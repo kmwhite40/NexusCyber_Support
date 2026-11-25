@@ -108,11 +108,13 @@ export async function issuePackage(
   const wanted = input.riskIds ? [...new Set(input.riskIds)] : null;
 
   const summary = await withOrgContext(orgContextFor(actor), async (sql) => {
-    // Serialize per organization: concurrent issues must neither share a number nor a risk.
+    // Serialize per organization: concurrent issues must neither share a number nor a risk. The rows
+    // are locked too, so a direct decision on one of them either lands first (and the row drops out
+    // of 'requested') or waits and then finds this package.
     await sql.query(`SELECT pg_advisory_xact_lock(hashtext('acceptance_package:' || $1))`, [org]);
     const { rows } = await sql.query(
       `SELECT * FROM risks WHERE organization_id=$1 AND acceptance_status='requested'
-          AND ($2::uuid[] IS NULL OR id = ANY($2::uuid[])) ORDER BY risk_number`,
+          AND ($2::uuid[] IS NULL OR id = ANY($2::uuid[])) ORDER BY risk_number FOR UPDATE`,
       [org, wanted],
     );
     if (wanted) {
