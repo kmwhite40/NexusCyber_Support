@@ -526,21 +526,30 @@ export async function decideAcceptance(actor: Principal, id: string, approve: bo
   return withOrgContext(orgContextFor(actor), async (sql) => {
     const cur = await loadRisk(sql, id);
     authorize(actor, 'risk.accept', { organizationId: cur.organization_id });
-    if (cur.acceptance_status !== 'requested') throw Errors.conflict('no acceptance is awaiting a decision');
-    if (cur.acceptance_requested_by === actor.id) throw Errors.forbidden('separation of duties: the requester cannot approve their own acceptance');
-    const { rows } = await sql.query(
-      approve
-        ? `UPDATE risks SET acceptance_status='approved', acceptance_decided_by=$2, acceptance_decided_at=now(),
-              status='accepted', strategy='accept', updated_at=now() WHERE id=$1 RETURNING *`
-        : `UPDATE risks SET acceptance_status='rejected', acceptance_decided_by=$2, acceptance_decided_at=now(),
-              updated_at=now() WHERE id=$1 RETURNING *`,
-      [id, actor.id],
-    );
-    await writeHistory(sql, actor, rows[0], approve ? 'accepted' : 'acceptance_rejected', note);
-    await audit(actor, { action: approve ? 'risk.acceptance.approve' : 'risk.acceptance.reject', organizationId: cur.organization_id, resourceType: 'risk', resourceId: id, detail: { residual: cur.residual_score } });
-    publish(approve ? 'risk.accepted' : 'risk.acceptance_rejected', cur.organization_id, { risk_id: id });
-    return decorate(rows[0], await loadSettings(sql, cur.organization_id));
+    // The signed paper decision is the only one while the risk sits in an issued package.
+    const held = await issuedPackageFor(sql, id);
+    if (held) throw Errors.conflict(`awaiting the signed acceptance package ${held.packageNumber}; void it to decide directly`);
+    return applyAcceptanceDecision(sql, actor, cur, approve, note);
   });
+}
+
+/** Record an approve/reject decision on an already-loaded, already-authorized risk row. */
+export async function applyAcceptanceDecision(sql: Sql, actor: Principal, cur: any, approve: boolean, note?: string) {
+  const id: string = cur.id;
+  if (cur.acceptance_status !== 'requested') throw Errors.conflict('no acceptance is awaiting a decision');
+  if (cur.acceptance_requested_by === actor.id) throw Errors.forbidden('separation of duties: the requester cannot approve their own acceptance');
+  const { rows } = await sql.query(
+    approve
+      ? `UPDATE risks SET acceptance_status='approved', acceptance_decided_by=$2, acceptance_decided_at=now(),
+            status='accepted', strategy='accept', updated_at=now() WHERE id=$1 RETURNING *`
+      : `UPDATE risks SET acceptance_status='rejected', acceptance_decided_by=$2, acceptance_decided_at=now(),
+            updated_at=now() WHERE id=$1 RETURNING *`,
+    [id, actor.id],
+  );
+  await writeHistory(sql, actor, rows[0], approve ? 'accepted' : 'acceptance_rejected', note);
+  await audit(actor, { action: approve ? 'risk.acceptance.approve' : 'risk.acceptance.reject', organizationId: cur.organization_id, resourceType: 'risk', resourceId: id, detail: { residual: cur.residual_score } });
+  publish(approve ? 'risk.accepted' : 'risk.acceptance_rejected', cur.organization_id, { risk_id: id });
+  return decorate(rows[0], await loadSettings(sql, cur.organization_id));
 }
 
 // ---------------- Treatments ----------------

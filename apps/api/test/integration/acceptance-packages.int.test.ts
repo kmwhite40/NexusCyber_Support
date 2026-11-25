@@ -17,6 +17,7 @@ async function principalByEmail(email: string): Promise<Principal> {
 
 const OWN_ORG = 'Package Suite Test Org';
 const OWN_ADMIN = 'package-suite-admin@own.example';
+const OWN_DECIDER = 'package-suite-decider@own.example';
 const OTHER_ORG = 'Package Isolation Test Org';
 const OTHER_ADMIN = 'package-isolation-admin@other.example';
 const future = () => new Date(Date.now() + 90 * 86_400_000).toISOString();
@@ -24,6 +25,7 @@ const future = () => new Date(Date.now() + 90 * 86_400_000).toISOString();
 describeDb('risk acceptance packages (integration)', () => {
   let owner: Principal;   // OrgAdmin of this suite's private organization
   let manager: Principal;
+  let decider: Principal; // second OrgAdmin of the private org: not the requester, so separation of duties allows it
   let otherAdmin: Principal;
   let ownId: string;
   let otherId: string;
@@ -61,8 +63,10 @@ describeDb('risk acceptance packages (integration)', () => {
       return id as string;
     });
     ownId = await mkOrg(OWN_ORG, OWN_ADMIN);
+    await mkOrg(OWN_ORG, OWN_DECIDER);
     otherId = await mkOrg(OTHER_ORG, OTHER_ADMIN);
     owner = await principalByEmail(OWN_ADMIN);
+    decider = await principalByEmail(OWN_DECIDER);
     otherAdmin = await principalByEmail(OTHER_ADMIN);
     await cleanPackages();
   });
@@ -70,7 +74,7 @@ describeDb('risk acceptance packages (integration)', () => {
   afterAll(async () => {
     // Deleting the organizations cascades to their risks and packages.
     await withSystemContext(async (sql) => {
-      await sql.query('DELETE FROM users WHERE email = ANY($1::text[])', [[OWN_ADMIN, OTHER_ADMIN]]);
+      await sql.query('DELETE FROM users WHERE email = ANY($1::text[])', [[OWN_ADMIN, OWN_DECIDER, OTHER_ADMIN]]);
       await sql.query('DELETE FROM organizations WHERE name = ANY($1::text[])', [[OWN_ORG, OTHER_ORG]]);
     });
   });
@@ -182,5 +186,23 @@ describeDb('risk acceptance packages (integration)', () => {
     expect(actions).toEqual(expect.arrayContaining([
       'risk.acceptance_package.issue', 'risk.acceptance_package.export', 'risk.acceptance_package.void',
     ]));
+  });
+
+  it('direct decide is refused while in an issued package', async () => {
+    await cleanPackages();
+    const a = await requested(owner, ownId, 'Pkg: blocked');
+    const s = await pkgs.issuePackage(owner, { organizationId: ownId, riskIds: [a.id] });
+    await expect(risks.decideAcceptance(decider, a.id, true)).rejects.toMatchObject({ status: 409, message: expect.stringContaining(s.number) });
+    await expect(risks.decideAcceptance(decider, a.id, false)).rejects.toMatchObject({ status: 409 });
+    expect((await risks.getRisk(owner, a.id)).acceptance_status).toBe('requested');
+  });
+
+  it('direct decide works again after void', async () => {
+    await cleanPackages();
+    const a = await requested(owner, ownId, 'Pkg: unblocked');
+    const s = await pkgs.issuePackage(owner, { organizationId: ownId, riskIds: [a.id] });
+    await pkgs.voidPackage(owner, s.id, 'Issued in error');
+    const decided = await risks.decideAcceptance(decider, a.id, true);
+    expect(decided.status).toBe('accepted');
   });
 });
