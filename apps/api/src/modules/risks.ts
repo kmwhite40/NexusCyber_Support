@@ -15,6 +15,7 @@ import { authorize, can } from '../authz/pdp.js';
 import { audit } from './audit.js';
 import { publish } from '../events/bus.js';
 import { Errors } from '../errors.js';
+import { packageNumber } from './acceptance-package-render.js';
 import { resolveUserNames, nameRef } from './user-names.js';
 import { readableOrganizations } from './posture.js';
 import type { Principal } from '../types.js';
@@ -28,7 +29,7 @@ import {
 // ---------------- Scope ----------------
 
 /** The organization a call acts on. Customers act on their own org, whatever they send. */
-function resolveOrg(actor: Principal, orgId?: string | null): string {
+export function resolveOrg(actor: Principal, orgId?: string | null): string {
   if (actor.plane === 'customer') {
     if (!actor.organizationId) throw Errors.forbidden('no organization');
     if (orgId && orgId !== actor.organizationId) throw Errors.forbidden('out of organization scope');
@@ -42,7 +43,7 @@ function resolveOrg(actor: Principal, orgId?: string | null): string {
 
 export interface RiskSettings extends Appetite { organization_id: string; max_acceptance_days: number; is_default: boolean }
 
-async function loadSettings(sql: Sql, orgId: string): Promise<RiskSettings> {
+export async function loadSettings(sql: Sql, orgId: string): Promise<RiskSettings> {
   const row = (await sql.query('SELECT * FROM risk_org_settings WHERE organization_id=$1', [orgId])).rows[0];
   if (!row) return { organization_id: orgId, ...DEFAULT_APPETITE, max_acceptance_days: 365, is_default: true };
   return {
@@ -321,6 +322,15 @@ export async function createRisk(actor: Principal, input: CreateRiskInput, opts:
     publish('risk.created', org, { risk_id: risk.id, org_id: org, residual_score: risk.residual_score });
     return decorate(risk, await loadSettings(sql, org));
   });
+}
+
+/** The issued (not void, not signed) acceptance package a risk is in, if any. */
+export async function issuedPackageFor(sql: Sql, riskId: string): Promise<{ id: string; packageNumber: string } | null> {
+  const row = (await sql.query(
+    `SELECT id, package_number FROM risk_acceptance_packages WHERE status='issued' AND $1 = ANY(risk_ids) LIMIT 1`,
+    [riskId],
+  )).rows[0];
+  return row ? { id: row.id, packageNumber: packageNumber(row.package_number) } : null;
 }
 
 async function loadRisk(sql: Sql, id: string) {

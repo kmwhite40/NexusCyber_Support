@@ -7,6 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requirePrincipal } from './context.js';
 import * as risks from '../modules/risks.js';
+import * as packages from '../modules/acceptance-packages.js';
 import { CATEGORIES, IMPACT_DIMENSIONS, RATINGS } from '../modules/risk-scoring.js';
 
 const level = z.number().int().min(1).max(5);
@@ -96,6 +97,38 @@ export async function registerRiskRoutes(app: FastifyInstance): Promise<void> {
     const p = await requirePrincipal(req);
     const q = orgQuery.parse(req.query);
     return { data: await risks.findingCandidates(p, q.organizationId) };
+  });
+
+  // Risk acceptance packages: frozen, print-ready documents for an Authorizing Official to sign.
+  app.get('/api/v1/risks/acceptance-packages', async (req) => {
+    const p = await requirePrincipal(req);
+    const q = orgQuery.parse(req.query);
+    return { data: await packages.listPackages(p, q.organizationId) };
+  });
+
+  app.post('/api/v1/risks/acceptance-packages', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const body = z
+      .object({ organizationId: z.string().uuid().optional(), riskIds: z.array(z.string().uuid()).min(1).max(50).optional(), reference: z.string().trim().max(60).nullable().optional() })
+      .strict()
+      .parse(req.body ?? {});
+    reply.code(201);
+    return packages.issuePackage(p, body);
+  });
+
+  app.get('/api/v1/risks/acceptance-packages/:id/html', async (req, reply) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const { html } = await packages.getPackageHtml(p, id);
+    reply.header('Content-Type', 'text/html; charset=utf-8').header('Cache-Control', 'no-store');
+    return html;
+  });
+
+  app.post('/api/v1/risks/acceptance-packages/:id/void', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const { reason } = z.object({ reason: z.string().trim().min(3).max(500) }).strict().parse(req.body);
+    return packages.voidPackage(p, id, reason);
   });
 
   app.get('/api/v1/risks/export.csv', async (req, reply) => {
