@@ -57,6 +57,10 @@ describe('acceptance package renderer', () => {
     expect(sections[1]).toContain('Accept until <b>2027-06-30</b>');
     const sign = html.split('<section class="sign">')[1]!.split('</section>')[0]!;
     expect(sign).toContain('AP-0001');
+    // The statement binds only the risks marked Accept, matching the per-risk decision boxes.
+    expect(sign).toContain('each risk marked <b>Accept</b> above, until the expiry date shown for it');
+    expect(sign).toContain('Risks marked Do not accept, or left unmarked, are not accepted.');
+    expect(sign).not.toContain('each risk listed in this package');
     expect(html).toContain('2027-03-01');
     expect(html).toContain('2027-06-30');
     for (const label of ['Name', 'Title', 'Signature', 'Date']) expect(html).toContain(label);

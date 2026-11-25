@@ -182,7 +182,7 @@ ${s.risks.map(renderRisk).join('\n')}
   <section class="sign">
     <h2>Authorizing Official acceptance</h2>
     <p><b>${esc(s.packageNumber)}</b></p>
-    <p>By signing, I accept the residual risk of each risk listed in this package until its stated expiry date.</p>
+    <p>By signing, I accept the residual risk of each risk marked <b>Accept</b> above, until the expiry date shown for it. Risks marked Do not accept, or left unmarked, are not accepted.</p>
     <div class="line"><span>Name</span><i></i></div>
     <div class="line"><span>Title</span><i></i></div>
     <div class="line"><span>Signature</span><i></i></div>
