@@ -149,6 +149,15 @@ export interface RiskDetail extends Risk {
   treatments_overdue: number;
   acceptance_requested_by_user: UserRef | null;
   acceptance_decided_by_user: UserRef | null;
+  /** Packages that carried this risk, newest first (includes void ones). */
+  acceptance_packages: RiskPackageRef[];
+}
+
+export interface RiskPackageRef {
+  id: string; number: string; status: string;
+  signed_by_name: string | null; signed_by_title: string | null;
+  /** YYYY-MM-DD */
+  signed_on: string | null; signed_attachment_id: string | null;
 }
 
 export interface PortfolioRow {

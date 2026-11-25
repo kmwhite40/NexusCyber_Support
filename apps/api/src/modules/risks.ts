@@ -347,6 +347,11 @@ export async function getRisk(actor: Principal, id: string) {
     const treatments = (await sql.query('SELECT * FROM risk_treatments WHERE risk_id=$1 ORDER BY coalesce(due_at, created_at), created_at', [id])).rows;
     const links = (await sql.query('SELECT * FROM risk_links WHERE risk_id=$1 ORDER BY kind, created_at', [id])).rows;
     const history = (await sql.query('SELECT * FROM risk_history WHERE risk_id=$1 ORDER BY created_at', [id])).rows;
+    // Every package that ever carried this risk, newest first; the UI decides which to show.
+    const packages = (await sql.query(
+      `SELECT id, package_number, status, signed_by_name, signed_by_title, to_char(signed_on, 'YYYY-MM-DD') AS signed_on, signed_attachment_id
+         FROM risk_acceptance_packages WHERE $1::uuid = ANY(risk_ids) ORDER BY generated_at DESC, package_number DESC`, [id],
+    )).rows;
     const names = await resolveUserNames([
       r.owner_id, r.created_by, r.acceptance_requested_by, r.acceptance_decided_by,
       ...treatments.map((t: any) => t.owner_id), ...history.map((h: any) => h.actor_id),
@@ -361,6 +366,7 @@ export async function getRisk(actor: Principal, id: string) {
       treatments: treatments.map((t: any) => ({ ...t, owner: nameRef(names, t.owner_id) })),
       links,
       history: history.map((h: any) => ({ ...h, actor: nameRef(names, h.actor_id) })),
+      acceptance_packages: packages.map(({ package_number, ...p }: any) => ({ ...p, number: packageNumber(package_number) })),
     };
   });
 }
