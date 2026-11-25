@@ -305,8 +305,9 @@ export const risksApi = {
    * Open the stored print HTML in a new tab. The tab is opened FIRST, synchronously, so it counts as
    * part of the user's click (a window opened after an await is treated as a pop-up and blocked).
    */
-  async openPackage(id: string): Promise<void> {
-    const win = window.open('', '_blank');
+  async openPackage(id: string, opened?: Window | null): Promise<void> {
+    // `opened`: a tab the caller already opened inside its own click (Generate opens it before issuing).
+    const win = opened ?? window.open('', '_blank');
     if (!win) throw new ApiError(0, 'Allow pop-ups for Anchor to print the package');
     try {
       const res = await fetch(`${API_BASE}/risks/acceptance-packages/${id}/html`, { headers: authHeaders() });

@@ -88,6 +88,10 @@ function PackagesDialog({
   const reprint = (p: AcceptancePackage) => run(() => risksApi.openPackage(p.id), 'Could not open the package', false);
 
   function generate() {
+    // Open the print tab NOW, inside the click: after the POST it would count as a pop-up and be blocked.
+    // If it is blocked, say so without issuing (an issued package the person cannot print is a trap).
+    const win = window.open('', '_blank');
+    if (!win) { setError('Allow pop-ups for Anchor to print the package'); return; }
     setBusy(true);
     setError(null);
     risksApi.issuePackage(organizationId, chosen.map((r) => r.id), reference)
@@ -96,10 +100,9 @@ function PackagesDialog({
         setUnticked(new Set());
         load();
         onChanged();
-        // Issued either way; if the pop-up is blocked the person can use Reprint.
-        try { await risksApi.openPackage(pkg.id); } catch (e) { setError(e instanceof ApiError ? e.detail : 'Could not open the package'); }
+        try { await risksApi.openPackage(pkg.id, win); } catch (e) { setError(e instanceof ApiError ? e.detail : 'Could not open the package; use Reprint'); }
       })
-      .catch((e) => { setError(e instanceof ApiError ? e.detail : 'Could not generate the package'); load(); })
+      .catch((e) => { win.close(); setError(e instanceof ApiError ? e.detail : 'Could not generate the package'); load(); })
       .finally(() => setBusy(false));
   }
 
