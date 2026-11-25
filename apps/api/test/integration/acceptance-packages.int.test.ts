@@ -358,12 +358,20 @@ describeDb('risk acceptance packages (integration)', () => {
     await expect(record(decider, s.id, d, { signedOn: utcDay(2) })).rejects.toMatchObject({ status: 400, message: expect.stringContaining('future') });
     await expect(record(decider, s.id, d, { signedOn: '2030-01-01' })).rejects.toMatchObject({ status: 400 });
     const issuedOn = new Date(s.generated_at).toISOString().slice(0, 10);
-    const dayBefore = new Date(Date.parse(`${issuedOn}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
-    await expect(record(decider, s.id, d, { signedOn: dayBefore })).rejects
+    const daysBefore = (n: number) => new Date(Date.parse(`${issuedOn}T00:00:00Z`) - n * 86_400_000).toISOString().slice(0, 10);
+    await expect(record(decider, s.id, d, { signedOn: daysBefore(2) })).rejects
       .toMatchObject({ status: 400, message: expect.stringContaining(`before ${s.number} was issued`) });
     await expectUnchanged(s.id, [a.id], before);
     // Tomorrow (UTC) is the latest date allowed: a time zone ahead of UTC may already be there.
     expect(await record(decider, s.id, d, { signedOn: utcDay(1) })).toMatchObject({ status: 'signed', signed_on: utcDay(1) });
+  });
+
+  it('allows a signed date one day before the UTC issue day (time zones behind UTC)', async () => {
+    await cleanPackages();
+    const a = await requested(analyst, ownId, 'Rec: signed day before');
+    const s = await pkgs.issuePackage(owner, { organizationId: ownId, riskIds: [a.id] });
+    const dayBefore = new Date(Date.parse(`${new Date(s.generated_at).toISOString().slice(0, 10)}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+    expect(await record(decider, s.id, { [a.id]: 'accepted' }, { signedOn: dayBefore })).toMatchObject({ status: 'signed', signed_on: dayBefore });
   });
 
   it('separation of duties', async () => {
