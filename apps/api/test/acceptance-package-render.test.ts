@@ -88,7 +88,18 @@ describe('acceptance package renderer', () => {
     const h = snapshotSha256(s);
     const html = renderPackageHtml(s, h);
     expect(html).toContain('AP-0001');
-    expect(html).toContain(h.slice(0, 12));
+    expect(html).toMatch(new RegExp(`@bottom-center\\{content:"AP-0001[^"]*sha256 ${h.slice(0, 12)}`));
+  });
+
+  it('prints the short hash in the body, not only in @page margin boxes', () => {
+    const s = snap();
+    const h = snapshotSha256(s);
+    const short = h.slice(0, 12);
+    const body = renderPackageHtml(s, h).split('<body>')[1]!;
+    const meta = body.split('<div class="meta">')[1]!.split('</div>')[0]!;
+    expect(meta).toContain(`<b>sha256</b> <span class="sha">${short}</span>`);
+    const sign = body.split('<section class="sign">')[1]!.split('</section>')[0]!;
+    expect(sign).toContain(`<b>AP-0001</b> &middot; sha256 <span class="sha">${short}</span>`);
   });
 
   it('escapes every field', () => {

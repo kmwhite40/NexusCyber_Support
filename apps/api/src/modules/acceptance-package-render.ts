@@ -143,6 +143,7 @@ export function renderPackageHtml(s: PackageSnapshot, sha256: string): string {
   .muted{color:#64748b}
   .meta{margin:10px 0 18px;color:#475569;line-height:1.8}
   .meta b{color:#0a1f44}
+  .sha{font-family:ui-monospace,Menlo,Consolas,monospace}
   table{width:100%;border-collapse:collapse;margin:8px 0 18px}
   th{font-size:10.5px;text-transform:uppercase;letter-spacing:.1em;color:#94a3b8;text-align:left;padding:6px 8px;border-bottom:1px solid #e6eaf0;background:#fafbfc}
   td{padding:7px 8px;border-bottom:1px solid #eef1f5;vertical-align:top}
@@ -172,7 +173,7 @@ export function renderPackageHtml(s: PackageSnapshot, sha256: string): string {
   <h1>Risk Acceptance Package</h1>
   <div class="meta">
     <b>Organization</b> ${esc(s.organization.name)}<br>
-    <b>Package</b> ${esc(s.packageNumber)}<br>
+    <b>Package</b> ${esc(s.packageNumber)} &middot; <b>sha256</b> <span class="sha">${esc(short)}</span><br>
     ${s.reference ? `<b>Reference</b> ${esc(s.reference)}<br>` : ''}<b>Generated</b> ${dateOnly(s.generatedAt)} by ${esc(s.generatedBy)}<br>
     <b>Risk appetite</b> ${esc(s.appetite)} &middot; <b>Tolerance</b> ${esc(s.tolerance)}
   </div>
@@ -181,7 +182,7 @@ export function renderPackageHtml(s: PackageSnapshot, sha256: string): string {
 ${s.risks.map(renderRisk).join('\n')}
   <section class="sign">
     <h2>Authorizing Official acceptance</h2>
-    <p><b>${esc(s.packageNumber)}</b></p>
+    <p><b>${esc(s.packageNumber)}</b> &middot; sha256 <span class="sha">${esc(short)}</span></p>
     <p>By signing, I accept the residual risk of each risk marked <b>Accept</b> above, until the expiry date shown for it. Risks marked Do not accept, or left unmarked, are not accepted.</p>
     <div class="line"><span>Name</span><i></i></div>
     <div class="line"><span>Title</span><i></i></div>
