@@ -214,6 +214,8 @@ export interface AcceptancePackage {
   reference: string | null;
   status: string;
   risk_ids: string[];
+  /** The risks as the Authorizing Official saw them (from the package snapshot), in package order. */
+  risks: PackageRiskRef[];
   sha256: string;
   generated_at: string;
   generated_by: string | null;
@@ -225,6 +227,8 @@ export interface AcceptancePackage {
   signed_attachment_id: string | null;
   decisions: unknown;
 }
+
+export interface PackageRiskRef { id: string; ref: string; title: string }
 
 export interface RecordPackagePayload {
   signedByName: string;

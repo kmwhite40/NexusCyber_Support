@@ -159,7 +159,7 @@ export default function RisksPage() {
           {!showPortfolio && (
             <>
               <Button size="sm" variant="outline" onClick={exportCsv} disabled={exporting}>{exporting ? 'Exporting…' : 'Export CSV'}</Button>
-              <AcceptancePackagesPanel organizationId={org} canManage={canManage} canAccept={canAccept} risks={risks ?? []} onChanged={refresh} />
+              <AcceptancePackagesPanel organizationId={org} canManage={canManage} canAccept={canAccept} onChanged={refresh} />
               {canAccept && settings && <Button size="sm" variant="outline" onClick={() => setShowAppetite(true)}>Appetite</Button>}
               {canManage && <Button size="sm" variant="outline" onClick={() => setShowImport(true)}>From findings</Button>}
               {canManage && <Button size="sm" onClick={() => setEditing('new')}>New risk</Button>}

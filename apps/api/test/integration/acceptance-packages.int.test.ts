@@ -118,6 +118,9 @@ describeDb('risk acceptance packages (integration)', () => {
     expect([...s.risk_ids].sort()).toEqual([a.id, b.id].sort());
     expect(s.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(s).not.toHaveProperty('html');
+    expect(s).not.toHaveProperty('snapshot');
+    // The risks as printed, so the UI never depends on the (filtered) register list to name them.
+    expect(s.risks).toEqual([a, b].sort((x, y) => x.risk_number - y.risk_number).map((r) => ({ id: r.id, ref: r.ref, title: r.title })));
     const { html, packageNumber } = await pkgs.getPackageHtml(owner, s.id);
     expect(packageNumber).toBe('AP-0001');
     expect(html).toContain(a.ref);
@@ -266,6 +269,7 @@ describeDb('risk acceptance packages (integration)', () => {
     const s = await pkgs.issuePackage(owner, { organizationId: ownId, riskIds: [a.id, b.id, c.id] });
     const out = await record(decider, s.id, { [a.id]: 'accepted', [b.id]: 'not_accepted', [c.id]: 'not_marked' });
     expect(out).toMatchObject({ id: s.id, status: 'signed', signed_by_name: 'Jane Doe', signed_by_title: 'Authorizing Official', signed_on: SIGNED_ON });
+    expect(out.risks.map((r) => r.id)).toEqual(s.risks.map((r) => r.id));
     expect(out.signed_attachment_id).toBeTruthy();
     expect(out.recorded_at).toBeTruthy();
     expect(out.decisions).toEqual({ [a.id]: 'accepted', [b.id]: 'not_accepted', [c.id]: 'not_marked' });

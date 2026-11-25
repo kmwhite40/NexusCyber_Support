@@ -14,12 +14,11 @@ const day = (iso: string) => iso.slice(0, 10);
  * Official to sign on paper. Generate, reprint, void, record the signed copy, download it.
  */
 export function AcceptancePackagesPanel({
-  organizationId, canManage, canAccept, risks, onChanged,
+  organizationId, canManage, canAccept, onChanged,
 }: {
   organizationId: string | undefined;
   canManage: boolean;
   canAccept: boolean;
-  risks: Risk[];
   onChanged: () => void;
 }) {
   const [open, setOpen] = React.useState(false);
@@ -29,7 +28,7 @@ export function AcceptancePackagesPanel({
       {open && (
         <PackagesDialog
           organizationId={organizationId} canManage={canManage} canAccept={canAccept}
-          risks={risks} onChanged={onChanged} onClose={() => setOpen(false)}
+          onChanged={onChanged} onClose={() => setOpen(false)}
         />
       )}
     </>
@@ -37,16 +36,17 @@ export function AcceptancePackagesPanel({
 }
 
 function PackagesDialog({
-  organizationId, canManage, canAccept, risks, onChanged, onClose,
+  organizationId, canManage, canAccept, onChanged, onClose,
 }: {
   organizationId: string | undefined;
   canManage: boolean;
   canAccept: boolean;
-  risks: Risk[];
   onChanged: () => void;
   onClose: () => void;
 }) {
   const [rows, setRows] = React.useState<AcceptancePackage[] | null>(null);
+  // The register page's list is filtered (status, category, closed); eligibility must not be.
+  const [risks, setRisks] = React.useState<Risk[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [reference, setReference] = React.useState('');
@@ -56,15 +56,17 @@ function PackagesDialog({
 
   const load = React.useCallback(() => {
     risksApi.packages(organizationId).then(setRows).catch((e) => { setRows([]); setError(e instanceof ApiError ? e.detail : 'Could not load packages'); });
-  }, [organizationId]);
+    if (canManage) {
+      risksApi.list(organizationId).then(setRisks).catch((e) => { setRisks([]); setError(e instanceof ApiError ? e.detail : 'Could not load risks'); });
+    }
+  }, [organizationId, canManage]);
   React.useEffect(load, [load]);
 
   const eligible = React.useMemo(() => {
     const held = new Set((rows ?? []).filter((p) => p.status === 'issued').flatMap((p) => p.risk_ids));
-    return risks.filter((r) => r.acceptance_status === 'requested' && !held.has(r.id));
+    return (risks ?? []).filter((r) => r.acceptance_status === 'requested' && !held.has(r.id));
   }, [risks, rows]);
   const chosen = eligible.filter((r) => !unticked.has(r.id));
-  const refByRisk = React.useMemo(() => new Map(risks.map((r) => [r.id, r.ref])), [risks]);
 
   async function run(fn: () => Promise<unknown>, fail: string, refresh = true): Promise<boolean> {
     setBusy(true);
@@ -111,7 +113,7 @@ function PackagesDialog({
         A package freezes the requested risk acceptances into one document to print and sign by the Authorizing Official. Record the signed copy afterwards.
       </p>
 
-      {canManage && rows && (
+      {canManage && rows && risks && (
         <section aria-label="Generate package" className="mb-5 rounded-md border border-border p-3">
           <h3 className="mb-2 text-sm font-semibold">Generate package</h3>
           {eligible.length === 0 ? (
@@ -163,7 +165,7 @@ function PackagesDialog({
                   <td className="py-2 pr-3 font-mono text-xs">{p.number}</td>
                   <td className="pr-3">{p.reference ?? '—'}</td>
                   <td className="pr-3"><Badge tone={STATUS_TONE[p.status] ?? 'neutral'}>{p.status}</Badge></td>
-                  <td className="pr-3" title={p.risk_ids.map((id) => refByRisk.get(id) ?? '').filter(Boolean).join(', ') || undefined}>{p.risk_ids.length}</td>
+                  <td className="pr-3" title={p.risks.map((r) => r.ref).join(', ') || undefined}>{p.risk_ids.length}</td>
                   <td className="pr-3">{day(p.generated_at)}</td>
                   <td className="pr-3">{p.signed_by_name ? `${p.signed_by_name}${p.signed_on ? `, ${p.signed_on}` : ''}` : '—'}</td>
                   <td>
@@ -191,7 +193,7 @@ function PackagesDialog({
       )}
 
       {recording && (
-        <RecordDialog pkg={recording} risks={risks} onClose={() => setRecording(null)}
+        <RecordDialog pkg={recording} onClose={() => setRecording(null)}
           onRecorded={() => { setRecording(null); load(); onChanged(); }} />
       )}
 
@@ -221,8 +223,8 @@ const DECISIONS: Array<{ value: PackageDecision; label: string }> = [
 ];
 
 /** Record the Authorizing Official's signature: the signed copy plus the mark made against each risk. */
-function RecordDialog({ pkg, risks, onClose, onRecorded }: {
-  pkg: AcceptancePackage; risks: Risk[]; onClose: () => void; onRecorded: () => void;
+function RecordDialog({ pkg, onClose, onRecorded }: {
+  pkg: AcceptancePackage; onClose: () => void; onRecorded: () => void;
 }) {
   const [file, setFile] = React.useState<File | null>(null);
   const [name, setName] = React.useState('');
@@ -231,10 +233,9 @@ function RecordDialog({ pkg, risks, onClose, onRecorded }: {
   const [decisions, setDecisions] = React.useState<Record<string, PackageDecision>>({});
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const byId = React.useMemo(() => new Map(risks.map((r) => [r.id, r])), [risks]);
 
   const ready = !!file && name.trim().length >= 2 && title.trim().length >= 2 && !!signedOn
-    && pkg.risk_ids.every((id) => decisions[id]);
+    && pkg.risks.every((r) => decisions[r.id]);
 
   async function submit() {
     if (!file) return;
@@ -278,12 +279,12 @@ function RecordDialog({ pkg, risks, onClose, onRecorded }: {
         </Field>
       </div>
       <div className="space-y-3">
-        {pkg.risk_ids.map((id) => {
-          const r = byId.get(id);
+        {pkg.risks.map(({ id, ref, title: riskTitle }) => {
+          // Ref and title as printed in the package the AO marked, not the live register.
           return (
             <fieldset key={id} className="rounded-md border border-border p-3">
               <legend className="px-1 text-sm">
-                <span className="font-mono text-xs text-muted">{r?.ref ?? id}</span>{r ? ` ${r.title}` : ''}
+                <span className="font-mono text-xs text-muted">{ref}</span> {riskTitle}
               </legend>
               <div className="flex flex-wrap gap-4">
                 {DECISIONS.map((d) => (

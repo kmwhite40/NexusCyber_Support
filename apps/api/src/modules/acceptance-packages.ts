@@ -27,6 +27,8 @@ export interface PackageSummary {
   reference: string | null;
   status: string;
   risk_ids: string[];
+  /** The risks as the AO saw them: id, ref and title from the snapshot, in package order. */
+  risks: Array<{ id: string; ref: string; title: string }>;
   sha256: string;
   generated_at: string;
   generated_by: string | null;
@@ -38,8 +40,13 @@ export interface PackageSummary {
   decisions: unknown;
 }
 
-// Everything except html and snapshot, which are large and fetched only by the print route.
-const SUMMARY_COLS = `id, organization_id, package_number, reference, status, risk_ids, sha256, generated_at, generated_by,
+// Everything except html and snapshot, which are large and fetched only by the print route. Of the
+// snapshot only each risk's id, ref and title are returned: what the AO saw, even if the live risk
+// has since been renamed, closed or filtered out of a list.
+const SUMMARY_COLS = `id, organization_id, package_number, reference, status, risk_ids,
+  (SELECT coalesce(jsonb_agg(jsonb_build_object('id', x->>'id', 'ref', x->>'ref', 'title', x->>'title') ORDER BY n), '[]'::jsonb)
+     FROM jsonb_array_elements(snapshot->'risks') WITH ORDINALITY AS t(x, n)) AS risks,
+  sha256, generated_at, generated_by,
   signed_by_name, signed_by_title, to_char(signed_on, 'YYYY-MM-DD') AS signed_on, recorded_at, signed_attachment_id, decisions`;
 
 function summarize(r: any): PackageSummary {
