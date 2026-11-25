@@ -45,7 +45,18 @@ describe('acceptance package renderer', () => {
     expect(html).toContain('RISK-0001');
     expect(html).toContain('RISK-0002');
     expect(html.match(/class="risk"/g)).toHaveLength(2);
-    expect(html).toContain('Accept until');
+    const sections = html.split('<section class="risk">').slice(1).map((x) => x.split('</section>')[0]!);
+    expect(sections).toHaveLength(2);
+    for (const sec of sections) {
+      expect(sec).toContain('\u2610');
+      expect(sec).toContain('Accept until');
+      expect(sec).toContain('Do not accept');
+      expect(sec).toContain('Initials');
+    }
+    expect(sections[0]).toContain('Accept until <b>2027-03-01</b>');
+    expect(sections[1]).toContain('Accept until <b>2027-06-30</b>');
+    const sign = html.split('<section class="sign">')[1]!.split('</section>')[0]!;
+    expect(sign).toContain('AP-0001');
     expect(html).toContain('2027-03-01');
     expect(html).toContain('2027-06-30');
     for (const label of ['Name', 'Title', 'Signature', 'Date']) expect(html).toContain(label);
@@ -85,6 +96,13 @@ describe('acceptance package renderer', () => {
     expect(html).toContain('a &amp; b &quot;c&quot;');
     expect(html).toContain('&lt;b&gt;x&lt;/b&gt;');
     expect(html).not.toContain('<script>alert');
+  });
+
+  it('repeats organization and package title in a page header box', () => {
+    const s = snap();
+    const html = renderPackageHtml(s, snapshotSha256(s));
+    expect(html).toMatch(/@top-left\{content:"Quantifind"/);
+    expect(html).toMatch(/@top-right\{content:"Risk Acceptance Package AP-0001[^"]*Kim Admin"/);
   });
 
   it('prints on load and carries no external resources', () => {

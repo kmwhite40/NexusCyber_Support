@@ -107,7 +107,11 @@ function renderRisk(r: PackageRiskSnapshot, index: number): string {
   <div class="grid">
     <div class="kv"><span>Requested by</span><b>${dash(r.requestedBy)}</b></div>
     <div class="kv"><span>Requested on</span><b>${dateOnly(r.requestedAt)}</b></div>
-    <div class="kv until"><span>Accept until</span><b>${dateOnly(r.expiresAt)}</b></div>
+    <div class="kv"><span>Expires</span><b>${dateOnly(r.expiresAt)}</b></div>
+  </div>
+  <div class="decision">
+    <p><span class="box">\u2610</span> Accept until <b>${dateOnly(r.expiresAt)}</b></p>
+    <p><span class="box">\u2610</span> Do not accept &nbsp; Initials <i></i></p>
   </div>
 </section>`;
 }
@@ -116,6 +120,10 @@ export function renderPackageHtml(s: PackageSnapshot, sha256: string): string {
   const short = sha256.slice(0, 12);
   const footer = cssText(
     [s.packageNumber, s.reference, `sha256 ${short}`].filter(Boolean).join(' \u00b7 ') + ' \u00b7 Page ',
+  );
+  const headLeft = cssText(s.organization.name);
+  const headRight = cssText(
+    `Risk Acceptance Package ${s.packageNumber} \u00b7 Generated ${s.generatedAt.slice(0, 10)} by ${s.generatedBy}`,
   );
   const summaryRows = s.risks
     .map(
@@ -146,7 +154,10 @@ export function renderPackageHtml(s: PackageSnapshot, sha256: string): string {
   .kv b{color:#0a1f44}
   .kv em{display:block;font-style:normal;font-size:11px;color:#64748b}
   .kv.wide{margin:6px 0}
-  .until b{font-size:15px}
+  .decision{margin-top:14px;padding:10px 12px;border:1px solid #1b2430}
+  .decision p{margin:6px 0}
+  .decision .box{font-size:16px;margin-right:6px}
+  .decision i{display:inline-block;width:80px;border-bottom:1px solid #1b2430}
   .just{border-left:3px solid #2563ef;background:#f0f6ff;padding:8px 12px}
   ul{margin-left:18px}
   .sign{break-before:page}
@@ -154,7 +165,7 @@ export function renderPackageHtml(s: PackageSnapshot, sha256: string): string {
   .line{display:grid;grid-template-columns:90px 1fr;gap:12px;align-items:end;margin:26px 0}
   .line span{font-size:10.5px;text-transform:uppercase;letter-spacing:.1em;color:#94a3b8}
   .line i{border-bottom:1px solid #1b2430;height:22px;display:block}
-  @page{size:letter;margin:0.6in;@bottom-center{content:"${footer}" counter(page);font-size:9px;color:#94a3b8}}
+  @page{size:letter;margin:0.6in;@top-left{content:"${headLeft}";font-size:9px;color:#475569}@top-right{content:"${headRight}";font-size:9px;color:#475569}@bottom-center{content:"${footer}" counter(page);font-size:9px;color:#94a3b8}}
 </style></head>
 <body>
   <div class="bar"></div>
@@ -170,6 +181,7 @@ export function renderPackageHtml(s: PackageSnapshot, sha256: string): string {
 ${s.risks.map(renderRisk).join('\n')}
   <section class="sign">
     <h2>Authorizing Official acceptance</h2>
+    <p><b>${esc(s.packageNumber)}</b></p>
     <p>By signing, I accept the residual risk of each risk listed in this package until its stated expiry date.</p>
     <div class="line"><span>Name</span><i></i></div>
     <div class="line"><span>Title</span><i></i></div>
