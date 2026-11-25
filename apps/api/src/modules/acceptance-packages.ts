@@ -210,6 +210,13 @@ export interface RecordSignatureInput {
   file: { filename: string; contentType: string; bytes: Buffer };
 }
 
+/** A real YYYY-MM-DD date. Round-trips, because Date.parse rolls an impossible day (02-30) over. */
+export function isCalendarDate(d: string): boolean {
+  if (typeof d !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+  const t = new Date(`${d}T00:00:00Z`);
+  return !Number.isNaN(t.getTime()) && t.toISOString().slice(0, 10) === d;
+}
+
 /** Did the acceptance request move since the package froze it? Then the AO signed something else. */
 function changedSinceIssue(cur: any, snap: PackageRiskSnapshot): boolean {
   return !cur
@@ -239,9 +246,7 @@ export async function recordSignature(actor: Principal, id: string, input: Recor
       authorize(actor, 'risk.accept', { organizationId: org });
       const number = packageNumber(pkg.package_number);
       if (pkg.status !== 'issued') throw Errors.conflict(`only an issued package can be recorded (${number} is ${pkg.status})`);
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(input.signedOn) || Number.isNaN(Date.parse(`${input.signedOn}T00:00:00Z`))) {
-        throw Errors.badRequest('signedOn must be a date (YYYY-MM-DD)');
-      }
+      if (!isCalendarDate(input.signedOn)) throw Errors.badRequest('signedOn must be a date (YYYY-MM-DD)');
 
       // A decision for every risk in the package, and for nothing else.
       const snaps: PackageRiskSnapshot[] = (pkg.snapshot as PackageSnapshot).risks;

@@ -298,6 +298,9 @@ describeDb('risk acceptance packages (integration)', () => {
     await expect(record(decider, s.id, { [a.id]: 'accepted' })).rejects.toMatchObject({ status: 400 });
     await expect(record(decider, s.id, { [a.id]: 'accepted', [b.id]: 'accepted', [randomUUID()]: 'accepted' })).rejects.toMatchObject({ status: 400 });
     await expect(record(decider, s.id, { [a.id]: 'accepted', [b.id]: 'maybe' as any })).rejects.toMatchObject({ status: 400 });
+    // An impossible calendar date is refused up front, not after the decisions are applied.
+    for (const signedOn of ['2026-02-30', '2026-13-01', '2026-12-1'])
+      await expect(record(decider, s.id, { [a.id]: 'accepted', [b.id]: 'accepted' }, { signedOn }), signedOn).rejects.toMatchObject({ status: 400 });
     await expectUnchanged(s.id, [a.id, b.id], before);
   });
 

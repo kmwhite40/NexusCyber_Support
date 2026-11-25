@@ -157,7 +157,7 @@ export async function registerRiskRoutes(app: FastifyInstance): Promise<void> {
       .object({
         signedByName: z.string().trim().min(2).max(200),
         signedByTitle: z.string().trim().min(2).max(200),
-        signedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((d) => !Number.isNaN(Date.parse(`${d}T00:00:00Z`)), 'invalid date'),
+        signedOn: z.string().refine(packages.isCalendarDate, 'must be a date (YYYY-MM-DD)'),
         decisions: z.record(z.string().uuid(), z.enum(packages.PACKAGE_DECISIONS as [packages.PackageDecision, ...packages.PackageDecision[]])),
       })
       .strict()
