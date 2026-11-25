@@ -158,6 +158,8 @@ export interface RiskPackageRef {
   signed_by_name: string | null; signed_by_title: string | null;
   /** YYYY-MM-DD */
   signed_on: string | null; signed_attachment_id: string | null;
+  /** What the signed package decided for this risk; null until it is signed. */
+  decision: PackageDecision | null;
 }
 
 export interface PortfolioRow {

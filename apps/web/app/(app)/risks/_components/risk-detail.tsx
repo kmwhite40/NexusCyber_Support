@@ -330,7 +330,9 @@ function AcceptanceTab({ r, canManage, canAccept, meId, act, busy }: ActProps & 
           <p className="mt-2 text-sm font-medium text-warning">Awaiting signed acceptance package {issued.number}</p>
         ) : signed && (
           <p className="mt-2 text-sm text-muted">
-            Signed by {signed.signed_by_name}, {signed.signed_by_title} on {signed.signed_on} · {signed.number}
+            {signed.decision === 'accepted' ? <>Accepted by {signed.signed_by_name}, {signed.signed_by_title} on {signed.signed_on} · {signed.number}</>
+              : signed.decision === 'not_accepted' ? <>Not accepted by {signed.signed_by_name}, {signed.signed_by_title} on {signed.signed_on} · {signed.number}</>
+                : <>Left unmarked by {signed.signed_by_name} on {signed.number}</>}
             {signed.signed_attachment_id && (
               <> · <button type="button" className="text-brand underline"
                 onClick={() => act(() => attachmentsApi.download(signed.signed_attachment_id!, `${signed.number}-signed`))}>Download signed copy</button></>

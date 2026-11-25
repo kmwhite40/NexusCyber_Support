@@ -349,8 +349,9 @@ export async function getRisk(actor: Principal, id: string) {
     const history = (await sql.query('SELECT * FROM risk_history WHERE risk_id=$1 ORDER BY created_at', [id])).rows;
     // Every package that ever carried this risk, newest first; the UI decides which to show.
     const packages = (await sql.query(
-      `SELECT id, package_number, status, signed_by_name, signed_by_title, to_char(signed_on, 'YYYY-MM-DD') AS signed_on, signed_attachment_id
-         FROM risk_acceptance_packages WHERE $1::uuid = ANY(risk_ids) ORDER BY generated_at DESC, package_number DESC`, [id],
+      `SELECT id, package_number, status, signed_by_name, signed_by_title, to_char(signed_on, 'YYYY-MM-DD') AS signed_on, signed_attachment_id,
+              decisions->>$2 AS decision
+         FROM risk_acceptance_packages WHERE $1::uuid = ANY(risk_ids) ORDER BY generated_at DESC, package_number DESC`, [id, id],
     )).rows;
     const names = await resolveUserNames([
       r.owner_id, r.created_by, r.acceptance_requested_by, r.acceptance_decided_by,

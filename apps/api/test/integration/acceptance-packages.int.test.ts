@@ -451,19 +451,21 @@ describeDb('risk acceptance packages (integration)', () => {
     const s = await pkgs.issuePackage(owner, { organizationId: ownId, riskIds: [a.id, b.id] });
     let detail = await risks.getRisk(analyst, a.id);
     expect(detail.acceptance_packages).toHaveLength(1);
-    expect(detail.acceptance_packages[0]).toMatchObject({ id: s.id, number: s.number, status: 'issued', signed_by_name: null, signed_by_title: null, signed_on: null, signed_attachment_id: null });
+    expect(detail.acceptance_packages[0]).toMatchObject({ id: s.id, number: s.number, status: 'issued', signed_by_name: null, signed_by_title: null, signed_on: null, signed_attachment_id: null, decision: null });
 
     const out = await record(decider, s.id, { [a.id]: 'accepted', [b.id]: 'not_marked' });
     detail = await risks.getRisk(analyst, a.id);
     expect(detail.acceptance_packages[0]).toMatchObject({
       number: s.number, status: 'signed', signed_by_name: 'Jane Doe', signed_by_title: 'Authorizing Official',
-      signed_on: SIGNED_ON, signed_attachment_id: out.signed_attachment_id,
+      signed_on: SIGNED_ON, signed_attachment_id: out.signed_attachment_id, decision: 'accepted',
     });
     // Not marked: the package stays in its history, and a new one is listed newest first.
     const again = await pkgs.issuePackage(owner, { organizationId: ownId, riskIds: [b.id] });
     const listed = (await risks.getRisk(analyst, b.id)).acceptance_packages;
     expect(listed.map((p: any) => p.number)).toEqual([again.number, s.number]);
     expect(listed.map((p: any) => p.status)).toEqual(['issued', 'signed']);
+    // This risk's own decision in each package, not the package's overall outcome.
+    expect(listed.map((p: any) => p.decision)).toEqual([null, 'not_marked']);
   });
   it('records through the multipart route', async () => {
     await cleanPackages();
