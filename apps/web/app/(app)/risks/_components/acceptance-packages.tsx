@@ -271,7 +271,11 @@ function RecordDialog({ pkg, risks, onClose, onRecorded }: {
         </div>
         <Field label="Authorizing Official name"><Input value={name} maxLength={200} onChange={(e) => setName(e.target.value)} /></Field>
         <Field label="Title"><Input value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} /></Field>
-        <Field label="Signed on"><Input type="date" value={signedOn} onChange={(e) => setSignedOn(e.target.value)} /></Field>
+        <Field label="Signed on">
+          {/* The server refuses a date before the package was issued or after tomorrow (UTC). */}
+          <Input type="date" value={signedOn} min={day(pkg.generated_at)} max={day(new Date(Date.now() + 86_400_000).toISOString())}
+            onChange={(e) => setSignedOn(e.target.value)} />
+        </Field>
       </div>
       <div className="space-y-3">
         {pkg.risk_ids.map((id) => {

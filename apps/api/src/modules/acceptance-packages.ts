@@ -241,7 +241,9 @@ export async function recordSignature(actor: Principal, id: string, input: Recor
   try {
     summary = await withOrgContext(orgContextFor(actor), async (sql) => {
       const pkg = (await sql.query(
-        'SELECT id, organization_id, package_number, status, risk_ids, snapshot, sha256 FROM risk_acceptance_packages WHERE id=$1 FOR UPDATE', [id],
+        `SELECT id, organization_id, package_number, status, risk_ids, snapshot, sha256,
+                to_char(generated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS issued_on
+           FROM risk_acceptance_packages WHERE id=$1 FOR UPDATE`, [id],
       )).rows[0];
       if (!pkg) throw Errors.notFound('acceptance package not found');
       const org: string = pkg.organization_id;
@@ -249,6 +251,13 @@ export async function recordSignature(actor: Principal, id: string, input: Recor
       const number = packageNumber(pkg.package_number);
       if (pkg.status !== 'issued') throw Errors.conflict(`only an issued package can be recorded (${number} is ${pkg.status})`);
       if (!isCalendarDate(input.signedOn)) throw Errors.badRequest('signedOn must be a date (YYYY-MM-DD)');
+      // The AO cannot have signed before the package existed, nor in the future (UTC, with a day of
+      // slack for time zones ahead of UTC).
+      if (input.signedOn < pkg.issued_on) {
+        throw Errors.badRequest(`signedOn ${input.signedOn} is before ${number} was issued (${pkg.issued_on})`);
+      }
+      const latest = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+      if (input.signedOn > latest) throw Errors.badRequest(`signedOn ${input.signedOn} is in the future`);
 
       // A decision for every risk in the package, and for nothing else.
       const snaps: PackageRiskSnapshot[] = (pkg.snapshot as PackageSnapshot).risks;

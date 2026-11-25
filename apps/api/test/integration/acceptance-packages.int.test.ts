@@ -32,6 +32,9 @@ const OWN_ANALYST = 'package-suite-analyst@nexus.example';
 const OTHER_ORG = 'Package Isolation Test Org';
 const OTHER_ADMIN = 'package-isolation-admin@other.example';
 const future = () => new Date(Date.now() + 90 * 86_400_000).toISOString();
+/** A UTC calendar day `days` from today. Signed dates must fall between the issue day and tomorrow. */
+const utcDay = (days = 0) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+const SIGNED_ON = utcDay();
 
 describeDb('risk acceptance packages (integration)', () => {
   let owner: Principal;   // OrgAdmin of this suite's private organization
@@ -237,7 +240,7 @@ describeDb('risk acceptance packages (integration)', () => {
     ({ filename: 'signed.pdf', contentType: 'application/pdf', bytes });
   const record = (actor: Principal, id: string, decisions: Record<string, pkgs.PackageDecision>, over: Partial<Parameters<typeof pkgs.recordSignature>[2]> = {}) =>
     pkgs.recordSignature(actor, id, {
-      signedByName: 'Jane Doe', signedByTitle: 'Authorizing Official', signedOn: '2026-12-01', decisions, file: signedCopy(), ...over,
+      signedByName: 'Jane Doe', signedByTitle: 'Authorizing Official', signedOn: SIGNED_ON, decisions, file: signedCopy(), ...over,
     });
   async function sysQuery(text: string, params: unknown[]) {
     return withSystemContext(async (sql) => (await sql.query(text, params)).rows);
@@ -262,7 +265,7 @@ describeDb('risk acceptance packages (integration)', () => {
     const c = await requested(analyst, ownId, 'Rec: not marked');
     const s = await pkgs.issuePackage(owner, { organizationId: ownId, riskIds: [a.id, b.id, c.id] });
     const out = await record(decider, s.id, { [a.id]: 'accepted', [b.id]: 'not_accepted', [c.id]: 'not_marked' });
-    expect(out).toMatchObject({ id: s.id, status: 'signed', signed_by_name: 'Jane Doe', signed_by_title: 'Authorizing Official', signed_on: '2026-12-01' });
+    expect(out).toMatchObject({ id: s.id, status: 'signed', signed_by_name: 'Jane Doe', signed_by_title: 'Authorizing Official', signed_on: SIGNED_ON });
     expect(out.signed_attachment_id).toBeTruthy();
     expect(out.recorded_at).toBeTruthy();
     expect(out.decisions).toEqual({ [a.id]: 'accepted', [b.id]: 'not_accepted', [c.id]: 'not_marked' });
@@ -276,7 +279,7 @@ describeDb('risk acceptance packages (integration)', () => {
     expect((await risks.getRisk(owner, b.id)).acceptance_status).toBe('rejected');
     expect((await risks.getRisk(owner, c.id)).acceptance_status).toBe('requested');
 
-    const note = `Signed by Jane Doe, Authorizing Official on 2026-12-01; package ${s.number} (${s.sha256.slice(0, 12)})`;
+    const note = `Signed by Jane Doe, Authorizing Official on ${SIGNED_ON}; package ${s.number} (${s.sha256.slice(0, 12)})`;
     for (const [id, kind] of [[a.id, 'accepted'], [b.id, 'acceptance_rejected']]) {
       const [h] = await sysQuery('SELECT kind, note FROM risk_history WHERE risk_id=$1 ORDER BY created_at DESC LIMIT 1', [id]);
       expect(h).toEqual({ kind, note });
@@ -333,12 +336,30 @@ describeDb('risk acceptance packages (integration)', () => {
     await expect(record(decider, s1.id, { [expired.id]: 'accepted' })).rejects.toMatchObject({ status: 409, message: expect.stringContaining(expired.ref) });
     await expectUnchanged(s1.id, [expired.id], before1);
 
+    // Expires at the end of today (UTC), so a paper dated tomorrow, the latest date allowed, is late.
     const late = await requested(analyst, ownId, 'Rec: late');
+    await sysQuery(`UPDATE risks SET acceptance_expires_at=date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' + interval '1 day' - interval '1 second' WHERE id=$1`, [late.id]);
     const s2 = await pkgs.issuePackage(owner, { organizationId: ownId, riskIds: [late.id] });
     const before2 = await stateOf(s2.id, [late.id]);
-    const [{ d }] = await sysQuery(`SELECT to_char((acceptance_expires_at AT TIME ZONE 'UTC') + interval '1 day', 'YYYY-MM-DD') AS d FROM risks WHERE id=$1`, [late.id]);
-    await expect(record(decider, s2.id, { [late.id]: 'accepted' }, { signedOn: d })).rejects.toMatchObject({ status: 409, message: expect.stringContaining(late.ref) });
+    await expect(record(decider, s2.id, { [late.id]: 'accepted' }, { signedOn: utcDay(1) })).rejects.toMatchObject({ status: 409, message: expect.stringContaining(late.ref) });
     await expectUnchanged(s2.id, [late.id], before2);
+  });
+
+  it('refuses a signed date before issue or in the future', async () => {
+    await cleanPackages();
+    const a = await requested(analyst, ownId, 'Rec: signed date');
+    const s = await pkgs.issuePackage(owner, { organizationId: ownId, riskIds: [a.id] });
+    const before = await stateOf(s.id, [a.id]);
+    const d = { [a.id]: 'accepted' as const };
+    await expect(record(decider, s.id, d, { signedOn: utcDay(2) })).rejects.toMatchObject({ status: 400, message: expect.stringContaining('future') });
+    await expect(record(decider, s.id, d, { signedOn: '2030-01-01' })).rejects.toMatchObject({ status: 400 });
+    const issuedOn = new Date(s.generated_at).toISOString().slice(0, 10);
+    const dayBefore = new Date(Date.parse(`${issuedOn}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+    await expect(record(decider, s.id, d, { signedOn: dayBefore })).rejects
+      .toMatchObject({ status: 400, message: expect.stringContaining(`before ${s.number} was issued`) });
+    await expectUnchanged(s.id, [a.id], before);
+    // Tomorrow (UTC) is the latest date allowed: a time zone ahead of UTC may already be there.
+    expect(await record(decider, s.id, d, { signedOn: utcDay(1) })).toMatchObject({ status: 'signed', signed_on: utcDay(1) });
   });
 
   it('separation of duties', async () => {
@@ -432,7 +453,7 @@ describeDb('risk acceptance packages (integration)', () => {
     detail = await risks.getRisk(analyst, a.id);
     expect(detail.acceptance_packages[0]).toMatchObject({
       number: s.number, status: 'signed', signed_by_name: 'Jane Doe', signed_by_title: 'Authorizing Official',
-      signed_on: '2026-12-01', signed_attachment_id: out.signed_attachment_id,
+      signed_on: SIGNED_ON, signed_attachment_id: out.signed_attachment_id,
     });
     // Not marked: the package stays in its history, and a new one is listed newest first.
     const again = await pkgs.issuePackage(owner, { organizationId: ownId, riskIds: [b.id] });
@@ -454,7 +475,7 @@ describeDb('risk acceptance packages (integration)', () => {
       const body = parts.map((p) => `--${boundary}\r\nContent-Disposition: form-data; name="${p.name}"${p.filename ? `; filename="${p.filename}"\r\nContent-Type: ${p.type}` : ''}\r\n\r\n${p.value}\r\n`).join('') + `--${boundary}--\r\n`;
       return app.inject({ method: 'POST', url: `/api/v1/risks/acceptance-packages/${s.id}/record`, headers: { 'content-type': `multipart/form-data; boundary=${boundary}` }, payload: body });
     };
-    const payload = JSON.stringify({ signedByName: 'Jane Doe', signedByTitle: 'Authorizing Official', signedOn: '2026-12-01', decisions: { [a.id]: 'accepted' } });
+    const payload = JSON.stringify({ signedByName: 'Jane Doe', signedByTitle: 'Authorizing Official', signedOn: SIGNED_ON, decisions: { [a.id]: 'accepted' } });
     try {
       expect((await post([{ name: 'payload', value: payload }])).statusCode).toBe(400);
       const res = await post([{ name: 'payload', value: payload }, { name: 'file', value: '%PDF-1.4 via route', filename: 'signed.pdf', type: 'application/pdf' }]);
