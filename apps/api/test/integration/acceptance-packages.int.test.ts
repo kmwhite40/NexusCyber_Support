@@ -1,11 +1,20 @@
 // Risk acceptance packages against a live Postgres: issue, reprint, void, one package per risk,
 // and organization separation.
 import { it, expect, beforeAll, afterAll } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { readdir } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import Fastify from 'fastify';
+import multipart from '@fastify/multipart';
+import { registerRiskRoutes } from '../../src/http/routes-risks.js';
 import { describeDb } from '../helpers/db.js';
 import { withSystemContext } from '../../src/db/pool.js';
 import { loadPrincipal } from '../../src/auth/principal.js';
 import * as risks from '../../src/modules/risks.js';
 import * as pkgs from '../../src/modules/acceptance-packages.js';
+import * as attachments from '../../src/modules/attachments.js';
+import { MAX_ATTACHMENT_BYTES } from '../../src/modules/storage.js';
 import type { Principal } from '../../src/types.js';
 
 async function principalByEmail(email: string): Promise<Principal> {
@@ -18,6 +27,8 @@ async function principalByEmail(email: string): Promise<Principal> {
 const OWN_ORG = 'Package Suite Test Org';
 const OWN_ADMIN = 'package-suite-admin@own.example';
 const OWN_DECIDER = 'package-suite-decider@own.example';
+// Staff SecurityAnalyst scoped to the private org: risk.read + risk.manage, deliberately no risk.accept.
+const OWN_ANALYST = 'package-suite-analyst@nexus.example';
 const OTHER_ORG = 'Package Isolation Test Org';
 const OTHER_ADMIN = 'package-isolation-admin@other.example';
 const future = () => new Date(Date.now() + 90 * 86_400_000).toISOString();
@@ -26,6 +37,7 @@ describeDb('risk acceptance packages (integration)', () => {
   let owner: Principal;   // OrgAdmin of this suite's private organization
   let manager: Principal;
   let decider: Principal; // second OrgAdmin of the private org: not the requester, so separation of duties allows it
+  let analyst: Principal; // requester of the recorded risks; holds risk.read but not risk.accept
   let otherAdmin: Principal;
   let ownId: string;
   let otherId: string;
@@ -65,6 +77,19 @@ describeDb('risk acceptance packages (integration)', () => {
     ownId = await mkOrg(OWN_ORG, OWN_ADMIN);
     await mkOrg(OWN_ORG, OWN_DECIDER);
     otherId = await mkOrg(OTHER_ORG, OTHER_ADMIN);
+    await withSystemContext(async (sql) => {
+      const u = (await sql.query(
+        `INSERT INTO users (plane, email, display_name) VALUES ('nexus',$1,'Suite Analyst')
+         ON CONFLICT (plane, email) DO UPDATE SET display_name=EXCLUDED.display_name RETURNING id`, [OWN_ANALYST],
+      )).rows[0].id;
+      await sql.query(
+        `INSERT INTO role_assignments (user_id, role_id, organization_id)
+         SELECT $1, r.id, $2 FROM roles r WHERE r.key='SecurityAnalyst'
+          AND NOT EXISTS (SELECT 1 FROM role_assignments ra WHERE ra.user_id=$1 AND ra.role_id=r.id AND ra.organization_id=$2)`,
+        [u, ownId],
+      );
+    });
+    analyst = await principalByEmail(OWN_ANALYST);
     owner = await principalByEmail(OWN_ADMIN);
     decider = await principalByEmail(OWN_DECIDER);
     otherAdmin = await principalByEmail(OTHER_ADMIN);
@@ -72,10 +97,11 @@ describeDb('risk acceptance packages (integration)', () => {
   });
 
   afterAll(async () => {
-    // Deleting the organizations cascades to their risks and packages.
+    // Deleting the organizations cascades to their risks, packages and signed copies — first, because
+    // a signed copy's uploaded_by would otherwise keep its uploader from being deleted.
     await withSystemContext(async (sql) => {
-      await sql.query('DELETE FROM users WHERE email = ANY($1::text[])', [[OWN_ADMIN, OWN_DECIDER, OTHER_ADMIN]]);
       await sql.query('DELETE FROM organizations WHERE name = ANY($1::text[])', [[OWN_ORG, OTHER_ORG]]);
+      await sql.query('DELETE FROM users WHERE email = ANY($1::text[])', [[OWN_ADMIN, OWN_DECIDER, OTHER_ADMIN, OWN_ANALYST]]);
     });
   });
 
@@ -205,4 +231,190 @@ describeDb('risk acceptance packages (integration)', () => {
     const decided = await risks.decideAcceptance(decider, a.id, true);
     expect(decided.status).toBe('accepted');
   });
+  // ---------------- Recording the signed package ----------------
+
+  const signedCopy = (bytes: Buffer = Buffer.from('%PDF-1.4 signed acceptance package')) =>
+    ({ filename: 'signed.pdf', contentType: 'application/pdf', bytes });
+  const record = (actor: Principal, id: string, decisions: Record<string, pkgs.PackageDecision>, over: Partial<Parameters<typeof pkgs.recordSignature>[2]> = {}) =>
+    pkgs.recordSignature(actor, id, {
+      signedByName: 'Jane Doe', signedByTitle: 'Authorizing Official', signedOn: '2026-12-01', decisions, file: signedCopy(), ...over,
+    });
+  async function sysQuery(text: string, params: unknown[]) {
+    return withSystemContext(async (sql) => (await sql.query(text, params)).rows);
+  }
+  /** What a refused record must leave untouched: the package, its risks and the attachments table. */
+  async function stateOf(packageId: string, riskIds: string[]) {
+    return {
+      pkg: (await sysQuery('SELECT status, signed_attachment_id, recorded_at, decisions FROM risk_acceptance_packages WHERE id=$1', [packageId]))[0],
+      risks: await sysQuery('SELECT id, status, acceptance_status, acceptance_decided_by FROM risks WHERE id = ANY($1::uuid[]) ORDER BY id', [riskIds]),
+      attachments: await sysQuery('SELECT id FROM attachments WHERE acceptance_package_id=$1', [packageId]),
+    };
+  }
+  async function expectUnchanged(packageId: string, riskIds: string[], before: Awaited<ReturnType<typeof stateOf>>) {
+    expect(before.pkg).toMatchObject({ status: 'issued', signed_attachment_id: null });
+    expect(await stateOf(packageId, riskIds)).toEqual(before);
+  }
+
+  it('records accepted, not accepted and not marked', async () => {
+    await cleanPackages();
+    const a = await requested(analyst, ownId, 'Rec: accepted');
+    const b = await requested(analyst, ownId, 'Rec: not accepted');
+    const c = await requested(analyst, ownId, 'Rec: not marked');
+    const s = await pkgs.issuePackage(owner, { organizationId: ownId, riskIds: [a.id, b.id, c.id] });
+    const out = await record(decider, s.id, { [a.id]: 'accepted', [b.id]: 'not_accepted', [c.id]: 'not_marked' });
+    expect(out).toMatchObject({ id: s.id, status: 'signed', signed_by_name: 'Jane Doe', signed_by_title: 'Authorizing Official', signed_on: '2026-12-01' });
+    expect(out.signed_attachment_id).toBeTruthy();
+    expect(out.recorded_at).toBeTruthy();
+    expect(out.decisions).toEqual({ [a.id]: 'accepted', [b.id]: 'not_accepted', [c.id]: 'not_marked' });
+    const [att] = await sysQuery('SELECT acceptance_package_id, ticket_id, scan_status, uploaded_by FROM attachments WHERE id=$1', [out.signed_attachment_id]);
+    expect(att).toMatchObject({ acceptance_package_id: s.id, ticket_id: null, scan_status: 'clean', uploaded_by: decider.id });
+
+    const ra = await risks.getRisk(owner, a.id);
+    expect(ra.status).toBe('accepted');
+    expect(ra.acceptance_status).toBe('approved');
+    expect(ra.acceptance_decided_by).toBe(decider.id);
+    expect((await risks.getRisk(owner, b.id)).acceptance_status).toBe('rejected');
+    expect((await risks.getRisk(owner, c.id)).acceptance_status).toBe('requested');
+
+    const note = `Signed by Jane Doe, Authorizing Official on 2026-12-01; package ${s.number} (${s.sha256.slice(0, 12)})`;
+    for (const [id, kind] of [[a.id, 'accepted'], [b.id, 'acceptance_rejected']]) {
+      const [h] = await sysQuery('SELECT kind, note FROM risk_history WHERE risk_id=$1 ORDER BY created_at DESC LIMIT 1', [id]);
+      expect(h).toEqual({ kind, note });
+    }
+    // Not marked: still awaiting a decision, and free for a new package.
+    const again = await pkgs.issuePackage(owner, { organizationId: ownId, riskIds: [c.id] });
+    expect(again.status).toBe('issued');
+
+    const actions = (await sysQuery('SELECT action FROM audit_logs WHERE resource_id=$1', [s.id])).map((r: any) => r.action);
+    expect(actions).toContain('risk.acceptance_package.record');
+  });
+
+  it('requires a decision for every risk', async () => {
+    await cleanPackages();
+    const a = await requested(analyst, ownId, 'Rec: every A');
+    const b = await requested(analyst, ownId, 'Rec: every B');
+    const s = await pkgs.issuePackage(owner, { organizationId: ownId, riskIds: [a.id, b.id] });
+    const before = await stateOf(s.id, [a.id, b.id]);
+    await expect(record(decider, s.id, { [a.id]: 'accepted' })).rejects.toMatchObject({ status: 400 });
+    await expect(record(decider, s.id, { [a.id]: 'accepted', [b.id]: 'accepted', [randomUUID()]: 'accepted' })).rejects.toMatchObject({ status: 400 });
+    await expect(record(decider, s.id, { [a.id]: 'accepted', [b.id]: 'maybe' as any })).rejects.toMatchObject({ status: 400 });
+    await expectUnchanged(s.id, [a.id, b.id], before);
+  });
+
+  it('refuses when a risk changed after issue', async () => {
+    const cases: Array<[string, (id: string) => Promise<unknown>]> = [
+      ['residual reassessed', (id) => risks.updateRisk(owner, id, { residualLikelihood: 1 })],
+      ['justification re-requested', (id) => sysQuery(`UPDATE risks SET acceptance_justification='A different case' WHERE id=$1`, [id])],
+      ['expiry changed', (id) => sysQuery(`UPDATE risks SET acceptance_expires_at=acceptance_expires_at + interval '1 day' WHERE id=$1`, [id])],
+      ['risk closed', (id) => risks.transitionRisk(owner, id, 'closed')],
+    ];
+    for (const [label, change] of cases) {
+      await cleanPackages();
+      const keep = await requested(analyst, ownId, `Rec: unchanged beside ${label}`);
+      const r = await requested(analyst, ownId, `Rec: ${label}`);
+      const s = await pkgs.issuePackage(owner, { organizationId: ownId, riskIds: [keep.id, r.id] });
+      await change(r.id);
+      const before = await stateOf(s.id, [keep.id, r.id]);
+      await expect(record(decider, s.id, { [keep.id]: 'accepted', [r.id]: 'accepted' }), label)
+        .rejects.toMatchObject({ status: 409, message: expect.stringContaining(r.ref) });
+      await expectUnchanged(s.id, [keep.id, r.id], before);
+    }
+  });
+
+  it('refuses an expired or late-signed acceptance', async () => {
+    await cleanPackages();
+    const expired = await requested(analyst, ownId, 'Rec: expired');
+    await sysQuery(`UPDATE risks SET acceptance_expires_at=now() - interval '1 day' WHERE id=$1`, [expired.id]);
+    const s1 = await pkgs.issuePackage(owner, { organizationId: ownId, riskIds: [expired.id] });
+    const before1 = await stateOf(s1.id, [expired.id]);
+    await expect(record(decider, s1.id, { [expired.id]: 'accepted' })).rejects.toMatchObject({ status: 409, message: expect.stringContaining(expired.ref) });
+    await expectUnchanged(s1.id, [expired.id], before1);
+
+    const late = await requested(analyst, ownId, 'Rec: late');
+    const s2 = await pkgs.issuePackage(owner, { organizationId: ownId, riskIds: [late.id] });
+    const before2 = await stateOf(s2.id, [late.id]);
+    const [{ d }] = await sysQuery(`SELECT to_char((acceptance_expires_at AT TIME ZONE 'UTC') + interval '1 day', 'YYYY-MM-DD') AS d FROM risks WHERE id=$1`, [late.id]);
+    await expect(record(decider, s2.id, { [late.id]: 'accepted' }, { signedOn: d })).rejects.toMatchObject({ status: 409, message: expect.stringContaining(late.ref) });
+    await expectUnchanged(s2.id, [late.id], before2);
+  });
+
+  it('separation of duties', async () => {
+    await cleanPackages();
+    const a = await requested(analyst, ownId, 'Rec: sod analyst');
+    const own = await requested(decider, ownId, 'Rec: sod decider');
+    const s = await pkgs.issuePackage(owner, { organizationId: ownId, riskIds: [a.id, own.id] });
+    const before = await stateOf(s.id, [a.id, own.id]);
+    await expect(record(analyst, s.id, { [a.id]: 'accepted', [own.id]: 'accepted' })).rejects.toMatchObject({ status: 403 });
+    await expect(record(decider, s.id, { [a.id]: 'accepted', [own.id]: 'accepted' }))
+      .rejects.toMatchObject({ status: 403, message: expect.stringContaining('separation of duties') });
+    await expectUnchanged(s.id, [a.id, own.id], before);
+  });
+
+  it('rejects an invalid signed copy without recording', async () => {
+    await cleanPackages();
+    const a = await requested(analyst, ownId, 'Rec: bad copy');
+    const s = await pkgs.issuePackage(owner, { organizationId: ownId, riskIds: [a.id] });
+    const before = await stateOf(s.id, [a.id]);
+    const d = { [a.id]: 'accepted' as const };
+    await expect(record(decider, s.id, d, { file: { filename: 'x.exe', contentType: 'application/x-msdownload', bytes: Buffer.from('MZ') } }))
+      .rejects.toMatchObject({ status: 422 });
+    await expect(record(decider, s.id, d, { file: signedCopy(Buffer.alloc(MAX_ATTACHMENT_BYTES + 1)) })).rejects.toMatchObject({ status: 422 });
+    await expect(record(decider, s.id, d, { file: undefined as any })).rejects.toMatchObject({ status: 400 });
+    await expect(record(decider, s.id, d, { file: signedCopy(Buffer.from('X5O EICAR-STANDARD-ANTIVIRUS-TEST-FILE')) }))
+      .rejects.toMatchObject({ status: 409 });
+    await expectUnchanged(s.id, [a.id], before);
+    // The refused copy's blob is deleted too, not just its row.
+    const dir = join(process.env.BLOB_DIR ?? join(tmpdir(), 'nexus-blobs'), ownId, 'acceptance-packages', s.id);
+    expect(await readdir(dir).catch(() => [])).toEqual([]);
+  });
+
+  it('refuses a package that is not issued', async () => {
+    await cleanPackages();
+    const a = await requested(analyst, ownId, 'Rec: twice');
+    const s = await pkgs.issuePackage(owner, { organizationId: ownId, riskIds: [a.id] });
+    await record(decider, s.id, { [a.id]: 'not_accepted' });
+    await expect(record(decider, s.id, { [a.id]: 'not_accepted' })).rejects.toMatchObject({ status: 409 });
+    const b = await requested(analyst, ownId, 'Rec: voided');
+    const v = await pkgs.issuePackage(owner, { organizationId: ownId, riskIds: [b.id] });
+    await pkgs.voidPackage(owner, v.id, 'Issued in error');
+    await expect(record(decider, v.id, { [b.id]: 'accepted' })).rejects.toMatchObject({ status: 409 });
+    expect((await risks.getRisk(owner, b.id)).acceptance_status).toBe('requested');
+  });
+
+  it('signed copy downloads with risk.read', async () => {
+    await cleanPackages();
+    const a = await requested(analyst, ownId, 'Rec: download');
+    const s = await pkgs.issuePackage(owner, { organizationId: ownId, riskIds: [a.id] });
+    const bytes = Buffer.from('%PDF-1.4 the signed one');
+    const out = await record(decider, s.id, { [a.id]: 'accepted' }, { file: signedCopy(bytes) });
+    // The analyst has risk.read but not ticket.comment: only the package branch can authorize this.
+    const got = await attachments.download(analyst, out.signed_attachment_id!);
+    expect(got.bytes.equals(bytes)).toBe(true);
+    expect(got.contentType).toBe('application/pdf');
+    await expect(attachments.download(otherAdmin, out.signed_attachment_id!)).rejects.toMatchObject({ status: 404 });
+  });
+  it('records through the multipart route', async () => {
+    await cleanPackages();
+    const a = await requested(analyst, ownId, 'Rec: route');
+    const s = await pkgs.issuePackage(owner, { organizationId: ownId, riskIds: [a.id] });
+    const app = Fastify();
+    await app.register(multipart, { limits: { fileSize: MAX_ATTACHMENT_BYTES, files: 1 } });
+    app.addHook('onRequest', async (req) => { (req as any).principal = decider; });
+    app.setErrorHandler((err: any, _req, reply) => { reply.status(err.status ?? err.statusCode ?? (err.issues ? 422 : 500)).send({ detail: err.detail ?? err.message }); });
+    await registerRiskRoutes(app);
+    const post = (parts: Array<{ name: string; value: string; filename?: string; type?: string }>) => {
+      const boundary = 'x-boundary-1';
+      const body = parts.map((p) => `--${boundary}\r\nContent-Disposition: form-data; name="${p.name}"${p.filename ? `; filename="${p.filename}"\r\nContent-Type: ${p.type}` : ''}\r\n\r\n${p.value}\r\n`).join('') + `--${boundary}--\r\n`;
+      return app.inject({ method: 'POST', url: `/api/v1/risks/acceptance-packages/${s.id}/record`, headers: { 'content-type': `multipart/form-data; boundary=${boundary}` }, payload: body });
+    };
+    const payload = JSON.stringify({ signedByName: 'Jane Doe', signedByTitle: 'Authorizing Official', signedOn: '2026-12-01', decisions: { [a.id]: 'accepted' } });
+    try {
+      expect((await post([{ name: 'payload', value: payload }])).statusCode).toBe(400);
+      const res = await post([{ name: 'payload', value: payload }, { name: 'file', value: '%PDF-1.4 via route', filename: 'signed.pdf', type: 'application/pdf' }]);
+      expect(res.statusCode, res.body).toBe(200);
+      expect(res.json()).toMatchObject({ status: 'signed', signed_by_name: 'Jane Doe' });
+    } finally {
+      await app.close();
+    }
+  }, 60_000); // first Fastify boot is slow on a network-shared node_modules
 });

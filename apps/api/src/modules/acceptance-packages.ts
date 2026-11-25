@@ -1,4 +1,4 @@
-// Risk acceptance packages — issue, list, reprint, void.
+// Risk acceptance packages — issue, list, reprint, void, record the signed copy.
 //
 // A package freezes one organization's risks awaiting acceptance into a print-ready page. The
 // snapshot is built from that organization's rows only (RLS plus an explicit organization_id on
@@ -10,7 +10,9 @@ import { authorize } from '../authz/pdp.js';
 import { audit } from './audit.js';
 import { Errors } from '../errors.js';
 import { resolveUserNames } from './user-names.js';
-import { resolveOrg, loadSettings, issuedPackageFor } from './risks.js';
+import { resolveOrg, loadSettings, issuedPackageFor, applyAcceptanceDecision } from './risks.js';
+import { uploadForPackage } from './attachments.js';
+import { blobStore } from './storage.js';
 import { rating, riskRef } from './risk-scoring.js';
 import {
   packageNumber, renderPackageHtml, snapshotSha256,
@@ -191,6 +193,122 @@ export async function voidPackage(actor: Principal, id: string, reason: string):
   await audit(actor, {
     action: 'risk.acceptance_package.void', organizationId: summary.organization_id, resourceType: 'acceptance_package', resourceId: id,
     detail: { number: summary.number, reason },
+  });
+  return summary;
+}
+
+// ---------------- Recording the signed package ----------------
+
+export type PackageDecision = 'accepted' | 'not_accepted' | 'not_marked';
+export const PACKAGE_DECISIONS: readonly PackageDecision[] = ['accepted', 'not_accepted', 'not_marked'];
+
+export interface RecordSignatureInput {
+  signedByName: string;
+  signedByTitle: string;
+  signedOn: string; // YYYY-MM-DD, the date on the paper
+  decisions: Record<string, PackageDecision>;
+  file: { filename: string; contentType: string; bytes: Buffer };
+}
+
+/** Did the acceptance request move since the package froze it? Then the AO signed something else. */
+function changedSinceIssue(cur: any, snap: PackageRiskSnapshot): boolean {
+  return !cur
+    || cur.acceptance_status !== 'requested'
+    || cur.status === 'closed'
+    || cur.residual_score !== snap.residual.score
+    || (cur.acceptance_justification ?? '') !== snap.justification
+    || !cur.acceptance_expires_at
+    || new Date(cur.acceptance_expires_at).toISOString() !== snap.expiresAt;
+}
+
+/**
+ * Record what the Authorizing Official signed: store the signed copy and apply each risk's decision,
+ * all in one transaction. Every check runs before the first decision is applied, because decisions
+ * write audit rows outside this transaction.
+ */
+export async function recordSignature(actor: Principal, id: string, input: RecordSignatureInput): Promise<PackageSummary> {
+  let storedKey: string | null = null;
+  let summary: PackageSummary;
+  try {
+    summary = await withOrgContext(orgContextFor(actor), async (sql) => {
+      const pkg = (await sql.query(
+        'SELECT id, organization_id, package_number, status, risk_ids, snapshot, sha256 FROM risk_acceptance_packages WHERE id=$1 FOR UPDATE', [id],
+      )).rows[0];
+      if (!pkg) throw Errors.notFound('acceptance package not found');
+      const org: string = pkg.organization_id;
+      authorize(actor, 'risk.accept', { organizationId: org });
+      const number = packageNumber(pkg.package_number);
+      if (pkg.status !== 'issued') throw Errors.conflict(`only an issued package can be recorded (${number} is ${pkg.status})`);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(input.signedOn) || Number.isNaN(Date.parse(`${input.signedOn}T00:00:00Z`))) {
+        throw Errors.badRequest('signedOn must be a date (YYYY-MM-DD)');
+      }
+
+      // A decision for every risk in the package, and for nothing else.
+      const snaps: PackageRiskSnapshot[] = (pkg.snapshot as PackageSnapshot).risks;
+      const decisions = input.decisions ?? {};
+      const missing = snaps.filter((r) => !(r.id in decisions)).map((r) => r.ref);
+      if (missing.length) throw Errors.badRequest(`a decision is required for every risk; missing: ${missing.join(', ')}`);
+      const extra = Object.keys(decisions).filter((rid) => !snaps.some((r) => r.id === rid));
+      if (extra.length) throw Errors.badRequest(`not in ${number}: ${extra.join(', ')}`);
+      const bad = snaps.filter((r) => !PACKAGE_DECISIONS.includes(decisions[r.id])).map((r) => r.ref);
+      if (bad.length) throw Errors.badRequest(`decision must be one of ${PACKAGE_DECISIONS.join(', ')}: ${bad.join(', ')}`);
+
+      const rows = (await sql.query(
+        'SELECT * FROM risks WHERE organization_id=$1 AND id = ANY($2::uuid[]) ORDER BY risk_number FOR UPDATE', [org, pkg.risk_ids],
+      )).rows;
+      const current = (rid: string) => rows.find((r: any) => r.id === rid);
+      for (const snap of snaps) {
+        if (changedSinceIssue(current(snap.id), snap)) {
+          throw Errors.conflict(`${snap.ref} changed after ${number} was issued; void it and issue a new package`);
+        }
+      }
+      const now = Date.now();
+      for (const snap of snaps.filter((r) => decisions[r.id] === 'accepted')) {
+        const expires = new Date(snap.expiresAt);
+        if (expires.getTime() <= now) throw Errors.conflict(`${snap.ref}'s requested acceptance expired on ${snap.expiresAt.slice(0, 10)}; it needs a new request and package`);
+        if (input.signedOn > snap.expiresAt.slice(0, 10)) {
+          throw Errors.conflict(`${number} was signed after ${snap.ref}'s requested acceptance expired (${snap.expiresAt.slice(0, 10)}); it needs a new request and package`);
+        }
+      }
+      for (const snap of snaps.filter((r) => decisions[r.id] !== 'not_marked')) {
+        if (current(snap.id).acceptance_requested_by === actor.id) {
+          throw Errors.forbidden(`separation of duties: you requested ${snap.ref}'s acceptance, so someone else must record its decision`);
+        }
+      }
+
+      if (!input.file || !input.file.bytes?.length) throw Errors.badRequest('the signed copy is required');
+      const att = await uploadForPackage(sql, actor, { packageId: id, organizationId: org, ...input.file });
+      storedKey = att.storage_key;
+      if (att.scan_status !== 'clean') throw Errors.conflict(`the signed copy is ${att.scan_status}; upload a clean copy`);
+
+      const note = `Signed by ${input.signedByName}, ${input.signedByTitle} on ${input.signedOn}; package ${number} (${pkg.sha256.slice(0, 12)})`;
+      for (const snap of snaps) {
+        const d = decisions[snap.id];
+        if (d !== 'not_marked') await applyAcceptanceDecision(sql, actor, current(snap.id), d === 'accepted', note);
+      }
+      const ordered = Object.fromEntries(snaps.map((r) => [r.id, decisions[r.id]]));
+      const { rows: out } = await sql.query(
+        `UPDATE risk_acceptance_packages SET status='signed', signed_by_name=$2, signed_by_title=$3, signed_on=$4,
+            recorded_by=$5, recorded_at=now(), signed_attachment_id=$6, decisions=$7
+          WHERE id=$1 RETURNING ${SUMMARY_COLS}`,
+        [id, input.signedByName, input.signedByTitle, input.signedOn, actor.id, att.id, JSON.stringify(ordered)],
+      );
+      return summarize(out[0]);
+    });
+  } catch (e) {
+    // Nothing was recorded, so the stored blob is unreferenced: remove it.
+    if (storedKey) await blobStore.delete(storedKey).catch(() => undefined);
+    throw e;
+  }
+
+  const ids = (d: PackageDecision) => Object.entries(input.decisions).filter(([, v]) => v === d).map(([k]) => k);
+  await audit(actor, {
+    action: 'risk.acceptance_package.record', organizationId: summary.organization_id, resourceType: 'acceptance_package', resourceId: id,
+    detail: {
+      number: summary.number, sha256: summary.sha256, signedByName: summary.signed_by_name, signedByTitle: summary.signed_by_title,
+      signedOn: summary.signed_on, attachmentId: summary.signed_attachment_id,
+      accepted: ids('accepted'), notAccepted: ids('not_accepted'), notMarked: ids('not_marked'),
+    },
   });
   return summary;
 }

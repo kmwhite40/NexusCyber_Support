@@ -6,6 +6,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requirePrincipal } from './context.js';
+import { Errors } from '../errors.js';
 import * as risks from '../modules/risks.js';
 import * as packages from '../modules/acceptance-packages.js';
 import { CATEGORIES, IMPACT_DIMENSIONS, RATINGS } from '../modules/risk-scoring.js';
@@ -129,6 +130,39 @@ export async function registerRiskRoutes(app: FastifyInstance): Promise<void> {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const { reason } = z.object({ reason: z.string().trim().min(3).max(500) }).strict().parse(req.body);
     return packages.voidPackage(p, id, reason);
+  });
+
+  // Multipart: the signed copy in field `file`, and the AO's details and decisions as JSON in `payload`.
+  app.post('/api/v1/risks/acceptance-packages/:id/record', async (req) => {
+    const p = await requirePrincipal(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    let file: { filename: string; contentType: string; bytes: Buffer } | undefined;
+    let payload: string | undefined;
+    for await (const part of (req as any).parts()) {
+      if (part.type === 'file') {
+        const bytes: Buffer = await part.toBuffer(); // always drain, or the request stalls
+        if (part.fieldname === 'file' && !file) file = { filename: part.filename, contentType: part.mimetype, bytes };
+      } else if (part.fieldname === 'payload') {
+        payload = String(part.value);
+      }
+    }
+    if (!file) throw Errors.badRequest('multipart file field "file" required');
+    let json: unknown;
+    try {
+      json = JSON.parse(payload ?? '');
+    } catch {
+      throw Errors.badRequest('multipart field "payload" must be JSON');
+    }
+    const body = z
+      .object({
+        signedByName: z.string().trim().min(2).max(200),
+        signedByTitle: z.string().trim().min(2).max(200),
+        signedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((d) => !Number.isNaN(Date.parse(`${d}T00:00:00Z`)), 'invalid date'),
+        decisions: z.record(z.string().uuid(), z.enum(packages.PACKAGE_DECISIONS as [packages.PackageDecision, ...packages.PackageDecision[]])),
+      })
+      .strict()
+      .parse(json);
+    return packages.recordSignature(p, id, { ...body, file });
   });
 
   app.get('/api/v1/risks/export.csv', async (req, reply) => {
